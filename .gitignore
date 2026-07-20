@@ -1,0 +1,25 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Log files
+*.log
+error.log
+logs/
+
+# Node dependencies & build outputs
+node_modules/
+dist/
+dist-ssr/
+
+# IDE / OS files
+.vscode/
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

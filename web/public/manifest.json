@@ -1,0 +1,16 @@
+{
+  "short_name": "SchoolBase",
+  "name": "SchoolBase Multi-Tenant Portal",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": ".",
+  "background_color": "#FAF8F4",
+  "theme_color": "#2F6B5E",
+  "display": "standalone",
+  "orientation": "portrait"
+}
