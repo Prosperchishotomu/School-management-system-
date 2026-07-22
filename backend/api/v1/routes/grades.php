@@ -257,12 +257,18 @@ $router->get('/schools/{schoolId}/classes/{classId}/results', function($schoolId
         $stmtSchType->execute([$schoolId]);
         $schType = $stmtSchType->fetchColumn() ?: 'secondary';
         $isPrimary = ($schType === 'primary' || strpos(strtolower($gradeLevel), 'grade') !== false);
+        $isALevel  = (strpos(strtolower($gradeLevel), 'form 5') !== false || strpos(strtolower($gradeLevel), 'form 6') !== false || strpos(strtolower($gradeLevel), 'a-level') !== false || strpos(strtolower($gradeLevel), 'a level') !== false);
 
         if ($isPrimary) {
             $units = Database::calculatePrimaryUnits($schoolId, $student['student_id'], $term);
             $student['primary_units'] = $units;
             $student['grade']       = $units . ' Units';
             $student['pass_status'] = ($units <= 36) ? 'pass' : 'fail';
+        } else if ($isALevel) {
+            $pts = Database::calculateALevelPoints($schoolId, $student['student_id'], $term);
+            $student['a_level_points'] = $pts;
+            $student['grade']          = $pts . ' Points';
+            $student['pass_status']    = ($pts >= 2) ? 'pass' : 'fail';
         } else {
             $avg = (float)$student['overall_percentage'];
             $gradeInfo = Database::getGradeForMark($schoolId, $avg);
@@ -407,12 +413,18 @@ function publishClassResults($schoolId, $classId, $term, $userId) {
         $stmtSchType->execute([$schoolId]);
         $schType = $stmtSchType->fetchColumn() ?: 'secondary';
         $isPrimary = ($schType === 'primary' || strpos(strtolower($gradeLevel), 'grade') !== false);
+        $isALevel  = (strpos(strtolower($gradeLevel), 'form 5') !== false || strpos(strtolower($gradeLevel), 'form 6') !== false || strpos(strtolower($gradeLevel), 'a-level') !== false || strpos(strtolower($gradeLevel), 'a level') !== false);
 
         if ($isPrimary) {
             $units = Database::calculatePrimaryUnits($schoolId, $student['student_id'], $term);
             $student['primary_units'] = $units;
             $student['grade']       = $units . ' Units';
             $student['pass_status'] = ($units <= 36) ? 'pass' : 'fail';
+        } else if ($isALevel) {
+            $pts = Database::calculateALevelPoints($schoolId, $student['student_id'], $term);
+            $student['a_level_points'] = $pts;
+            $student['grade']          = $pts . ' Points';
+            $student['pass_status']    = ($pts >= 2) ? 'pass' : 'fail';
         } else {
             $avg = (float)$student['overall_percentage'];
             $gradeInfo = Database::getGradeForMark($schoolId, $avg);

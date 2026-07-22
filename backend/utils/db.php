@@ -465,6 +465,43 @@ class Database {
     }
 
     /**
+     * Compute ZIMSEC Advanced Level (A-Level Form 5 & 6) points score (top 3 principal subjects: A=5, B=4, C=3, D=2, E=1, max 15 points)
+     */
+    public static function calculateALevelPoints($schoolId, $studentId, $term) {
+        $db = self::getConnection();
+        $stmt = $db->prepare("
+            SELECT subject, 
+                   COALESCE(ROUND(SUM(grade_value * weight) / NULLIF(SUM(weight), 0), 2), 0.00) as subject_mark
+            FROM grades
+            WHERE school_id = ? AND student_id = ? AND term = ?
+            GROUP BY subject
+        ");
+        $stmt->execute([$schoolId, $studentId, $term]);
+        $subjectRows = $stmt->fetchAll();
+
+        if (empty($subjectRows)) {
+            return 0;
+        }
+
+        $points = [];
+        foreach ($subjectRows as $row) {
+            $m = (float)$row['subject_mark'];
+            if ($m >= 75) $pts = 5;      // Grade A
+            else if ($m >= 65) $pts = 4; // Grade B
+            else if ($m >= 55) $pts = 3; // Grade C
+            else if ($m >= 45) $pts = 2; // Grade D
+            else if ($m >= 40) $pts = 1; // Grade E
+            else $pts = 0;              // Grade O/F (Fail)
+
+            $points[] = $pts;
+        }
+
+        rsort($points, SORT_NUMERIC);
+        $top3 = array_slice($points, 0, 3);
+        return array_sum($top3);
+    }
+
+    /**
      * Send a standardized error response and terminate.
      */
     private static function sendErrorResponse($code, $message, $httpStatus = 500) {
