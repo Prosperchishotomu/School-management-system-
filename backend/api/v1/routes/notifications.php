@@ -342,3 +342,88 @@ $router->post('/schools/{schoolId}/communication/test', function($schoolId) {
         "trace" => $trace
     ]);
 });
+
+// ── NotificationEngine Helper Class ──────────────────────────────────────────
+class NotificationEngine {
+    public static function create($schoolId, $userId, $title, $message) {
+        if (empty($userId) || empty($title) || empty($message)) return false;
+        try {
+            $db = Database::getConnection();
+            $id = Database::generateId('NTF');
+            $stmt = $db->prepare("INSERT INTO user_notifications (id, school_id, user_id, title, message, is_read) VALUES (?, ?, ?, ?, ?, 0)");
+            $stmt->execute([$id, $schoolId ?: 'HARAREPR', $userId, $title, $message]);
+            return true;
+        } catch (Exception $e) {
+            error_log("Notification error: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public static function broadcastToRole($schoolId, $role, $title, $message) {
+        try {
+            $db = Database::getConnection();
+            if ($role === 'all') {
+                $stmt = $db->prepare("SELECT id FROM users WHERE school_id = ?");
+                $stmt->execute([$schoolId]);
+            } else {
+                $stmt = $db->prepare("SELECT id FROM users WHERE school_id = ? AND role = ?");
+                $stmt->execute([$schoolId, $role]);
+            }
+            $users = $stmt->fetchAll();
+            $count = 0;
+            foreach ($users as $u) {
+                if (self::create($schoolId, $u['id'], $title, $message)) {
+                    $count++;
+                }
+            }
+            return $count;
+        } catch (Exception $e) {
+            return 0;
+        }
+    }
+}
+
+// POST /notifications/broadcast (Broadcast notification to parents, staff, or all users)
+$router->post('/notifications/broadcast', function() {
+    $user = Auth::requireAuth();
+    Auth::requireRoles($user, ['super_admin', 'school_admin']);
+    $data = getJsonInput();
+
+    $target  = trim($data['target'] ?? 'all'); // 'all' | 'parent' | 'teacher'
+    $title   = trim($data['title'] ?? '');
+    $message = trim($data['message'] ?? '');
+
+    if (empty($title) || empty($message)) {
+        Auth::sendResponse(null, ["code" => "VALIDATION_ERROR", "message" => "Title and message are required."], 400);
+    }
+
+    $count = NotificationEngine::broadcastToRole($user['school_id'], $target, $title, $message);
+    Auth::logAction($user['school_id'], $user['id'], 'NOTIFICATION_BROADCAST', 'user_notifications', null, "Broadcasted notification '{$title}' to {$count} {$target} users.");
+
+    Auth::sendResponse([
+        "recipients_notified" => $count,
+        "message"             => "Notification successfully broadcasted to {$count} users."
+    ]);
+});
+
+// POST /notifications/send (Send direct notification to a specific user)
+$router->post('/notifications/send', function() {
+    $user = Auth::requireAuth();
+    $data = getJsonInput();
+
+    $recipientUserId = trim($data['user_id'] ?? '');
+    $title           = trim($data['title'] ?? '');
+    $message         = trim($data['message'] ?? '');
+
+    if (empty($recipientUserId) || empty($title) || empty($message)) {
+        Auth::sendResponse(null, ["code" => "VALIDATION_ERROR", "message" => "Recipient User ID, title, and message are required."], 400);
+    }
+
+    $success = NotificationEngine::create($user['school_id'], $recipientUserId, $title, $message);
+
+    if ($success) {
+        Auth::sendResponse(["message" => "Direct notification dispatched successfully."]);
+    } else {
+        Auth::sendResponse(null, ["code" => "SERVER_ERROR", "message" => "Failed to dispatch notification."], 500);
+    }
+});
