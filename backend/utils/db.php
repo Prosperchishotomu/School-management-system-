@@ -381,10 +381,14 @@ class Database {
     }
 
     /**
-     * Generate a logical context-aware prefixed ID (e.g. USR00001, STD00001, EXP00001, HST00001, RPM00001).
-     * Ensures NO table uses auto-increment IDs.
+     * Generate a logical, school-instance & context-aware prefixed ID.
+     * Examples:
+     *   - Harare Primary School + Student => HRE-STD00001
+     *   - Guhune Secondary School + Student => GHN-STD00001
+     *   - Harare Primary School + Expense => HRE-EXP00001
+     *   - Guhune Secondary School + Expense => GHN-EXP00001
      */
-    public static function generateId($prefix = 'ID', $table = null) {
+    public static function generateId($prefix = 'ID', $table = null, $schoolId = null) {
         $db = self::getConnection();
         $prefix = strtoupper(trim($prefix));
         
@@ -419,13 +423,30 @@ class Database {
             $table = $prefixTableMap[$prefix] ?? null;
         }
 
+        // Determine school acronym/code tag
+        $schoolTag = "";
+        if ($schoolId && $schoolId !== 'SYSTEM' && $prefix !== 'SCH') {
+            $cleanSchool = preg_replace('/[^A-Z0-9]/', '', strtoupper($schoolId));
+            if (strlen($cleanSchool) >= 3) {
+                if ($cleanSchool === 'HARAREPR') {
+                    $schoolTag = "HRE-";
+                } else if ($cleanSchool === 'GUHUNE' || strpos($cleanSchool, 'GUHUNE') !== false) {
+                    $schoolTag = "GHN-";
+                } else {
+                    $schoolTag = substr($cleanSchool, 0, 3) . "-";
+                }
+            }
+        }
+
+        $fullPrefix = $schoolTag . $prefix; // e.g. "HRE-STD" or "GHN-STD" or "STD"
+
         if ($table) {
             $stmt = $db->prepare("SELECT COUNT(*) FROM `$table` WHERE id LIKE ?");
-            $stmt->execute([$prefix . '%']);
+            $stmt->execute([$fullPrefix . '%']);
             $count = (int)$stmt->fetchColumn() + 1;
             
             while (true) {
-                $id = sprintf("%s%05d", $prefix, $count);
+                $id = sprintf("%s%05d", $fullPrefix, $count);
                 $stmtChk = $db->prepare("SELECT 1 FROM `$table` WHERE id = ? LIMIT 1");
                 $stmtChk->execute([$id]);
                 if (!$stmtChk->fetch()) {
@@ -435,7 +456,7 @@ class Database {
             }
         }
 
-        return self::generateUniqueId('users');
+        return self::generateUniqueId($table ?: 'users');
     }
 
     /**

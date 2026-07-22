@@ -67,7 +67,7 @@ $router->post('/expenses', function() {
     }
 
     $db = Database::getConnection();
-    $id = Database::generateId('EXP');
+    $id = Database::generateId('EXP', 'expenses', $user['school_id']);
 
     $stmt = $db->prepare("INSERT INTO expenses (id, school_id, title, category, amount, expense_date, vendor_name, receipt_ref, recorded_by)
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");

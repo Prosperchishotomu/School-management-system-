@@ -36,7 +36,7 @@ $router->post('/hostels', function() {
     }
 
     $db = Database::getConnection();
-    $id = Database::generateId('HST');
+    $id = Database::generateId('HST', 'hostels', $user['school_id']);
 
     $stmt = $db->prepare("INSERT INTO hostels (id, school_id, name, type, capacity, warden_name) VALUES (?, ?, ?, ?, ?, ?)");
     $stmt->execute([$id, $user['school_id'], $name, $type, $capacity, $wardenName ?: null]);
@@ -91,7 +91,7 @@ $router->post('/hostels/allocate', function() {
     }
 
     $db = Database::getConnection();
-    $id = Database::generateId('HAL');
+    $id = Database::generateId('HAL', 'hostel_allocations', $user['school_id']);
 
     $stmt = $db->prepare("INSERT INTO hostel_allocations (id, school_id, hostel_id, occupant_id, occupant_type, room_number, bed_number, allocated_date, term)
                           VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)");

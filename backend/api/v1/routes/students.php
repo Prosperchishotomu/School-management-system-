@@ -95,7 +95,7 @@ $router->post('/schools/{schoolId}/students', function($schoolId) {
         Auth::sendResponse(null, ["code" => "DUPLICATE_ADMISSION", "message" => "Admission number already registered in this school."], 409);
     }
 
-    $studentId = Database::generateUniqueId('students');
+    $studentId = Database::generateId('STD', 'students', $schoolId);
     $stmt = $db->prepare("INSERT INTO students (id, school_id, class_id, admission_number, first_name, last_name, middle_name, date_of_birth, gender, status, nationality, home_address, religion, previous_school, medical_notes)
                           VALUES (?,?,?,?,?,?,?,?,?,'enrolled',?,?,?,?,?)");
     $stmt->execute([
@@ -117,7 +117,7 @@ $router->post('/schools/{schoolId}/students', function($schoolId) {
     $stmtBench   = $db->prepare("SELECT tuition_fee_benchmark FROM schools WHERE id=?");
     $stmtBench->execute([$schoolId]);
     $benchmark   = (float)($stmtBench->fetchColumn() ?: 500.00);
-    $feeId       = Database::generateUniqueId('fees');
+    $feeId       = Database::generateId('FEE', 'fees', $schoolId);
     $stmtFee     = $db->prepare("INSERT INTO fees (id, school_id, student_id, term, amount_due, amount_paid, status) VALUES (?,?,?,?,?,0.00,'unpaid')");
     $stmtFee->execute([$feeId, $schoolId, $studentId, $currentTerm, $benchmark]);
 
