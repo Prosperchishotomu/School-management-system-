@@ -97,7 +97,7 @@ function getCorrespondingNextClass($db, $schoolId, $currentClass) {
         }
 
         // Auto-create corresponding next class if missing
-        $newClassId = Database::generateUniqueId('classes');
+        $newClassId = Database::generateId('CLS');
         $stmtIns = $db->prepare("INSERT INTO classes (id, school_id, name, grade_level, stream) VALUES (?, ?, ?, ?, ?)");
         $stmtIns->execute([$newClassId, $schoolId, $nextName, $nextGrade, $stream ?: null]);
 

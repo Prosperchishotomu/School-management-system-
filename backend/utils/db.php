@@ -381,6 +381,64 @@ class Database {
     }
 
     /**
+     * Generate a logical context-aware prefixed ID (e.g. USR00001, STD00001, EXP00001, HST00001, RPM00001).
+     * Ensures NO table uses auto-increment IDs.
+     */
+    public static function generateId($prefix = 'ID', $table = null) {
+        $db = self::getConnection();
+        $prefix = strtoupper(trim($prefix));
+        
+        if (!$table) {
+            $prefixTableMap = [
+                'USR' => 'users',
+                'SCH' => 'schools',
+                'CLS' => 'classes',
+                'STD' => 'students',
+                'STF' => 'staff',
+                'GDN' => 'guardians',
+                'SUB' => 'subjects',
+                'LIC' => 'licenses',
+                'ATT' => 'attendance',
+                'GRD' => 'grades',
+                'RES' => 'results',
+                'FEE' => 'fees',
+                'PAY' => 'fee_payments',
+                'RPM' => 'remote_payments',
+                'EXP' => 'expenses',
+                'HST' => 'hostels',
+                'HAL' => 'hostel_allocations',
+                'NTF' => 'user_notifications',
+                'LVR' => 'leave_requests',
+                'TCH' => 'teaching_assignments',
+                'TSK' => 'tasks',
+                'AST' => 'assets',
+                'DIS' => 'discipline_incidents',
+                'EXM' => 'exams',
+                'ENQ' => 'enquiries'
+            ];
+            $table = $prefixTableMap[$prefix] ?? null;
+        }
+
+        if ($table) {
+            $stmt = $db->prepare("SELECT COUNT(*) FROM `$table` WHERE id LIKE ?");
+            $stmt->execute([$prefix . '%']);
+            $count = (int)$stmt->fetchColumn() + 1;
+            
+            while (true) {
+                $id = sprintf("%s%05d", $prefix, $count);
+                $stmtChk = $db->prepare("SELECT 1 FROM `$table` WHERE id = ? LIMIT 1");
+                $stmtChk->execute([$id]);
+                if (!$stmtChk->fetch()) {
+                    return $id;
+                }
+                $count++;
+            }
+        }
+
+        return self::generateUniqueId('users');
+    }
+
+    /**
      * Generate an alphanumeric ID based on a name that is unique in the target table.
      */
     public static function generateIdFromName($name, $table, $column = 'id', $length = 8) {
