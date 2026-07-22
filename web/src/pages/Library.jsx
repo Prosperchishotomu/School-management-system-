@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { BookOpen, Plus, X, Loader2, RotateCcw } from 'lucide-react';
+import { BookOpen, Plus, X, Loader2, RotateCcw, PenTool, BookMarked, Search, Filter } from 'lucide-react';
 
 const Library = () => {
   const { activeSchoolId, user } = useAuth();
@@ -10,9 +10,17 @@ const Library = () => {
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [subCategoryFilter, setSubCategoryFilter] = useState('all');
 
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: '', category: 'book', code: '', description: '' });
+  const [form, setForm] = useState({ 
+    name: '', 
+    category: 'book', 
+    resource_type: 'textbook', // 'textbook', 'stationery', 'fiction', 'past_paper'
+    code: '', 
+    shelf_location: '',
+    description: '' 
+  });
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -25,13 +33,13 @@ const Library = () => {
   const fetchAssets = () => {
     if (!activeSchoolId) return;
     setLoading(true);
-    api.get(`/schools/${activeSchoolId}/assets?page=${page}&per_page=20&category=book`)
+    api.get(`/schools/${activeSchoolId}/assets?page=${page}&per_page=30&category=book`)
       .then(res => {
         setAssets(res.data || []);
-        if (res.meta) setTotalPages(Math.ceil((res.meta.total || 1) / 20));
+        if (res.meta) setTotalPages(Math.ceil((res.meta.total || 1) / 30));
         setError('');
       })
-      .catch(() => { setAssets([]); setError('Could not load library assets.'); })
+      .catch(() => { setAssets([]); setError('Could not load library catalog and stationery inventory.'); })
       .finally(() => setLoading(false));
   };
 
@@ -42,12 +50,18 @@ const Library = () => {
     setFormLoading(true);
     setFormError('');
     try {
-      await api.post(`/schools/${activeSchoolId}/assets`, form);
+      const payload = {
+        name: form.name,
+        category: 'book',
+        code: form.code,
+        description: `[${form.resource_type.toUpperCase()}] ${form.shelf_location ? `Location: ${form.shelf_location}. ` : ''}${form.description}`
+      };
+      await api.post(`/schools/${activeSchoolId}/assets`, payload);
       setShowModal(false);
-      setForm({ name: '', category: 'book', code: '', description: '' });
+      setForm({ name: '', category: 'book', resource_type: 'textbook', code: '', shelf_location: '', description: '' });
       fetchAssets();
     } catch (err) {
-      setFormError(err.message || 'Failed to add asset.');
+      setFormError(err.message || 'Failed to register resource into library repository.');
     } finally {
       setFormLoading(false);
     }
@@ -72,39 +86,91 @@ const Library = () => {
       setLendForm({ holder_type: 'student', holder_id: '' });
       fetchAssets();
     } catch (err) {
-      alert(err.message || 'Failed to lend book.');
+      alert(err.message || 'Failed to issue item.');
     } finally {
       setLendLoading(false);
     }
   };
 
+  const filteredAssets = assets.filter(a => {
+    if (subCategoryFilter === 'all') return true;
+    return a.description?.toLowerCase().includes(`[${subCategoryFilter}]`);
+  });
+
   if (!activeSchoolId) {
     return (
       <div className="p-8 flex flex-col items-center justify-center min-h-[80vh] text-center font-sans animate-fadeIn">
-        <div className="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mb-4">
-          <BookOpen className="w-8 h-8 text-amber-500" />
+        <div className="w-16 h-16 rounded-2xl bg-teal-primary/10 flex items-center justify-center mb-4 text-teal-primary">
+          <BookOpen className="w-8 h-8" />
         </div>
         <h2 className="text-2xl font-display font-bold text-ink">No Active School Selected</h2>
-        <p className="text-ink/60 max-w-md mt-2 text-sm">Select a school tenant from the sidebar switcher to load the library and asset directory.</p>
+        <p className="text-ink/60 max-w-md mt-2 text-sm">Select a school tenant from the sidebar switcher to load the library and stationery resource repository.</p>
       </div>
     );
   }
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+      {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Library &amp; Asset Management</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">Track books, equipment, and issued items with holder history.</p>
+          <h2 className="text-3xl font-display font-bold text-ink">Library Catalog &amp; Stationery Repository</h2>
+          <p className="text-sm font-sans text-ink/60 mt-1">Single source of truth for textbooks, fiction, exam past papers, and classroom stationery supplies.</p>
         </div>
         {user?.role === 'school_admin' && (
           <button
             onClick={() => setShowModal(true)}
             className="flex items-center space-x-2 px-4 py-2.5 bg-teal-primary hover:bg-teal-dark text-paper font-sans font-semibold text-sm rounded-xl shadow-md transition-all cursor-pointer"
           >
-            <Plus className="w-4 h-4" /><span>Add Asset</span>
+            <Plus className="w-4 h-4" /><span>Append Book / Stationery</span>
           </button>
         )}
+      </div>
+
+      {/* Resource Category Filter Tabs */}
+      <div className="flex flex-wrap gap-2 border-b border-line-border/20 pb-3">
+        <button
+          onClick={() => setSubCategoryFilter('all')}
+          className={`px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
+            subCategoryFilter === 'all' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
+          }`}
+        >
+          All Library Resources ({assets.length})
+        </button>
+        <button
+          onClick={() => setSubCategoryFilter('textbook')}
+          className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
+            subCategoryFilter === 'textbook' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
+          }`}
+        >
+          <BookMarked className="w-3.5 h-3.5" />
+          <span>Textbooks &amp; Syllabi</span>
+        </button>
+        <button
+          onClick={() => setSubCategoryFilter('stationery')}
+          className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
+            subCategoryFilter === 'stationery' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
+          }`}
+        >
+          <PenTool className="w-3.5 h-3.5" />
+          <span>Stationery &amp; Supplies</span>
+        </button>
+        <button
+          onClick={() => setSubCategoryFilter('fiction')}
+          className={`px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
+            subCategoryFilter === 'fiction' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
+          }`}
+        >
+          General Literature &amp; Fiction
+        </button>
+        <button
+          onClick={() => setSubCategoryFilter('past_paper')}
+          className={`px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
+            subCategoryFilter === 'past_paper' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
+          }`}
+        >
+          Exam &amp; Past Papers
+        </button>
       </div>
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm">{error}</div>}
@@ -113,44 +179,47 @@ const Library = () => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-              <th className="py-4 px-6">Code</th>
-              <th className="py-4 px-6">Name / Title</th>
-              <th className="py-4 px-6">Status</th>
-              <th className="py-4 px-6">Issued To</th>
+              <th className="py-4 px-6">Barcode / ISBN</th>
+              <th className="py-4 px-6">Resource Title &amp; Details</th>
+              <th className="py-4 px-6">Availability Status</th>
+              <th className="py-4 px-6">Current Holder</th>
               <th className="py-4 px-6 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
             {loading ? (
-              <tr><td colSpan="5" className="py-12 text-center text-xs text-ink/40">Loading assets...</td></tr>
-            ) : assets.map(a => (
+              <tr><td colSpan="5" className="py-12 text-center text-xs text-ink/40">Loading repository items...</td></tr>
+            ) : filteredAssets.map(a => (
               <tr key={a.id} className="hover:bg-sage/5 transition-colors">
                 <td className="py-4 px-6 font-mono text-xs numeric-data text-ink/60">{a.code || '—'}</td>
-                <td className="py-4 px-6 font-bold">{a.name}</td>
+                <td className="py-4 px-6">
+                  <div className="font-bold text-ink">{a.name}</div>
+                  <span className="text-[10px] text-ink/50 block mt-0.5">{a.description}</span>
+                </td>
                 <td className="py-4 px-6">
                   <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${a.status === 'available' ? 'bg-sage/35 text-teal-dark' : 'bg-amber-warning/15 text-amber-warning'}`}>
                     {a.status || 'available'}
                   </span>
                 </td>
-                <td className="py-4 px-6 text-xs text-ink/70">{a.holder_name || '—'}</td>
-                 <td className="py-4 px-6 text-right">
+                <td className="py-4 px-6 text-xs text-ink/70">{a.holder_name || 'In Library / Store'}</td>
+                <td className="py-4 px-6 text-right">
                   <div className="inline-flex space-x-2 justify-end">
                     {a.status === 'issued' && (
                       <button onClick={() => handleReturn(a.id)} className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg cursor-pointer">
-                        <RotateCcw className="w-3.5 h-3.5" /><span>Return</span>
+                        <RotateCcw className="w-3.5 h-3.5" /><span>Check In</span>
                       </button>
                     )}
                     {a.status === 'available' && user?.role === 'school_admin' && (
                       <button onClick={() => { setSelectedAssetForLend(a); setShowLendModal(true); }} className="inline-flex items-center space-x-1 px-3 py-1.5 bg-teal-primary text-paper hover:bg-teal-dark text-xs font-semibold rounded-lg cursor-pointer">
-                        <span>Lend</span>
+                        <span>Check Out / Lend</span>
                       </button>
                     )}
                   </div>
                 </td>
               </tr>
             ))}
-            {assets.length === 0 && !loading && (
-              <tr><td colSpan="5" className="py-8 text-center text-ink/50 text-xs">No books registered yet.</td></tr>
+            {filteredAssets.length === 0 && !loading && (
+              <tr><td colSpan="5" className="py-12 text-center text-ink/50 text-xs">No books or stationery items registered in this category yet.</td></tr>
             )}
           </tbody>
         </table>
@@ -167,32 +236,41 @@ const Library = () => {
         <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
             <button onClick={() => setShowModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Add Library Asset</h3>
+            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Append Library Book / Stationery Item</h3>
             {formError && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 text-brick-critical text-xs">{formError}</div>}
             <form onSubmit={handleCreate} className="space-y-4 text-sm font-sans">
               <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Name / Title *</label>
-                <input required type="text" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Resource Title / Book Name *</label>
+                <input required type="text" placeholder="e.g. ZIMSEC O-Level Mathematics Grade 10" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <input type="hidden" value="book" />
-                  <span className="block px-3 py-2 bg-sage/10 text-teal-dark border border-line-border rounded-lg text-xs font-semibold">Book / Textbook</span>
+                  <label className="block text-xs font-semibold text-ink/70 mb-1">Resource Category</label>
+                  <select className="w-full px-3 py-2 border border-line-border rounded-lg text-xs bg-paper focus:outline-none focus:border-teal-primary" value={form.resource_type} onChange={e => setForm({...form, resource_type: e.target.value})}>
+                    <option value="textbook">Textbook / Syllabus</option>
+                    <option value="stationery">Stationery / Classroom Supply</option>
+                    <option value="fiction">General Literature / Fiction</option>
+                    <option value="past_paper">Exam &amp; Past Papers</option>
+                  </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Asset Code</label>
-                  <input type="text" placeholder="e.g. LIB-001" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
+                  <label className="block text-xs font-semibold text-ink/70 mb-1">Barcode / ISBN / Code</label>
+                  <input type="text" placeholder="e.g. BK-MTH-001" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Description</label>
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Shelf / Room Location</label>
+                <input type="text" placeholder="e.g. Main Library Shelf 4B or Store Room A" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.shelf_location} onChange={e => setForm({...form, shelf_location: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Notes / Edition Details</label>
                 <textarea rows="2" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary resize-none" value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
               </div>
               <div className="pt-2 flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
                 <button type="submit" disabled={formLoading} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-2">
                   {formLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Add Asset</span>
+                  <span>Append Resource</span>
                 </button>
               </div>
             </form>
@@ -203,7 +281,7 @@ const Library = () => {
         <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-paper rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
             <button onClick={() => setShowLendModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Lend Book</h3>
+            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Check Out Item</h3>
             <div className="p-3 bg-sage/5 border border-line-border/20 rounded-xl mb-4 font-mono text-[10px] space-y-1">
               <p>Title: <span className="font-bold text-ink">{selectedAssetForLend.name}</span></p>
               <p>Code: <span className="font-bold text-ink">{selectedAssetForLend.code}</span></p>
@@ -218,13 +296,13 @@ const Library = () => {
               </div>
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">Borrower ID *</label>
-                <input required type="text" placeholder="e.g. STU00001 or USR00003" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={lendForm.holder_id} onChange={e => setLendForm({...lendForm, holder_id: e.target.value})} />
+                <input required type="text" placeholder="e.g. STD00001 or USR00003" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={lendForm.holder_id} onChange={e => setLendForm({...lendForm, holder_id: e.target.value})} />
               </div>
               <div className="pt-2 flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowLendModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
                 <button type="submit" disabled={lendLoading} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-2">
                   {lendLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Check Out</span>
+                  <span>Check Out Item</span>
                 </button>
               </div>
             </form>

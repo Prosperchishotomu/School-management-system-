@@ -54,16 +54,16 @@ $router->get('/hostels/allocations', function() {
         SELECT ha.*, h.name as hostel_name, h.type as hostel_type,
                CASE 
                  WHEN ha.occupant_type = 'student' THEN CONCAT(s.first_name, ' ', s.last_name)
-                 ELSE st.name
+                 ELSE COALESCE(u.username, u.email)
                END as occupant_name,
                CASE 
                  WHEN ha.occupant_type = 'student' THEN s.admission_number
-                 ELSE st.employee_code
+                 ELSE u.email
                END as occupant_code
         FROM hostel_allocations ha
         JOIN hostels h ON ha.hostel_id = h.id
         LEFT JOIN students s ON ha.occupant_id = s.id AND ha.occupant_type = 'student'
-        LEFT JOIN staff st ON ha.occupant_id = st.id AND ha.occupant_type = 'staff'
+        LEFT JOIN users u ON ha.occupant_id = u.id AND ha.occupant_type = 'staff'
         WHERE ha.school_id = ?
         ORDER BY h.name ASC, ha.room_number ASC
     ");
