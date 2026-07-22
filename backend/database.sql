@@ -3,9 +3,16 @@ USE `schoolbase`;
 
 -- Drop all tables in reverse FK dependency order (safe rebuild)
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS `user_notifications`;
+DROP TABLE IF EXISTS `system_config`;
+DROP TABLE IF EXISTS `remote_payments`;
+DROP TABLE IF EXISTS `password_reset_tokens`;
+DROP TABLE IF EXISTS `login_rate_limit`;
+DROP TABLE IF EXISTS `grade_thresholds`;
 DROP TABLE IF EXISTS `leave_requests`;
 DROP TABLE IF EXISTS `tasks`;
 DROP TABLE IF EXISTS `teaching_assignments`;
+DROP TABLE IF EXISTS `teacher_messages`;
 DROP TABLE IF EXISTS `notification_settings`;
 DROP TABLE IF EXISTS `term_config`;
 DROP TABLE IF EXISTS `report_comments`;
@@ -14,6 +21,7 @@ DROP TABLE IF EXISTS `exams`;
 DROP TABLE IF EXISTS `student_health`;
 DROP TABLE IF EXISTS `timetable`;
 DROP TABLE IF EXISTS `announcements`;
+DROP TABLE IF EXISTS `asset_categories`;
 DROP TABLE IF EXISTS `assets`;
 DROP TABLE IF EXISTS `discipline_incidents`;
 DROP TABLE IF EXISTS `enquiries`;
@@ -34,7 +42,7 @@ DROP TABLE IF EXISTS `users`;
 DROP TABLE IF EXISTS `schools`;
 SET FOREIGN_KEY_CHECKS = 1;
 
-
+-- 1. Schools Table
 CREATE TABLE IF NOT EXISTS `schools` (
   `id` VARCHAR(8) PRIMARY KEY,
   `name` VARCHAR(150) NOT NULL,
@@ -44,7 +52,7 @@ CREATE TABLE IF NOT EXISTS `schools` (
   `tuition_fee_benchmark` DECIMAL(10,2) DEFAULT 500.00,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. Users Table
 CREATE TABLE IF NOT EXISTS `users` (
@@ -61,7 +69,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3. Licenses Table
 CREATE TABLE IF NOT EXISTS `licenses` (
@@ -76,7 +84,7 @@ CREATE TABLE IF NOT EXISTS `licenses` (
   `issued_by` VARCHAR(8) NOT NULL,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`issued_by`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Classes Table
 CREATE TABLE IF NOT EXISTS `classes` (
@@ -87,7 +95,7 @@ CREATE TABLE IF NOT EXISTS `classes` (
   `stream` VARCHAR(20) DEFAULT NULL, -- e.g. Science, Arts
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5. Staff Table
 CREATE TABLE IF NOT EXISTS `staff` (
@@ -103,7 +111,7 @@ CREATE TABLE IF NOT EXISTS `staff` (
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 6. Students Table
 CREATE TABLE IF NOT EXISTS `students` (
@@ -126,7 +134,7 @@ CREATE TABLE IF NOT EXISTS `students` (
   UNIQUE KEY `school_student_admission` (`school_id`, `admission_number`),
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. Guardians/Parents Table
 CREATE TABLE IF NOT EXISTS `guardians` (
@@ -141,7 +149,7 @@ CREATE TABLE IF NOT EXISTS `guardians` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Many-to-Many relationship between Students and Guardians
 CREATE TABLE IF NOT EXISTS `student_guardians` (
@@ -151,7 +159,7 @@ CREATE TABLE IF NOT EXISTS `student_guardians` (
   PRIMARY KEY (`student_id`, `guardian_id`),
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`guardian_id`) REFERENCES `guardians` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 8. Attendance Table
 CREATE TABLE IF NOT EXISTS `attendance` (
@@ -169,7 +177,7 @@ CREATE TABLE IF NOT EXISTS `attendance` (
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`taken_by`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 9. Grades Table (Raw Assessment Marks)
 CREATE TABLE IF NOT EXISTS `grades` (
@@ -187,7 +195,7 @@ CREATE TABLE IF NOT EXISTS `grades` (
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 10. Results Table (Published, aggregated results)
 CREATE TABLE IF NOT EXISTS `results` (
@@ -206,7 +214,7 @@ CREATE TABLE IF NOT EXISTS `results` (
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 11. Fees Table
 CREATE TABLE IF NOT EXISTS `fees` (
@@ -221,7 +229,7 @@ CREATE TABLE IF NOT EXISTS `fees` (
   UNIQUE KEY `student_term_fee` (`student_id`, `term`),
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 12. Fee Payments Table (Append-only Ledger)
 CREATE TABLE IF NOT EXISTS `fee_payments` (
@@ -243,7 +251,7 @@ CREATE TABLE IF NOT EXISTS `fee_payments` (
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`fee_id`) REFERENCES `fees` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 13. Audit Log (Append-only)
 CREATE TABLE IF NOT EXISTS `audit_logs` (
@@ -258,7 +266,7 @@ CREATE TABLE IF NOT EXISTS `audit_logs` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE SET NULL,
   FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 14. System Events (Uptime and errors)
 CREATE TABLE IF NOT EXISTS `system_events` (
@@ -269,7 +277,7 @@ CREATE TABLE IF NOT EXISTS `system_events` (
   `message` TEXT NOT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 15. Enquiries / Admissions Pipeline
 CREATE TABLE IF NOT EXISTS `enquiries` (
@@ -285,7 +293,7 @@ CREATE TABLE IF NOT EXISTS `enquiries` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 16. Discipline Incidents (Confidential, admin-only)
 CREATE TABLE IF NOT EXISTS `discipline_incidents` (
@@ -302,7 +310,7 @@ CREATE TABLE IF NOT EXISTS `discipline_incidents` (
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 17. Library / Assets
 CREATE TABLE IF NOT EXISTS `assets` (
@@ -321,7 +329,7 @@ CREATE TABLE IF NOT EXISTS `assets` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Asset Categories (System-wide + School-specific custom categories)
 CREATE TABLE IF NOT EXISTS `asset_categories` (
@@ -331,7 +339,7 @@ CREATE TABLE IF NOT EXISTS `asset_categories` (
   `code` VARCHAR(50) NOT NULL UNIQUE,
   `color_class` VARCHAR(100) DEFAULT 'text-blue-500 bg-blue-50',
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 18. Announcements
 CREATE TABLE IF NOT EXISTS `announcements` (
@@ -346,7 +354,7 @@ CREATE TABLE IF NOT EXISTS `announcements` (
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 19. Timetable Slots
 CREATE TABLE IF NOT EXISTS `timetable` (
@@ -362,7 +370,7 @@ CREATE TABLE IF NOT EXISTS `timetable` (
   UNIQUE KEY `class_day_period` (`class_id`, `day`, `period`),
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 20. Student Health Records (Restricted — school_admin only)
 CREATE TABLE IF NOT EXISTS `student_health` (
@@ -379,7 +387,7 @@ CREATE TABLE IF NOT EXISTS `student_health` (
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 21. Exams Schedule
 CREATE TABLE IF NOT EXISTS `exams` (
@@ -399,7 +407,7 @@ CREATE TABLE IF NOT EXISTS `exams` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 22. Notification Settings (per school)
 CREATE TABLE IF NOT EXISTS `notification_settings` (
@@ -424,7 +432,7 @@ CREATE TABLE IF NOT EXISTS `notification_settings` (
   `notify_discipline_incident` TINYINT(1) DEFAULT 1,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 23. National Curriculum Subjects (Managed by Super Admin)
 CREATE TABLE IF NOT EXISTS `subjects` (
@@ -437,7 +445,7 @@ CREATE TABLE IF NOT EXISTS `subjects` (
   `created_by` VARCHAR(8) DEFAULT NULL,       -- FK to super_admin user
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 24. Report Comments (Principal annotations on teacher reports)
 CREATE TABLE IF NOT EXISTS `report_comments` (
@@ -452,7 +460,7 @@ CREATE TABLE IF NOT EXISTS `report_comments` (
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 25. Term Configuration (per school — managed by super admin or school admin)
 CREATE TABLE IF NOT EXISTS `term_config` (
@@ -466,7 +474,7 @@ CREATE TABLE IF NOT EXISTS `term_config` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY `school_term` (`school_id`, `term_code`),
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 26. Teacher Messages (Principal communication system)
 CREATE TABLE IF NOT EXISTS `teacher_messages` (
@@ -479,7 +487,7 @@ CREATE TABLE IF NOT EXISTS `teacher_messages` (
   `sent_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 27. Teaching Assignments
 CREATE TABLE IF NOT EXISTS `teaching_assignments` (
@@ -494,7 +502,7 @@ CREATE TABLE IF NOT EXISTS `teaching_assignments` (
   FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 28. Teacher Tasks / Lesson Plans
 CREATE TABLE IF NOT EXISTS `tasks` (
@@ -513,7 +521,7 @@ CREATE TABLE IF NOT EXISTS `tasks` (
   FOREIGN KEY (`teacher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`class_id`) REFERENCES `classes` (`id`) ON DELETE CASCADE,
   FOREIGN KEY (`subject_id`) REFERENCES `subjects` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 29. Leave & Absence Requests (Zimbabwean school context)
 CREATE TABLE IF NOT EXISTS `leave_requests` (
@@ -535,4 +543,74 @@ CREATE TABLE IF NOT EXISTS `leave_requests` (
   FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE SET NULL,
   FOREIGN KEY (`staff_id`) REFERENCES `staff` (`id`) ON DELETE SET NULL,
   FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 30. Grade Thresholds
+CREATE TABLE IF NOT EXISTS `grade_thresholds` (
+  `id` VARCHAR(8) PRIMARY KEY,
+  `school_id` VARCHAR(8) NOT NULL,
+  `grade_symbol` VARCHAR(5) NOT NULL,
+  `min_mark` DECIMAL(5,2) NOT NULL,
+  `max_mark` DECIMAL(5,2) NOT NULL,
+  `is_pass` TINYINT(1) DEFAULT 1,
+  FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 31. Login Rate Limit
+CREATE TABLE IF NOT EXISTS `login_rate_limit` (
+  `ip` VARCHAR(45) PRIMARY KEY,
+  `attempts` INT UNSIGNED NOT NULL DEFAULT 1,
+  `window_start` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 32. Password Reset Tokens
+CREATE TABLE IF NOT EXISTS `password_reset_tokens` (
+  `id` VARCHAR(8) PRIMARY KEY,
+  `user_id` VARCHAR(8) NOT NULL,
+  `token_hash` VARCHAR(64) NOT NULL UNIQUE,
+  `expires_at` TIMESTAMP NOT NULL,
+  `used` TINYINT(1) DEFAULT 0,
+  `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 33. Remote Payments
+CREATE TABLE IF NOT EXISTS `remote_payments` (
+  `id` VARCHAR(8) PRIMARY KEY,
+  `school_id` VARCHAR(8) NOT NULL,
+  `student_id` VARCHAR(8) NOT NULL,
+  `guardian_id` VARCHAR(8) NOT NULL,
+  `amount` DECIMAL(10,2) NOT NULL,
+  `payment_date` DATE NOT NULL,
+  `payment_method` ENUM('bank_transfer', 'mobile_money') NOT NULL,
+  `reference` VARCHAR(100) NOT NULL UNIQUE,
+  `status` ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+  `rejection_reason` VARCHAR(255) DEFAULT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY `idx_remote_payments_ref` (`school_id`, `reference`),
+  FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`guardian_id`) REFERENCES `guardians` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 34. System Config
+CREATE TABLE IF NOT EXISTS `system_config` (
+  `key` VARCHAR(100) PRIMARY KEY,
+  `value` TEXT NOT NULL,
+  `updated_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 35. User Notifications
+CREATE TABLE IF NOT EXISTS `user_notifications` (
+  `id` VARCHAR(8) PRIMARY KEY,
+  `school_id` VARCHAR(8) NOT NULL,
+  `user_id` VARCHAR(8) NOT NULL,
+  `title` VARCHAR(200) NOT NULL,
+  `message` TEXT NOT NULL,
+  `is_read` TINYINT(1) DEFAULT 0,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_user_notifications_read` (`user_id`, `is_read`),
+  FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
