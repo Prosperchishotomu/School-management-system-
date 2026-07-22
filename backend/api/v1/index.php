@@ -112,6 +112,7 @@ require_once __DIR__ . '/routes/tasks.php';
 require_once __DIR__ . '/routes/admin.php';
 require_once __DIR__ . '/routes/leave_requests.php';
 require_once __DIR__ . '/routes/payments.php';
+require_once __DIR__ . '/routes/analytics_ds.php';
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 $router->dispatch();

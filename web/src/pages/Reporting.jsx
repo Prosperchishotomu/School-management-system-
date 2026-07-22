@@ -15,10 +15,10 @@ const Reporting = () => {
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState('');
 
-  // School Admin (Principal) stats
-  const [schoolStats, setSchoolStats] = useState(null);
-  const [schoolLoading, setSchoolLoading] = useState(false);
-  const [schoolError, setSchoolError] = useState('');
+  // Predictive Intelligence & Data Science stats
+  const [predictiveData, setPredictiveData] = useState(null);
+  const [predictiveLoading, setPredictiveLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('audit'); // 'audit' | 'data_science'
   
   // Principal annotations/comments state
   const [comments, setComments] = useState([]);
@@ -52,6 +52,13 @@ const Reporting = () => {
       .catch(() => setSchoolError('Could not retrieve detailed school analytics.'))
       .finally(() => setSchoolLoading(false));
       
+    // Fetch predictive data science stats
+    setPredictiveLoading(true);
+    api.get('/analytics/predictive')
+      .then(res => setPredictiveData(res.data))
+      .catch(() => {})
+      .finally(() => setPredictiveLoading(false));
+
     // Fetch comments
     api.get(`/schools/${schoolId}/comments`)
       .then(res => setComments(res.data || []))
