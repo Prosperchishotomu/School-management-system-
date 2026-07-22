@@ -214,56 +214,96 @@ const Home = ({ preOpenLogin = false }) => {
           </div>
         </div>
 
-        {/* Hero Right Column: Interactive Video & Portal Preview Card */}
+        {/* Hero Right Column: High-Fidelity Live System Cockpit Preview Card */}
         <div className="lg:col-span-5 animate-fadeIn">
           <div className="relative group">
-            <div className="absolute -inset-2 bg-gradient-to-r from-teal-primary/30 to-amber-500/20 rounded-3xl blur-2xl opacity-75 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
-            <div className="relative glass-card rounded-3xl border border-line-border/40 overflow-hidden shadow-2xl p-3 bg-white/80">
-              
-              {/* Bezel Window Header */}
-              <div className="flex items-center justify-between px-3 pb-3 pt-1 border-b border-line-border/20 text-ink/50 text-[10px] font-mono">
+            {/* Ambient Background Glow */}
+            <div className="absolute -inset-2 bg-gradient-to-r from-teal-primary/30 via-emerald-500/20 to-amber-500/20 rounded-3xl blur-2xl opacity-80 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            
+            <div className="relative glass-card rounded-3xl border border-line-border/40 overflow-hidden shadow-2xl p-4 bg-white/90 text-left space-y-4">
+              {/* Window Titlebar */}
+              <div className="flex items-center justify-between pb-3 border-b border-line-border/20 text-ink/50 text-[10px] font-mono">
                 <div className="flex items-center space-x-2">
-                  <span className="w-3 h-3 rounded-full bg-brick-critical/40" />
-                  <span className="w-3.5 h-3.5 rounded-full bg-amber-warning/40" />
-                  <span className="w-3 h-3 rounded-full bg-teal-primary/40" />
-                  <span className="ml-2 font-bold text-ink/75">live_school_cockpit.mp4</span>
+                  <span className="w-3 h-3 rounded-full bg-brick-critical/60" />
+                  <span className="w-3 h-3 rounded-full bg-amber-warning/60" />
+                  <span className="w-3 h-3 rounded-full bg-teal-primary/60" />
+                  <span className="ml-2 font-bold text-ink/80">harare_primary_cockpit.node</span>
                 </div>
-                <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold">LIVE SYSTEM</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold flex items-center space-x-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-teal-primary animate-pulse" />
+                  <span>ONLINE REALTIME</span>
+                </span>
               </div>
 
-              {/* Video Player */}
-              <div className="relative aspect-video bg-ink rounded-2xl overflow-hidden mt-2 shadow-inner">
-                <video
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity duration-300"
-                  src="https://player.vimeo.com/external/371433846.sd.mp4?s=236da2f3c054ba208413a9ec6f43e117bfa4ecbe&profile_id=139&oauth2_token_id=57447761"
-                />
-
-                {/* Floating Status Badges */}
-                <div className="absolute bottom-3 left-3 bg-ink/80 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-bold text-paper flex items-center space-x-2 border border-white/10 shadow-lg">
-                  <span className="w-2 h-2 rounded-full bg-teal-primary animate-pulse" />
-                  <span>Harare &amp; Guhune Multi-Tenant Nodes</span>
+              {/* School Tenant Indicator Header */}
+              <div className="p-3.5 rounded-2xl bg-teal-primary/10 border border-teal-primary/20 flex justify-between items-center">
+                <div>
+                  <span className="text-[9px] font-bold text-teal-primary uppercase tracking-widest">Active Tenant Instance</span>
+                  <h4 className="text-base font-display font-bold text-ink">Harare Primary School</h4>
+                  <p className="text-[10px] text-ink/60 font-mono">Tenant Code: HARAREPR (HRE-)</p>
                 </div>
-
-                <div className="absolute top-3 right-3 bg-white/90 backdrop-blur-md px-3 py-1 rounded-xl text-[10px] font-sans font-bold text-ink border border-white/40 shadow-md flex items-center space-x-1">
-                  <Lock className="w-3 h-3 text-teal-primary" />
-                  <span>256-Bit Encrypted</span>
+                <div className="px-3 py-1 bg-white rounded-xl text-[10px] font-bold text-teal-dark shadow-sm border border-teal-primary/20">
+                  2026-T1 Active
                 </div>
               </div>
 
-              {/* Quick Feature Stat Cards */}
-              <div className="grid grid-cols-2 gap-2 mt-3 pt-1">
-                <div className="p-3 rounded-xl bg-sage/10 border border-line-border/20 text-left">
-                  <span className="text-[9px] font-sans font-bold text-ink/50 uppercase">Tuition Revenue Ledger</span>
-                  <p className="text-sm font-bold text-teal-dark mt-0.5 numeric-data">$148,450.00 Paid</p>
+              {/* Real-time KPI Cards Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl bg-sage/10 border border-line-border/30">
+                  <div className="flex items-center justify-between text-ink/50 text-[10px] font-bold uppercase">
+                    <span>Paynow &amp; EcoCash</span>
+                    <DollarSign className="w-3.5 h-3.5 text-teal-primary" />
+                  </div>
+                  <p className="text-base font-bold text-teal-dark font-mono mt-1">$148,450.00</p>
+                  <span className="text-[9px] text-teal-primary font-semibold">88.4% Collection Rate</span>
                 </div>
-                <div className="p-3 rounded-xl bg-sage/10 border border-line-border/20 text-left">
-                  <span className="text-[9px] font-sans font-bold text-ink/50 uppercase">Predictive ML Risk</span>
-                  <p className="text-sm font-bold text-teal-dark mt-0.5 numeric-data">94.2% Passing Score</p>
+
+                <div className="p-3.5 rounded-2xl bg-sage/10 border border-line-border/30">
+                  <div className="flex items-center justify-between text-ink/50 text-[10px] font-bold uppercase">
+                    <span>Predictive Pass Rate</span>
+                    <TrendingUp className="w-3.5 h-3.5 text-teal-primary" />
+                  </div>
+                  <p className="text-base font-bold text-teal-dark font-mono mt-1">94.2% Passing</p>
+                  <span className="text-[9px] text-teal-primary font-semibold">14.2 Avg Primary Units</span>
                 </div>
+              </div>
+
+              {/* Sample Live Student Ledger Table */}
+              <div className="border border-line-border/25 rounded-2xl overflow-hidden bg-white/50">
+                <div className="px-3.5 py-2 bg-sage/20 border-b border-line-border/20 text-[9px] font-bold text-ink/60 uppercase flex justify-between items-center">
+                  <span>Student Registry Snippet</span>
+                  <span className="font-mono text-teal-primary">ZIMSEC &amp; Cambridge Verified</span>
+                </div>
+                <div className="divide-y divide-line-border/15 text-xs">
+                  <div className="px-3.5 py-2.5 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-ink">Rufaro Chigumba</div>
+                      <span className="text-[9px] text-ink/50 font-mono">HRE-STD00001 • Grade 1 Red</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-primary font-bold text-[10px]">
+                      6 Units (Distinction)
+                    </span>
+                  </div>
+
+                  <div className="px-3.5 py-2.5 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-ink">Tinashe Moyo</div>
+                      <span className="text-[9px] text-ink/50 font-mono">HRE-STD00002 • Form 6 Arts</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold text-[10px]">
+                      15 Points (3 A's)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Security Shield Footer */}
+              <div className="flex items-center justify-between text-[10px] text-ink/50 font-medium pt-1">
+                <div className="flex items-center space-x-1 text-teal-primary font-semibold">
+                  <Lock className="w-3 h-3" />
+                  <span>Isolated Tenant Data</span>
+                </div>
+                <span>Zimbabwe Data Protection Act 2021</span>
               </div>
             </div>
           </div>
