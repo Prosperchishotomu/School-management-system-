@@ -28,6 +28,8 @@ import {
   Loader2,
   X,
   Package,
+  Building2,
+  DollarSign,
   Settings
 } from 'lucide-react';
 
@@ -103,6 +105,8 @@ const Sidebar = ({ isOpen, onClose }) => {
           { path: '/health-records', label: 'Health Files', icon: HeartPulse },
           { path: '/exams', label: 'Exams Scheduling', icon: Calendar },
           { path: '/fees', label: 'Fees & Payments', icon: CreditCard },
+          { path: '/expenses', label: 'OpEx Expenses', icon: DollarSign },
+          { path: '/hostels', label: 'Hostels & Housing', icon: Building2 },
           { path: '/library', label: 'Library Catalog', icon: BookOpen },
           { path: '/assets', label: 'Asset Register', icon: Package },
           { path: '/staff', label: 'Staff Roster', icon: UserCheck },
@@ -153,21 +157,18 @@ const Sidebar = ({ isOpen, onClose }) => {
       }
     }
 
-    // Library accessible to everyone (except if parent has it on dashboard, but clean to offer)
-    if (user?.role !== 'parent') {
-      items.push(
-        { path: '/library', label: 'Library Catalog', icon: BookOpen }
-      );
-    } else {
-      items.push(
-        { path: '/library', label: 'Library Catalog', icon: BookOpen }
-      );
-    }
+    // Library accessible to everyone
+    items.push(
+      { path: '/library', label: 'Library Catalog', icon: BookOpen }
+    );
 
     // Assets & heavy admin panels
     if (user?.role === 'school_admin') {
       items.push(
         { path: '/classes', label: 'Classes & Assignments', icon: Grid3X3 },
+        { path: '/fees', label: 'Fees & Billing', icon: CreditCard },
+        { path: '/expenses', label: 'OpEx Expenses', icon: DollarSign },
+        { path: '/hostels', label: 'Hostels & Housing', icon: Building2 },
         { path: '/assets', label: 'Asset Register', icon: Package },
         { path: '/staff', label: 'Staff Roster', icon: UserCheck },
         { path: '/enquiries', label: 'Admissions Pipeline', icon: ClipboardList },

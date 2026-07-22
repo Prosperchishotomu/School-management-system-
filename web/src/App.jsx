@@ -35,6 +35,8 @@ import Tasks from './pages/Tasks';
 import Classes from './pages/Classes';
 import ParentPortal from './pages/ParentPortal';
 import LeaveRequests from './pages/LeaveRequests';
+import Hostels from './pages/Hostels';
+import Expenses from './pages/Expenses';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -516,6 +518,26 @@ function AppRoutes() {
           <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
             <LayoutShell>
               <Classes />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/hostels"
+        element={
+          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+            <LayoutShell>
+              <Hostels />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/expenses"
+        element={
+          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+            <LayoutShell>
+              <Expenses />
             </LayoutShell>
           </ProtectedRoute>
         }
