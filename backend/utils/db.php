@@ -2,7 +2,7 @@
 require_once __DIR__ . '/../config.php';
 
 // Current schema version — increment this whenever new migrations are added.
-define('SCHEMA_VERSION', 9);
+define('SCHEMA_VERSION', 10);
 
 class Database {
     private static $instance = null;
@@ -301,6 +301,49 @@ class Database {
                 if (!$qCat->fetch()) {
                     $pdo->exec("ALTER TABLE `subjects` ADD COLUMN `category` ENUM('general', 'arts', 'commercials', 'sciences') DEFAULT 'general' AFTER `level`");
                 }
+            }
+
+            // ── Migration v10: Hostels & Operational Expenses ────────────────────────
+            if ($currentVersion < 10) {
+                $pdo->exec("CREATE TABLE IF NOT EXISTS `hostels` (
+                    `id` VARCHAR(8) PRIMARY KEY,
+                    `school_id` VARCHAR(8) NOT NULL,
+                    `name` VARCHAR(100) NOT NULL,
+                    `type` ENUM('student_male', 'student_female', 'staff_housing') NOT NULL,
+                    `capacity` INT UNSIGNED NOT NULL DEFAULT 50,
+                    `warden_name` VARCHAR(100) DEFAULT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+                $pdo->exec("CREATE TABLE IF NOT EXISTS `hostel_allocations` (
+                    `id` VARCHAR(8) PRIMARY KEY,
+                    `school_id` VARCHAR(8) NOT NULL,
+                    `hostel_id` VARCHAR(8) NOT NULL,
+                    `occupant_id` VARCHAR(8) NOT NULL,
+                    `occupant_type` ENUM('student', 'staff') DEFAULT 'student',
+                    `room_number` VARCHAR(20) NOT NULL,
+                    `bed_number` VARCHAR(20) DEFAULT NULL,
+                    `allocated_date` DATE NOT NULL,
+                    `term` VARCHAR(20) NOT NULL,
+                    FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+                    FOREIGN KEY (`hostel_id`) REFERENCES `hostels` (`id`) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+                $pdo->exec("CREATE TABLE IF NOT EXISTS `expenses` (
+                    `id` VARCHAR(8) PRIMARY KEY,
+                    `school_id` VARCHAR(8) NOT NULL,
+                    `title` VARCHAR(255) NOT NULL,
+                    `category` ENUM('internet_ict', 'utilities_electricity', 'fuel_maintenance', 'food_catering', 'rent_accommodation', 'supplies', 'other') NOT NULL,
+                    `amount` DECIMAL(10,2) NOT NULL,
+                    `expense_date` DATE NOT NULL,
+                    `vendor_name` VARCHAR(100) DEFAULT NULL,
+                    `receipt_ref` VARCHAR(100) DEFAULT NULL,
+                    `recorded_by` VARCHAR(8) DEFAULT NULL,
+                    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (`school_id`) REFERENCES `schools` (`id`) ON DELETE CASCADE,
+                    FOREIGN KEY (`recorded_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
             }
 
             // ── Record new schema version ────────────────────────────────────

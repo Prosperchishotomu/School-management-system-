@@ -1,8 +1,11 @@
 <?php
 // schoolbase database seeding script
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/utils/db.php';
 
 try {
+    // Run auto-migration first
+    Database::getConnection();
     // Connect directly to schoolbase
     $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4";
     $options = [
@@ -17,7 +20,7 @@ try {
     // Clear existing data (be careful, this is a dev/seed script)
     $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
     $tables = [
-        'leave_requests', 'notification_settings', 'exams', 'student_health', 'timetable', 
+        'hostels', 'hostel_allocations', 'expenses', 'leave_requests', 'notification_settings', 'exams', 'student_health', 'timetable', 
         'announcements', 'assets', 'discipline_incidents', 'enquiries', 
         'system_events', 'audit_logs', 'fee_payments', 'fees', 
         'results', 'grades', 'attendance', 'student_guardians', 
@@ -285,6 +288,28 @@ try {
         ('LVR00003', 'HARAREPR', 'exeat_pass', 'STD00001', NULL, 'Falcon House', ?, '2026-07-25', '2026-07-27', 'Weekend visit home to Harare for family reunion exeat.', 'approved', ?, 'Approved by hostel master.')");
     $stmtLeave->execute([$parentUserId, $teacherUserId, $schoolAdminUserId, $parentUserId, $schoolAdminUserId]);
     echo "Leave and absence requests seeded.\n";
+
+    // 19. Seed Hostels & Staff Housing
+    $stmtHostel = $pdo->prepare("INSERT INTO hostels (id, school_id, name, type, capacity, warden_name) VALUES 
+        ('HST00001', 'HARAREPR', 'Falcon House (Boys Dorm)', 'student_male', 60, 'Mr. C. Mutasa'),
+        ('HST00002', 'HARAREPR', 'Protea House (Girls Dorm)', 'student_female', 60, 'Mrs. S. Ndlovu'),
+        ('HST00003', 'HARAREPR', 'Staff Quarters Block A', 'staff_housing', 12, 'Tinashe Moyo')");
+    $stmtHostel->execute();
+
+    $stmtHostelAlloc = $pdo->prepare("INSERT INTO hostel_allocations (id, school_id, hostel_id, occupant_id, occupant_type, room_number, bed_number, allocated_date, term) VALUES 
+        ('HAL00001', 'HARAREPR', 'HST00001', 'STD00001', 'student', 'Room 12B', 'Bed 1', '2026-01-10', '2026-T1'),
+        ('HAL00002', 'HARAREPR', 'HST00003', 'STF00001', 'staff', 'Flat A4', NULL, '2026-01-05', '2026-T1')");
+    $stmtHostelAlloc->execute();
+    echo "Hostels and staff housing allocations seeded.\n";
+
+    // 20. Seed Operational Expenses (Starlink, ZESA Electricity, Generator Diesel, ICT)
+    $stmtExp = $pdo->prepare("INSERT INTO expenses (id, school_id, title, category, amount, expense_date, vendor_name, receipt_ref, recorded_by) VALUES 
+        ('EXP00001', 'HARAREPR', 'Starlink High-Speed Satellite Internet Monthly Subscription', 'internet_ict', 120.00, '2026-07-01', 'Starlink / SpaceX', 'INV-STL-90812', ?),
+        ('EXP00002', 'HARAREPR', 'ZESA Prepaid Electricity Tokens (Main Campus & Hostels)', 'utilities_electricity', 450.00, '2026-07-05', 'ZETDC', 'TK-ZESA-44120', ?),
+        ('EXP00003', 'HARAREPR', 'Backup Generator Diesel Fuel (200 Litres)', 'fuel_maintenance', 310.00, '2026-07-10', 'TotalEnergies', 'RCP-TOT-88123', ?),
+        ('EXP00004', 'HARAREPR', 'Boarding Dining Hall Weekly Grocery Supplies', 'food_catering', 850.00, '2026-07-12', 'OK Zimbabwe Supermarket', 'RCP-OKZ-10921', ?)");
+    $stmtExp->execute([$schoolAdminUserId, $schoolAdminUserId, $schoolAdminUserId, $schoolAdminUserId]);
+    echo "Operational expenses (Starlink, ZESA, Diesel, Catering) seeded.\n";
 
     echo "Database seeding finished successfully!\n";
 
