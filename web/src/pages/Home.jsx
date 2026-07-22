@@ -227,7 +227,7 @@ const Home = ({ preOpenLogin = false }) => {
                   <span className="w-3 h-3 rounded-full bg-brick-critical/60" />
                   <span className="w-3 h-3 rounded-full bg-amber-warning/60" />
                   <span className="w-3 h-3 rounded-full bg-teal-primary/60" />
-                  <span className="ml-2 font-bold text-ink/80">harare_primary_cockpit.node</span>
+                  <span className="ml-2 font-bold text-ink/80">schoolbase_platform.node</span>
                 </div>
                 <span className="px-2.5 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold flex items-center space-x-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-teal-primary animate-pulse" />
@@ -235,63 +235,63 @@ const Home = ({ preOpenLogin = false }) => {
                 </span>
               </div>
 
-              {/* School Tenant Indicator Header */}
+              {/* Platform Capabilities Header */}
               <div className="p-3.5 rounded-2xl bg-teal-primary/10 border border-teal-primary/20 flex justify-between items-center">
                 <div>
-                  <span className="text-[9px] font-bold text-teal-primary uppercase tracking-widest">Active Tenant Instance</span>
-                  <h4 className="text-base font-display font-bold text-ink">Harare Primary School</h4>
-                  <p className="text-[10px] text-ink/60 font-mono">Tenant Code: HARAREPR (HRE-)</p>
+                  <span className="text-[9px] font-bold text-teal-primary uppercase tracking-widest">Multi-Tenant School Platform</span>
+                  <h4 className="text-base font-display font-bold text-ink">SchoolBase SaaS Suite</h4>
+                  <p className="text-[10px] text-ink/60 font-mono">Every school gets its own isolated data instance</p>
                 </div>
                 <div className="px-3 py-1 bg-white rounded-xl text-[10px] font-bold text-teal-dark shadow-sm border border-teal-primary/20">
-                  2026-T1 Active
+                  v2.5 Live
                 </div>
               </div>
 
-              {/* Real-time KPI Cards Grid */}
+              {/* Platform KPI Cards Grid */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3.5 rounded-2xl bg-sage/10 border border-line-border/30">
                   <div className="flex items-center justify-between text-ink/50 text-[10px] font-bold uppercase">
-                    <span>Paynow &amp; EcoCash</span>
+                    <span>Fee Collection</span>
                     <DollarSign className="w-3.5 h-3.5 text-teal-primary" />
                   </div>
-                  <p className="text-base font-bold text-teal-dark font-mono mt-1">$148,450.00</p>
-                  <span className="text-[9px] text-teal-primary font-semibold">88.4% Collection Rate</span>
+                  <p className="text-base font-bold text-teal-dark font-mono mt-1">Paynow + EcoCash</p>
+                  <span className="text-[9px] text-teal-primary font-semibold">Instant IPN Webhook</span>
                 </div>
 
                 <div className="p-3.5 rounded-2xl bg-sage/10 border border-line-border/30">
                   <div className="flex items-center justify-between text-ink/50 text-[10px] font-bold uppercase">
-                    <span>Predictive Pass Rate</span>
+                    <span>AI Risk Engine</span>
                     <TrendingUp className="w-3.5 h-3.5 text-teal-primary" />
                   </div>
-                  <p className="text-base font-bold text-teal-dark font-mono mt-1">94.2% Passing</p>
-                  <span className="text-[9px] text-teal-primary font-semibold">14.2 Avg Primary Units</span>
+                  <p className="text-base font-bold text-teal-dark font-mono mt-1">Predictive ML Score</p>
+                  <span className="text-[9px] text-teal-primary font-semibold">0–100% At-Risk Index</span>
                 </div>
               </div>
 
-              {/* Sample Live Student Ledger Table */}
+              {/* Platform Feature List */}
               <div className="border border-line-border/25 rounded-2xl overflow-hidden bg-white/50">
                 <div className="px-3.5 py-2 bg-sage/20 border-b border-line-border/20 text-[9px] font-bold text-ink/60 uppercase flex justify-between items-center">
-                  <span>Student Registry Snippet</span>
-                  <span className="font-mono text-teal-primary">ZIMSEC &amp; Cambridge Verified</span>
+                  <span>Core Platform Capabilities</span>
+                  <span className="font-mono text-teal-primary">All Schools Included</span>
                 </div>
                 <div className="divide-y divide-line-border/15 text-xs">
                   <div className="px-3.5 py-2.5 flex justify-between items-center">
                     <div>
-                      <div className="font-bold text-ink">Rufaro Chigumba</div>
-                      <span className="text-[9px] text-ink/50 font-mono">HRE-STD00001 • Grade 1 Red</span>
+                      <div className="font-bold text-ink">ZIMSEC &amp; Cambridge Grading</div>
+                      <span className="text-[9px] text-ink/50">Primary Units • O-Level • A-Level Points</span>
                     </div>
                     <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-primary font-bold text-[10px]">
-                      6 Units (Distinction)
+                      ✓ Native
                     </span>
                   </div>
 
                   <div className="px-3.5 py-2.5 flex justify-between items-center">
                     <div>
-                      <div className="font-bold text-ink">Tinashe Moyo</div>
-                      <span className="text-[9px] text-ink/50 font-mono">HRE-STD00002 • Form 6 Arts</span>
+                      <div className="font-bold text-ink">Hostels, OpEx &amp; Library</div>
+                      <span className="text-[9px] text-ink/50">Housing • Starlink • ZESA • Stationery</span>
                     </div>
                     <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold text-[10px]">
-                      15 Points (3 A's)
+                      ✓ Included
                     </span>
                   </div>
                 </div>
@@ -504,50 +504,52 @@ const Home = ({ preOpenLogin = false }) => {
 
             {/* Quick Demo Selector Buttons */}
             <div className="mb-6 space-y-2">
-              <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider text-left">Quick Demo Test Accounts:</label>
+              <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider text-left">
+                Try a demo role — or enter your school credentials below:
+              </label>
               <div className="grid grid-cols-2 gap-2 text-left">
                 <button
                   type="button"
-                  onClick={() => handleDemoSelect('schooladmin', 'SchoolAdmin123', 'Harare Primary Admin')}
+                  onClick={() => handleDemoSelect('schooladmin', 'SchoolAdmin123', 'School Admin')}
                   className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Harare Primary Admin' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
+                    selectedDemoRole === 'School Admin' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
                   }`}
                 >
-                  <div className="font-bold text-[11px]">🏫 Harare Primary Admin</div>
-                  <div className="text-[9px] text-ink/50 font-mono">schooladmin</div>
+                  <div className="font-bold text-[11px]">🏫 School Administrator</div>
+                  <div className="text-[9px] text-ink/50">Full school management access</div>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleDemoSelect('superadmin', 'SuperSecurePass123', 'Super Admin')}
+                  onClick={() => handleDemoSelect('superadmin', 'SuperSecurePass123', 'Platform Admin')}
                   className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Super Admin' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
+                    selectedDemoRole === 'Platform Admin' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
                   }`}
                 >
-                  <div className="font-bold text-[11px]">👑 Super Admin (All)</div>
-                  <div className="text-[9px] text-ink/50 font-mono">superadmin</div>
+                  <div className="font-bold text-[11px]">👑 Platform Admin</div>
+                  <div className="text-[9px] text-ink/50">All schools &amp; system config</div>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleDemoSelect('teacher', 'Teacher123', 'Teacher Role')}
+                  onClick={() => handleDemoSelect('teacher', 'Teacher123', 'Educator')}
                   className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Teacher Role' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
+                    selectedDemoRole === 'Educator' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
                   }`}
                 >
-                  <div className="font-bold text-[11px]">👨‍🏫 Educator Portal</div>
-                  <div className="text-[9px] text-ink/50 font-mono">teacher</div>
+                  <div className="font-bold text-[11px]">👨‍🏫 Educator / Teacher</div>
+                  <div className="text-[9px] text-ink/50">Classes, grades &amp; attendance</div>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => handleDemoSelect('parent', 'Parent123', 'Parent Role')}
+                  onClick={() => handleDemoSelect('parent', 'Parent123', 'Guardian')}
                   className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Parent Role' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
+                    selectedDemoRole === 'Guardian' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
                   }`}
                 >
-                  <div className="font-bold text-[11px]">👨‍👩‍👧 Parent Portal</div>
-                  <div className="text-[9px] text-ink/50 font-mono">parent</div>
+                  <div className="font-bold text-[11px]">👨‍👩‍👧 Parent / Guardian</div>
+                  <div className="text-[9px] text-ink/50">Child results, fees &amp; alerts</div>
                 </button>
               </div>
             </div>
