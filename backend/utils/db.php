@@ -426,6 +426,45 @@ class Database {
     }
 
     /**
+     * Compute total primary units (sum of 1-9 grades across up to 6 subjects, range 6 to 54)
+     */
+    public static function calculatePrimaryUnits($schoolId, $studentId, $term) {
+        $db = self::getConnection();
+        $stmt = $db->prepare("
+            SELECT subject, 
+                   COALESCE(ROUND(SUM(grade_value * weight) / NULLIF(SUM(weight), 0), 2), 0.00) as subject_mark
+            FROM grades
+            WHERE school_id = ? AND student_id = ? AND term = ?
+            GROUP BY subject
+        ");
+        $stmt->execute([$schoolId, $studentId, $term]);
+        $subjectRows = $stmt->fetchAll();
+
+        if (empty($subjectRows)) {
+            return 54;
+        }
+
+        $units = [];
+        foreach ($subjectRows as $row) {
+            $g = self::getGradeForMark($schoolId, (float)$row['subject_mark']);
+            $unitVal = (int)preg_replace('/[^0-9]/', '', $g['grade']);
+            if ($unitVal < 1 || $unitVal > 9) {
+                $unitVal = 9;
+            }
+            $units[] = $unitVal;
+        }
+
+        sort($units, SORT_NUMERIC);
+        $top6 = array_slice($units, 0, 6);
+        while (count($top6) < 6) {
+            $top6[] = 9;
+        }
+
+        $totalUnits = array_sum($top6);
+        return max(6, min(54, $totalUnits));
+    }
+
+    /**
      * Send a standardized error response and terminate.
      */
     private static function sendErrorResponse($code, $message, $httpStatus = 500) {

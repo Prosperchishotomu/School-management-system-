@@ -270,9 +270,13 @@ const Results = () => {
                 </div>
               </div>
               <div className="bg-sage/10 p-4 border border-line-border/30 rounded-2xl flex flex-col justify-between">
-                <span className="text-[10px] text-ink/50 font-bold uppercase tracking-wider">Term Average</span>
+                <span className="text-[10px] text-ink/50 font-bold uppercase tracking-wider">
+                  {kidRank.grade?.toString().includes('Units') ? 'Total Units' : 'Term Average'}
+                </span>
                 <div className="mt-2">
-                  <h4 className="text-xl font-bold font-mono text-ink">{kidRank.overall_percentage}%</h4>
+                  <h4 className="text-xl font-bold font-mono text-ink">
+                    {kidRank.grade?.toString().includes('Units') ? kidRank.grade : `${kidRank.overall_percentage}%`}
+                  </h4>
                 </div>
               </div>
               <div className="bg-sage/10 p-4 border border-line-border/30 rounded-2xl flex flex-col justify-between">

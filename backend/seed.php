@@ -3,30 +3,21 @@
 require_once __DIR__ . '/config.php';
 
 try {
-    // Create temporary connection to MySQL without specifying database first
-    $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";charset=utf8mb4";
+    // Connect directly to schoolbase
+    $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8mb4";
     $options = [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
+        PDO::ATTR_EMULATE_PREPARES   => true,
     ];
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
     
-    echo "Connected to MySQL database server.\n";
-
-    // Read and run schema sql
-    $schemaSql = file_get_contents(__DIR__ . '/database.sql');
-    echo "Executing schema SQL...\n";
-    $pdo->exec($schemaSql);
-    echo "Schema tables created successfully.\n";
-
-    // Connect to the newly created database
-    $pdo->exec("USE `schoolbase`");
+    echo "Connected to MySQL database 'schoolbase'.\n";
 
     // Clear existing data (be careful, this is a dev/seed script)
     $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
     $tables = [
-        'notification_settings', 'exams', 'student_health', 'timetable', 
+        'leave_requests', 'notification_settings', 'exams', 'student_health', 'timetable', 
         'announcements', 'assets', 'discipline_incidents', 'enquiries', 
         'system_events', 'audit_logs', 'fee_payments', 'fees', 
         'results', 'grades', 'attendance', 'student_guardians', 
@@ -35,7 +26,11 @@ try {
         'tasks', 'teaching_assignments'
     ];
     foreach ($tables as $table) {
-        $pdo->exec("TRUNCATE TABLE `$table`");
+        try {
+            $pdo->exec("DELETE FROM `$table`");
+        } catch (Exception $e) {
+            // Table doesn't exist yet
+        }
     }
     $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
     echo "Cleared old seed records (including new modules).\n";

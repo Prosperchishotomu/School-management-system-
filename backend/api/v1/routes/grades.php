@@ -253,10 +253,22 @@ $router->get('/schools/{schoolId}/classes/{classId}/results', function($schoolId
             $actualClassRank = $idx + 1;
         }
         
-        $avg = (float)$student['overall_percentage'];
-        $gradeInfo = Database::getGradeForMark($schoolId, $avg);
-        $student['grade']       = $gradeInfo['grade'];
-        $student['pass_status'] = $gradeInfo['pass_status'];
+        $stmtSchType = $db->prepare("SELECT school_type FROM schools WHERE id = ? LIMIT 1");
+        $stmtSchType->execute([$schoolId]);
+        $schType = $stmtSchType->fetchColumn() ?: 'secondary';
+        $isPrimary = ($schType === 'primary' || strpos(strtolower($gradeLevel), 'grade') !== false);
+
+        if ($isPrimary) {
+            $units = Database::calculatePrimaryUnits($schoolId, $student['student_id'], $term);
+            $student['primary_units'] = $units;
+            $student['grade']       = $units . ' Units';
+            $student['pass_status'] = ($units <= 36) ? 'pass' : 'fail';
+        } else {
+            $avg = (float)$student['overall_percentage'];
+            $gradeInfo = Database::getGradeForMark($schoolId, $avg);
+            $student['grade']       = $gradeInfo['grade'];
+            $student['pass_status'] = $gradeInfo['pass_status'];
+        }
         $student['rank']        = $actualClassRank; // class rank
         $student['class_total'] = $classTotal;
         $student['status']      = 'draft';
@@ -391,10 +403,22 @@ function publishClassResults($schoolId, $classId, $term, $userId) {
             $actualClassRank = $idx + 1;
         }
         
-        $avg = (float)$student['overall_percentage'];
-        $gradeInfo = Database::getGradeForMark($schoolId, $avg);
-        $student['grade']       = $gradeInfo['grade'];
-        $student['pass_status'] = $gradeInfo['pass_status'];
+        $stmtSchType = $db->prepare("SELECT school_type FROM schools WHERE id = ? LIMIT 1");
+        $stmtSchType->execute([$schoolId]);
+        $schType = $stmtSchType->fetchColumn() ?: 'secondary';
+        $isPrimary = ($schType === 'primary' || strpos(strtolower($gradeLevel), 'grade') !== false);
+
+        if ($isPrimary) {
+            $units = Database::calculatePrimaryUnits($schoolId, $student['student_id'], $term);
+            $student['primary_units'] = $units;
+            $student['grade']       = $units . ' Units';
+            $student['pass_status'] = ($units <= 36) ? 'pass' : 'fail';
+        } else {
+            $avg = (float)$student['overall_percentage'];
+            $gradeInfo = Database::getGradeForMark($schoolId, $avg);
+            $student['grade']       = $gradeInfo['grade'];
+            $student['pass_status'] = $gradeInfo['pass_status'];
+        }
         $student['rank']        = $actualClassRank;
         $student['class_total'] = $classTotal;
         
