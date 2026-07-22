@@ -64,3 +64,44 @@ $router->delete('/schools/{schoolId}/classes/{classId}', function($schoolId, $cl
     Auth::logAction($schoolId, $user['id'], 'CLASS_DELETED', 'classes', $classId, "Deleted class #{$classId}");
     Auth::sendResponse(null, null, 204);
 });
+
+// POST /schools/{schoolId}/classes/{classId}/promote (Batch Student Promotion / End-of-Year Rollover)
+$router->post('/schools/{schoolId}/classes/{classId}/promote', function($schoolId, $classId) {
+    $user = Auth::requireAuth();
+    Auth::requireRoles($user, ['super_admin', 'school_admin']);
+
+    $input = json_decode(file_get_contents('php://input'), true);
+    $targetClassId = trim($input['target_class_id'] ?? '');
+    $isGraduate    = !empty($input['is_graduate']);
+
+    if (empty($targetClassId) && !$isGraduate) {
+        Auth::sendResponse(null, ["code" => "VALIDATION_ERROR", "message" => "Target class ID or graduate flag required."], 400);
+    }
+
+    $db = Database::getConnection();
+
+    if ($isGraduate) {
+        $stmtPromote = $db->prepare("UPDATE students SET status = 'graduated', updated_at = NOW() WHERE school_id = ? AND class_id = ? AND status = 'enrolled'");
+        $stmtPromote->execute([$schoolId, $classId]);
+        $promotedCount = $stmtPromote->rowCount();
+        $msg = "Graduated {$promotedCount} students from class #{$classId}.";
+    } else {
+        $stmtTarget = $db->prepare("SELECT id, name FROM classes WHERE id = ? AND school_id = ? LIMIT 1");
+        $stmtTarget->execute([$targetClassId, $schoolId]);
+        $targetClass = $stmtTarget->fetch();
+        if (!$targetClass) {
+            Auth::sendResponse(null, ["code" => "NOT_FOUND", "message" => "Target class not found."], 404);
+        }
+
+        $stmtPromote = $db->prepare("UPDATE students SET class_id = ?, updated_at = NOW() WHERE school_id = ? AND class_id = ? AND status = 'enrolled'");
+        $stmtPromote->execute([$targetClassId, $schoolId, $classId]);
+        $promotedCount = $stmtPromote->rowCount();
+        $msg = "Promoted {$promotedCount} students to {$targetClass['name']}.";
+    }
+
+    Auth::logAction($schoolId, $user['id'], 'CLASS_PROMOTION', 'classes', $classId, $msg);
+    Auth::sendResponse([
+        "promoted_count" => $promotedCount,
+        "message"        => $msg
+    ]);
+});

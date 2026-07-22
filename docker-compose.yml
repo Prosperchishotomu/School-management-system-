@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # MySQL Database Container
+  db:
+    image: mysql:8.4
+    container_name: schoolbase_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:-SecretRootPass123!}
+      MYSQL_DATABASE: ${DB_NAME:-schoolbase}
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/database.sql:/docker-entrypoint-initdb.d/database.sql
+
+  # PHP 8.3 FPM Backend API Container
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: schoolbase_backend
+    restart: always
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-schoolbase}
+      DB_USER: root
+      DB_PASS: ${DB_PASS:-SecretRootPass123!}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-b052ec88bc8cbb35e12d5ae25bc60ee59db49a057dfb1f42a5f6dca9e44f0599}
+    depends_on:
+      - db
+    volumes:
+      - ./backend:/var/www/html/backend
+
+  # Nginx Reverse Proxy Container
+  web:
+    image: nginx:alpine
+    container_name: schoolbase_web
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./web/dist:/usr/share/nginx/html
+      - ./backend:/var/www/html/backend
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+
+volumes:
+  db_data:

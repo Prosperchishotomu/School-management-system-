@@ -103,6 +103,46 @@ $router->get('/reporting/export', function() {
     exit;
 });
 
+// GET /reporting/school/analytics — School multi-term & subject performance analytics
+$router->get('/reporting/school/analytics', function() {
+    $user = Auth::getCurrentUser();
+    Auth::requireRole(['school_admin', 'super_admin', 'teacher']);
+    $db = Database::getConnection();
+    $schoolId = $user['school_id'] ?: 'HARAREPR';
+
+    // Multi-term average performance comparison
+    $stmtTerms = $db->prepare("
+        SELECT term, 
+               ROUND(AVG(overall_percentage), 2) as average_percentage,
+               SUM(CASE WHEN pass_status='pass' THEN 1 ELSE 0 END) as pass_count,
+               COUNT(*) as total_students
+        FROM results
+        WHERE school_id = ?
+        GROUP BY term
+        ORDER BY term ASC
+    ");
+    $stmtTerms->execute([$schoolId]);
+    $termPerformance = $stmtTerms->fetchAll();
+
+    // Subject pass rate & average score breakdown
+    $stmtSubjects = $db->prepare("
+        SELECT subject,
+               ROUND(AVG(grade_value), 2) as average_score,
+               COUNT(*) as total_assessments
+        FROM grades
+        WHERE school_id = ?
+        GROUP BY subject
+        ORDER BY average_score DESC
+    ");
+    $stmtSubjects->execute([$schoolId]);
+    $subjectBreakdown = $stmtSubjects->fetchAll();
+
+    Auth::sendResponse([
+        "term_performance" => $termPerformance,
+        "subject_breakdown" => $subjectBreakdown
+    ]);
+});
+
 // GET /schools/{schoolId}/reporting — Per-school reporting
 $router->get('/schools/{schoolId}/reporting', function($schoolId) {
     $user = Auth::requireAuth();
