@@ -409,21 +409,30 @@ class Database {
     }
 
     /**
-     * Get the current active term code for a school.
-     * Falls back to the most recent term if no current term is flagged.
+     * Get the current active term code for a school dynamically determined by current date.
+     * Checks if current date falls within a term's date range, then checks is_current flag.
      */
     public static function getCurrentTerm($schoolId) {
         $db = self::getConnection();
+        $today = date('Y-m-d');
+
+        // 1. Check if today's date falls within a configured term's start_date and end_date
+        $stmtDate = $db->prepare("SELECT term_code FROM term_config WHERE school_id = ? AND ? >= start_date AND ? <= end_date ORDER BY start_date DESC LIMIT 1");
+        $stmtDate->execute([$schoolId, $today, $today]);
+        $rowDate = $stmtDate->fetch();
+        if ($rowDate) return $rowDate['term_code'];
+
+        // 2. Check if a term is explicitly marked as is_current = 1
         $stmt = $db->prepare("SELECT term_code FROM term_config WHERE school_id = ? AND is_current = 1 ORDER BY start_date DESC LIMIT 1");
         $stmt->execute([$schoolId]);
         $row = $stmt->fetch();
         if ($row) return $row['term_code'];
 
-        // Fallback: most recent term by end date
+        // 3. Fallback: most recent term by end date
         $stmt2 = $db->prepare("SELECT term_code FROM term_config WHERE school_id = ? ORDER BY end_date DESC LIMIT 1");
         $stmt2->execute([$schoolId]);
         $row2 = $stmt2->fetch();
-        return $row2 ? $row2['term_code'] : '2026-T1';
+        return $row2 ? $row2['term_code'] : (date('Y') . '-T' . ceil(date('n') / 4));
     }
 
     /**
