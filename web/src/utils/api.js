@@ -16,6 +16,11 @@ async function request(path, options = {}) {
     ...options.headers,
   };
 
+  const activeSchoolId = sessionStorage.getItem('schoolbase_active_school_id');
+  if (activeSchoolId) {
+    headers['X-Active-School-Id'] = activeSchoolId;
+  }
+
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }

@@ -153,6 +153,12 @@ class Auth {
             self::sendResponse(null, ["code" => "UNAUTHENTICATED", "message" => "Session is no longer valid. Please log in again."], 401);
         }
 
+        // Active school ID fallback for super_admin or users without assigned school_id
+        if (empty($user['school_id'])) {
+            $activeSchoolHeader = $headers['X-Active-School-Id'] ?? ($headers['x-active-school-id'] ?? ($_SERVER['HTTP_X_ACTIVE_SCHOOL_ID'] ?? 'HARAREPR'));
+            $user['school_id'] = $activeSchoolHeader ?: 'HARAREPR';
+        }
+
         // License check (non-super admins)
         if ($user['role'] !== 'super_admin') {
             self::checkLicense($user['school_id']);
