@@ -354,12 +354,12 @@ const Staff = () => {
               <th className="py-4 px-6">Email</th>
               <th className="py-4 px-6">Phone</th>
               <th className="py-4 px-6">Status</th>
-              {isPrincipal && <th className="py-4 px-6 text-right">Action</th>}
+              <th className="py-4 px-6 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
             {loading ? (
-              <tr><td colSpan={isPrincipal ? "6" : "5"} className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
+              <tr><td colSpan="6" className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
             ) : filteredStaff.map((s) => (
               <tr key={s.id} className="hover:bg-sage/5 transition-colors">
                 <td className="py-4 px-6 font-bold">
@@ -383,53 +383,51 @@ const Staff = () => {
                     {s.status || 'active'}
                   </span>
                 </td>
-                {isPrincipal && (
-                  <td className="py-4 px-6 text-right">
-                    <div className="inline-flex items-center space-x-2 justify-end">
-                      <button
-                        onClick={() => openMsgModal(s.id)}
-                        className="p-1.5 hover:bg-teal-primary/10 text-teal-primary rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
-                        title={`Send message to ${s.name}`}
-                      >
-                        <Mail className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">Message</span>
-                      </button>
-                      <button
-                        onClick={() => handleToggleStatus(s)}
-                        className={`p-1.5 rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1 ${
-                          s.status === 'deactivated' ? 'hover:bg-teal-primary/10 text-teal-primary' : 'hover:bg-amber-warning/10 text-amber-warning'
-                        }`}
-                        title={s.status === 'deactivated' ? 'Activate Staff Member' : 'Deactivate Staff Member'}
-                      >
-                        <UserCheck className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">{s.status === 'deactivated' ? 'Activate' : 'Deactivate'}</span>
-                      </button>
-                      <button
-                        onClick={() => openEditModal(s)}
-                        className="p-1.5 hover:bg-amber-warning/10 text-amber-warning rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
-                        title="Edit Staff Member"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">Edit</span>
-                      </button>
-                      <button
-                        onClick={() => handleDelete(s.id)}
-                        className="p-1.5 hover:bg-brick-critical/10 text-brick-critical rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
-                        title="Delete Staff Member"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        <span className="text-[10px] font-semibold">Delete</span>
-                      </button>
-                    </div>
-                  </td>
-                )}
+                <td className="py-4 px-6 text-right whitespace-nowrap">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      onClick={() => handleViewStaff(s)}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>View</span>
+                    </button>
+                    <button
+                      onClick={() => openEditModal(s)}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => handleToggleStatus(s)}
+                      title={s.status === 'deactivated' ? 'Activate Staff Member' : 'Suspend/Deactivate Staff Member'}
+                      className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
+                        s.status === 'deactivated'
+                          ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
+                          : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
+                      }`}
+                    >
+                      {s.status === 'deactivated' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                      <span>{s.status === 'deactivated' ? 'Activate' : 'Suspend'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleDelete(s.id)}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
             {filteredStaff.length === 0 && !loading && (
-              <tr><td colSpan={isPrincipal ? "6" : "5"} className="py-8 text-center text-ink/50 text-xs">No staff records match this filter.</td></tr>
+              <tr><td colSpan="6" className="py-8 text-center text-ink/50 text-xs">No staff records match this filter.</td></tr>
             )}
           </tbody>
         </table>
+
       </div>
 
       {/* Messaging Panel at the bottom */}

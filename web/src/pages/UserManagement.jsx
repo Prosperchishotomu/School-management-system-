@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { Users, Plus, X, Loader2, Shield, Trash2, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
+import { Users, Plus, X, Loader2, Shield, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Ban, CheckCircle2 } from 'lucide-react';
+
 
 const ROLE_STYLES = {
   school_admin: 'bg-purple-100 text-purple-700',
@@ -185,24 +186,43 @@ const UserManagement = () => {
                     {u.is_active ? 'Active' : 'Inactive'}
                   </span>
                 </td>
-                <td className="py-4 px-6 text-right">
-                  <div className="flex justify-end items-center space-x-3">
-                    {u.is_active && (
-                      <button
-                        onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
-                        className="text-ink/30 hover:text-teal-primary transition-colors cursor-pointer"
-                        title="Reset User Password"
-                      >
-                        <KeyRound className="w-4 h-4" />
-                      </button>
-                    )}
-                    {u.is_active && (u.role !== 'school_admin' || user?.role === 'super_admin') && u.id !== user?.id && (
-                      <button onClick={() => handleDeactivate(u.id)} className="text-ink/30 hover:text-brick-critical transition-colors cursor-pointer" title="Deactivate user">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                <td className="py-4 px-6 text-right whitespace-nowrap">
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      onClick={() => alert(`User Account Details:\nName: ${u.username}\nRole: ${u.role}\nEmail: ${u.email || 'N/A'}`)}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>View</span>
+                    </button>
+                    <button
+                      onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeactivate(u.id)}
+                      className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
+                        !u.is_active
+                          ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
+                          : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
+                      }`}
+                    >
+                      {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleDeactivate(u.id)}
+                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
+                    </button>
                   </div>
                 </td>
+
               </tr>
             ))}
             {users.length === 0 && !loading && (

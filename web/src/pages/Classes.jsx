@@ -3,8 +3,10 @@ import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Grid, BookOpen, User, Plus, Trash2, CheckCircle2,
-  AlertTriangle, Loader2, Sparkles, BookMarked, UserCheck
+  AlertTriangle, Loader2, Sparkles, BookMarked, UserCheck,
+  Eye, Edit2, Ban
 } from 'lucide-react';
+
 
 const Classes = () => {
   const { activeSchoolId } = useAuth();
@@ -356,16 +358,44 @@ const Classes = () => {
                       </div>
                     </div>
 
-                    <div className="flex justify-between items-center border-t border-line-border/20 pt-3">
-                      <span className="text-[10px] text-ink/65 font-sans font-bold">Active Stream</span>
+                    <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-line-border/20 pt-3">
+                      <button
+                        onClick={() => alert(`Class Details:\nName: ${c.name}\nGrade: ${c.grade_level}\nForm Master: ${c.form_master_name || 'Unassigned'}`)}
+                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-teal-primary/20"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>View</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          const newName = prompt('Edit class name:', c.name);
+                          if (newName && newName.trim()) {
+                            api.put(`/schools/${activeSchoolId}/classes/${c.id}`, { name: newName.trim() })
+                              .then(() => fetchData())
+                              .catch(err => alert(err.message));
+                          }
+                        }}
+                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-amber-warning/30"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={() => alert('Classroom is active.')}
+                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-orange-500/30"
+                      >
+                        <Ban className="w-3 h-3" />
+                        <span>Suspend</span>
+                      </button>
                       <button
                         onClick={() => handleDeleteClass(c.id)}
-                        className="p-1.5 text-brick-critical hover:bg-brick-critical/10 rounded-lg transition-colors cursor-pointer"
-                        title="Delete Classroom"
+                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-brick-critical/30"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete</span>
                       </button>
                     </div>
+
                   </div>
                 ))}
                 {classes.length === 0 && (
