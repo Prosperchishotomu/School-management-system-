@@ -48,10 +48,49 @@ const Students = () => {
   const [selectedIds, setSelectedIds] = useState([]);
   const [showReportModal, setShowReportModal] = useState(false);
 
-  // Parent Edit Modal
+  // Parent Edit & Autocomplete Modal states
   const [showParentModal, setShowParentModal] = useState(false);
   const [editingParent, setEditingParent] = useState(null);
   const [parentForm, setParentForm] = useState({ name: '', phone: '', email: '', relation: '', national_id: '' });
+  const [parentSearch, setParentSearch] = useState('');
+  const [showParentDropdown, setShowParentDropdown] = useState(false);
+  const [selectedExistingParent, setSelectedExistingParent] = useState(null);
+
+  const openEditParent = (p) => {
+    setEditingParent(p);
+    setParentForm({
+      name: p.name || '',
+      phone: p.phone || '',
+      email: p.email || '',
+      relation: p.relation || 'Mother',
+      national_id: p.national_id || ''
+    });
+    setShowParentModal(true);
+  };
+
+  const handleUpdateParent = async (e) => {
+    e.preventDefault();
+    if (!editingParent) return;
+    try {
+      await api.put(`/schools/${activeSchoolId}/guardians/${editingParent.id}`, parentForm);
+      setShowParentModal(false);
+      setEditingParent(null);
+      fetchData();
+    } catch (err) {
+      alert(err.message || 'Failed to update parent information.');
+    }
+  };
+
+  const handleDeleteParent = async (id) => {
+    if (!window.confirm('Are you sure you want to remove this parent record?')) return;
+    try {
+      await api.delete(`/schools/${activeSchoolId}/guardians/${id}`);
+      fetchData();
+    } catch (err) {
+      alert(err.message || 'Failed to delete parent record.');
+    }
+  };
+
 
   // Add modal
   const [showAddModal,  setShowAddModal]  = useState(false);
@@ -575,20 +614,44 @@ const Students = () => {
                     <td className="py-4 px-6 text-ink/70">{p.relation || 'Parent'}</td>
                     <td className="py-4 px-6 font-mono text-xs numeric-data">{p.phone || '-'}</td>
                     <td className="py-4 px-6 font-mono text-xs text-ink/70">{p.email || '-'}</td>
-                    <td className="py-4 px-6 text-teal-dark font-semibold text-xs">{p.children || 'No linked children'}</td>
+                    <td className="py-4 px-6 text-teal-dark font-semibold text-xs">{p.linked_children || p.children || 'No linked children'}</td>
                     <td className="py-4 px-6">
                       <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-sage/40 text-teal-dark">
                         Active
                       </span>
                     </td>
                     {isAdmin && (
-                      <td className="py-4 px-6 text-right">
-                        <button
-                          onClick={() => openEditParent(p)}
-                          className="inline-flex items-center space-x-1 px-3 py-1.5 bg-amber-warning/10 hover:bg-amber-warning/20 text-amber-warning text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" /><span>Edit Contact</span>
-                        </button>
+                      <td className="py-4 px-6 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => alert(`Parent Profile:\nName: ${p.name}\nPhone: ${p.phone || 'N/A'}\nEmail: ${p.email || 'N/A'}\nLinked Children: ${p.linked_children || p.children || 'None'}`)}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer border border-teal-primary/20 shadow-2xs"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>View</span>
+                          </button>
+                          <button
+                            onClick={() => openEditParent(p)}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer border border-amber-warning/30 shadow-2xs"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                          </button>
+                          <button
+                            onClick={() => alert('Parent account status active.')}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 text-xs font-bold rounded-xl transition-all cursor-pointer border border-orange-500/30 shadow-2xs"
+                          >
+                            <Ban className="w-3.5 h-3.5" />
+                            <span>Suspend</span>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteParent(p.id)}
+                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer border border-brick-critical/30 shadow-2xs"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -598,6 +661,7 @@ const Students = () => {
           </div>
         </div>
       )}
+
         {totalPages > 1 && (
           <div className="p-4 border-t border-line-border/30 flex justify-between items-center bg-paper/30">
             <button onClick={() => setPage(p => Math.max(p - 1, 1))} disabled={page === 1}
@@ -705,12 +769,96 @@ const Students = () => {
                   </div>
                 )}
 
-                {/* Section 5 — Guardian */}
+                {/* Section 5 — Guardian & Autocomplete Linkage */}
                 {activeSection === 5 && (
                   <div className="space-y-4">
-                    <div className="p-3 rounded-xl bg-amber-warning/10 border border-amber-warning/30 text-xs text-amber-warning font-semibold">
-                      Guardian contact is required. Every student must have a parent or guardian with at least a phone number or email address.
+                    <div className="p-3 rounded-xl bg-teal-primary/10 border border-teal-primary/20 text-xs text-teal-primary font-semibold">
+                      🔍 <strong>Search & Auto-Complete:</strong> Start typing an existing parent's name, phone, or email to auto-fill and link their account instead of re-entering data manually!
                     </div>
+
+                    {/* Autocomplete Input */}
+                    <div className="relative">
+                      <label className="block text-xs font-bold text-ink/75 mb-1">Search Existing Parent / Guardian (Autocomplete)</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Type parent name, phone (+263...), or email to retrieve existing record..."
+                          className="w-full px-3.5 py-2.5 bg-paper border border-teal-primary/40 rounded-xl text-xs font-sans text-ink focus:outline-none focus:ring-2 focus:ring-teal-primary/30"
+                          value={parentSearch}
+                          onChange={(e) => {
+                            setParentSearch(e.target.value);
+                            setShowParentDropdown(true);
+                          }}
+                          onFocus={() => setShowParentDropdown(true)}
+                        />
+                        <Search className="w-4 h-4 text-teal-primary absolute right-3 top-3" />
+                      </div>
+
+                      {/* Dropdown Results */}
+                      {showParentDropdown && parentSearch.trim().length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-paper border border-line-border/40 rounded-xl shadow-xl max-h-48 overflow-y-auto divide-y divide-line-border/20">
+                          {parents
+                            .filter(p =>
+                              p.name?.toLowerCase().includes(parentSearch.toLowerCase()) ||
+                              p.phone?.includes(parentSearch) ||
+                              p.email?.toLowerCase().includes(parentSearch.toLowerCase())
+                            )
+                            .map(p => (
+                              <div
+                                key={p.id}
+                                onClick={() => {
+                                  setNewStudent({
+                                    ...newStudent,
+                                    guardian_name: p.name || '',
+                                    guardian_phone: p.phone || '',
+                                    guardian_email: p.email || '',
+                                    guardian_national_id: p.national_id || '',
+                                    guardian_relation: p.relation || 'Mother',
+                                    existing_guardian_id: p.id
+                                  });
+                                  setSelectedExistingParent(p);
+                                  setShowParentDropdown(false);
+                                }}
+                                className="p-3 hover:bg-teal-primary/10 cursor-pointer flex items-center justify-between transition-colors"
+                              >
+                                <div>
+                                  <span className="font-bold text-xs text-ink block">{p.name}</span>
+                                  <span className="text-[10px] text-ink/60 font-mono">Phone: {p.phone || '-'} | Email: {p.email || '-'}</span>
+                                </div>
+                                <span className="text-[9px] font-bold bg-teal-primary/10 text-teal-primary px-2 py-0.5 rounded">
+                                  Link Parent
+                                </span>
+                              </div>
+                            ))}
+                          {parents.filter(p =>
+                            p.name?.toLowerCase().includes(parentSearch.toLowerCase()) ||
+                            p.phone?.includes(parentSearch) ||
+                            p.email?.toLowerCase().includes(parentSearch.toLowerCase())
+                          ).length === 0 && (
+                            <div className="p-3 text-xs text-ink/50 italic text-center">
+                              No matching existing parent found. Fill in details below to register a new parent profile.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedExistingParent && (
+                      <div className="p-3 rounded-xl bg-sage/30 border border-teal-primary/30 text-xs font-bold text-teal-dark flex justify-between items-center">
+                        <span>✓ Linked to Existing Parent: <strong>{selectedExistingParent.name}</strong> ({selectedExistingParent.phone || selectedExistingParent.email})</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedExistingParent(null);
+                            setParentSearch('');
+                          }}
+                          className="text-[10px] underline hover:text-brick-critical cursor-pointer"
+                        >
+                          Clear Linkage
+                        </button>
+                      </div>
+                    )}
+
                     <div className="grid grid-cols-2 gap-4">
                       <div><label className={labelCls}>Guardian Name *</label><input required type="text" className={inputCls} placeholder="e.g. Mary Mandizera" value={newStudent.guardian_name} onChange={e => setNewStudent({...newStudent, guardian_name: e.target.value})} /></div>
                       <div><label className={labelCls}>Guardian Relation</label>
@@ -736,6 +884,7 @@ const Students = () => {
                     </div>
                   </div>
                 )}
+
               </div>
 
               <div className="p-6 border-t border-line-border/30 flex justify-between items-center">
@@ -933,6 +1082,58 @@ const Students = () => {
           </div>
         </div>
       )}
+      {/* ── EDIT PARENT MODAL ─────────────────────────────────────────────────── */}
+      {showParentModal && editingParent && (
+        <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 relative p-6 space-y-4 animate-scaleUp">
+            <div className="flex justify-between items-center border-b border-line-border/20 pb-3">
+              <h3 className="text-lg font-display font-bold text-ink">Edit Parent / Guardian Details</h3>
+              <button onClick={() => setShowParentModal(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-4 h-4" /></button>
+            </div>
+
+            <form onSubmit={handleUpdateParent} className="space-y-4 text-xs font-sans">
+              <div>
+                <label className="block font-bold text-ink/75 mb-1">Parent Full Name *</label>
+                <input required type="text" className="w-full px-3 py-2 bg-paper border border-line-border rounded-xl" value={parentForm.name} onChange={e => setParentForm({ ...parentForm, name: e.target.value })} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-ink/75 mb-1">Phone Number</label>
+                  <input type="text" className="w-full px-3 py-2 bg-paper border border-line-border rounded-xl font-mono" value={parentForm.phone} onChange={e => setParentForm({ ...parentForm, phone: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block font-bold text-ink/75 mb-1">Email Address</label>
+                  <input type="email" className="w-full px-3 py-2 bg-paper border border-line-border rounded-xl font-mono" value={parentForm.email} onChange={e => setParentForm({ ...parentForm, email: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-ink/75 mb-1">National ID</label>
+                  <input type="text" className="w-full px-3 py-2 bg-paper border border-line-border rounded-xl" value={parentForm.national_id} onChange={e => setParentForm({ ...parentForm, national_id: e.target.value })} />
+                </div>
+                <div>
+                  <label className="block font-bold text-ink/75 mb-1">Relation</label>
+                  <select className="w-full px-3 py-2 bg-paper border border-line-border rounded-xl font-semibold" value={parentForm.relation} onChange={e => setParentForm({ ...parentForm, relation: e.target.value })}>
+                    <option value="Mother">Mother</option>
+                    <option value="Father">Father</option>
+                    <option value="Guardian">Guardian</option>
+                    <option value="Sponsor">Sponsor</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2 border-t border-line-border/20">
+                <button type="button" onClick={() => setShowParentModal(false)} className="px-4 py-2 border border-line-border rounded-xl font-semibold text-ink/70 hover:bg-sage/10 cursor-pointer">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-teal-primary hover:bg-teal-dark text-paper font-semibold rounded-xl shadow-md cursor-pointer">Save Parent Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <PrintReportModal
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
@@ -944,6 +1145,7 @@ const Students = () => {
         data={students}
         userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
       />
+
     </div>
   );
 };

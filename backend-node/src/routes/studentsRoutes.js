@@ -453,13 +453,17 @@ router.post('/promote', authenticateToken, requireRoles('school_admin', 'super_a
 });
 
 // GET /schools/:schoolId/guardians
+// GET /schools/:schoolId/guardians
 router.get('/guardians', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
     const guardians = await query(
-      `SELECT g.*, COUNT(sg.student_id) as children_count
+      `SELECT g.*, 
+              COUNT(sg.student_id) as children_count,
+              GROUP_CONCAT(DISTINCT CONCAT(st.first_name, ' ', st.last_name) SEPARATOR ', ') as linked_children
        FROM guardians g
        LEFT JOIN student_guardians sg ON g.id = sg.guardian_id
+       LEFT JOIN students st ON sg.student_id = st.id
        WHERE g.school_id = ?
        GROUP BY g.id
        ORDER BY g.name ASC`,
@@ -516,8 +520,8 @@ router.post('/bulk-delete', authenticateToken, requireRoles('school_admin', 'sup
   }
 });
 
-// PATCH /schools/:schoolId/guardians/:id
-router.patch('/guardians/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+// PUT / PATCH /schools/:schoolId/guardians/:id
+const handleUpdateGuardian = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, phone, email, national_id, relation } = req.body;
@@ -537,7 +541,24 @@ router.patch('/guardians/:id', authenticateToken, requireRoles('school_admin', '
     console.error('Update guardian error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update parent/guardian information.' } });
   }
+};
+
+router.patch('/guardians/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleUpdateGuardian);
+router.put('/guardians/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleUpdateGuardian);
+
+// DELETE /schools/:schoolId/guardians/:id
+router.delete('/guardians/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM student_guardians WHERE guardian_id = ?', [id]);
+    await query('DELETE FROM guardians WHERE id = ?', [id]);
+    return res.json({ data: { message: 'Parent record removed successfully.' } });
+  } catch (err) {
+    console.error('Delete guardian error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete parent record.' } });
+  }
 });
+
 
 // GET /schools/:schoolId/students/:studentId/discipline
 router.get('/:studentId/discipline', authenticateToken, async (req, res) => {
