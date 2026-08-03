@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer } from 'lucide-react';
+import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer, Eye, BookOpen, Phone, AtSign } from 'lucide-react';
 import PrintReportModal from '../components/PrintReportModal';
 
 const Staff = () => {
@@ -33,6 +33,25 @@ const Staff = () => {
   const [msgLoading, setMsgLoading] = useState(false);
   const [msgError, setMsgError] = useState('');
   const [msgSuccess, setMsgSuccess] = useState('');
+
+  // Staff detail view state
+  const [viewStaff, setViewStaff] = useState(null);
+  const [viewStaffProfile, setViewStaffProfile] = useState(null);
+  const [viewStaffLoading, setViewStaffLoading] = useState(false);
+
+  const handleViewStaff = async (s) => {
+    setViewStaff(s);
+    setViewStaffProfile(null);
+    setViewStaffLoading(true);
+    try {
+      const res = await api.get(`/schools/${activeSchoolId}/staff/${s.id}`);
+      setViewStaffProfile(res.data);
+    } catch(e) {
+      setViewStaffProfile({ staff: s, assignments: [], messages: [] });
+    } finally {
+      setViewStaffLoading(false);
+    }
+  };
 
   const isPrincipal = ['school_admin', 'super_admin'].includes(user?.role);
   const isTeacher = user?.role === 'teacher';
@@ -340,7 +359,14 @@ const Staff = () => {
               <tr><td colSpan={isPrincipal ? "6" : "5"} className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
             ) : filteredStaff.map((s) => (
               <tr key={s.id} className="hover:bg-sage/5 transition-colors">
-                <td className="py-4 px-6 font-bold">{s.name}</td>
+                <td className="py-4 px-6 font-bold">
+                  <button
+                    onClick={() => handleViewStaff(s)}
+                    className="text-left text-teal-primary hover:text-teal-dark hover:underline font-bold cursor-pointer transition-colors"
+                  >
+                    {s.name}
+                  </button>
+                </td>
                 <td className="py-4 px-6 text-ink/70">
                   <span className="font-semibold">{s.role_title || 'Teacher'}</span>
                   {s.class_name && <span className="block text-[10px] text-teal-primary font-bold">Class: {s.class_name}</span>}
@@ -668,6 +694,138 @@ const Staff = () => {
         data={staff}
         userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
       />
+
+      {/* Staff Profile Detail Modal */}
+      {viewStaff && (
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/40 backdrop-blur-sm" onClick={() => setViewStaff(null)}>
+          <div
+            className="w-full max-w-md h-full bg-paper shadow-2xl overflow-y-auto animate-slideInRight"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal header */}
+            <div className="bg-gradient-to-br from-teal-primary to-teal-dark p-6 text-paper flex items-start justify-between">
+              <div>
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center text-2xl font-display font-bold mb-3">
+                  {viewStaff.name?.charAt(0) || '?'}
+                </div>
+                <h3 className="text-xl font-display font-bold">{viewStaff.name}</h3>
+                <p className="text-paper/70 text-sm mt-0.5">{viewStaff.role_title || 'Teacher'}</p>
+                <span className={`mt-2 inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                  viewStaff.status === 'deactivated' ? 'bg-brick-critical/40 text-white' : 'bg-white/20 text-paper'
+                }`}>
+                  {viewStaff.status || 'Active'}
+                </span>
+              </div>
+              <button onClick={() => setViewStaff(null)} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 cursor-pointer transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {viewStaffLoading ? (
+                <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-teal-primary" /></div>
+              ) : viewStaffProfile ? (
+                <>
+                  {/* Contact Info */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold text-ink/40 uppercase tracking-wider">Contact Information</h4>
+                    <div className="space-y-2">
+                      {viewStaff.email && (
+                        <div className="flex items-center space-x-3 p-3 bg-sage/10 rounded-xl border border-line-border/25">
+                          <AtSign className="w-4 h-4 text-teal-primary flex-shrink-0" />
+                          <span className="text-xs font-mono text-ink">{viewStaff.email}</span>
+                        </div>
+                      )}
+                      {viewStaff.phone && (
+                        <div className="flex items-center space-x-3 p-3 bg-sage/10 rounded-xl border border-line-border/25">
+                          <Phone className="w-4 h-4 text-teal-primary flex-shrink-0" />
+                          <span className="text-xs font-mono text-ink">{viewStaff.phone}</span>
+                        </div>
+                      )}
+                      {viewStaff.class_name && (
+                        <div className="flex items-center space-x-3 p-3 bg-teal-primary/5 rounded-xl border border-teal-primary/20">
+                          <BookOpen className="w-4 h-4 text-teal-primary flex-shrink-0" />
+                          <div>
+                            <span className="text-[10px] font-bold text-teal-primary block uppercase tracking-wider">Class Teacher</span>
+                            <span className="text-xs font-bold text-ink">{viewStaff.class_name}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Account credentials */}
+                  {viewStaffProfile.staff?.username && isPrincipal && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold text-ink/40 uppercase tracking-wider">Login Account</h4>
+                      <div className="p-3 bg-ink/5 rounded-xl border border-line-border/25 font-mono text-xs space-y-1">
+                        <div><span className="text-ink/50">Username: </span><span className="font-bold text-ink">{viewStaffProfile.staff.username}</span></div>
+                        <div><span className="text-ink/50">Role: </span><span className="font-bold text-ink capitalize">{viewStaffProfile.staff.user_role || 'teacher'}</span></div>
+                        <div><span className="text-ink/50">Account: </span>
+                          <span className={`font-bold ${viewStaffProfile.staff.account_status === 'active' ? 'text-teal-primary' : 'text-brick-critical'}`}>
+                            {viewStaffProfile.staff.account_status || 'active'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Teaching assignments */}
+                  {viewStaffProfile.assignments?.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold text-ink/40 uppercase tracking-wider">Teaching Assignments ({viewStaffProfile.assignments.length})</h4>
+                      <div className="space-y-1.5">
+                        {viewStaffProfile.assignments.map((a, i) => (
+                          <div key={i} className="flex items-center justify-between p-2.5 bg-sage/5 rounded-lg border border-line-border/20 text-xs">
+                            <span className="font-bold text-ink">{a.subject_name}</span>
+                            <span className="text-ink/50 font-semibold">{a.class_name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Recent messages */}
+                  {viewStaffProfile.messages?.length > 0 && isPrincipal && (
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-bold text-ink/40 uppercase tracking-wider">Recent Communications ({viewStaffProfile.messages.length})</h4>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                        {viewStaffProfile.messages.map((m, i) => (
+                          <div key={i} className="p-2.5 bg-sage/5 rounded-lg border border-line-border/20 text-xs">
+                            <p className="font-bold text-ink">{m.subject}</p>
+                            <p className="text-ink/60 mt-0.5 line-clamp-2">{m.body}</p>
+                            <p className="text-ink/30 mt-1">{m.created_at ? new Date(m.created_at).toLocaleDateString() : ''}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quick actions */}
+                  {isPrincipal && (
+                    <div className="pt-2 flex gap-2">
+                      <button
+                        onClick={() => { setViewStaff(null); openMsgModal(viewStaff.id); }}
+                        className="flex-1 flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-teal-primary hover:bg-teal-dark text-paper text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Send Message</span>
+                      </button>
+                      <button
+                        onClick={() => { setViewStaff(null); openEditModal(viewStaff); }}
+                        className="flex-1 flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-amber-warning/20 hover:bg-amber-warning/30 text-amber-dark text-xs font-bold rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Edit Profile</span>
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

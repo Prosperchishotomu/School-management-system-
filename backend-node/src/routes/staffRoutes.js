@@ -24,6 +24,51 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /schools/:schoolId/staff/:id — detailed staff profile
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const staff = await queryOne(
+      `SELECT stf.*, c.name as assigned_class_name, u.username, u.role as user_role, u.status as account_status, u.email as user_email
+       FROM staff stf
+       LEFT JOIN classes c ON stf.class_id = c.id
+       LEFT JOIN users u ON stf.user_id = u.id
+       WHERE stf.id = ? AND stf.school_id = ?`,
+      [id, schoolId]
+    );
+    if (!staff) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Staff member not found.' } });
+
+    // Teaching assignments
+    let assignments = [];
+    try {
+      assignments = await query(
+        `SELECT ta.*, c.name as class_name, sub.name as subject_name
+         FROM teaching_assignments ta
+         LEFT JOIN classes c ON ta.class_id = c.id
+         LEFT JOIN subjects sub ON ta.subject_id = sub.id
+         WHERE ta.school_id = ? AND ta.teacher_id = ?
+         ORDER BY c.name ASC`,
+        [schoolId, staff.user_id || id]
+      );
+    } catch(e) {}
+
+    // Sent messages
+    let messages = [];
+    try {
+      messages = await query(
+        `SELECT * FROM teacher_messages WHERE school_id = ? AND (sender_id = ? OR recipient_id = ?)
+         ORDER BY created_at DESC LIMIT 20`,
+        [schoolId, staff.user_id || id, staff.user_id || id]
+      );
+    } catch(e) {}
+
+    return res.json({ data: { staff, assignments, messages } });
+  } catch (err) {
+    console.error('Get staff profile error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to load staff profile.' } });
+  }
+});
+
 // POST /schools/:schoolId/staff
 router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {

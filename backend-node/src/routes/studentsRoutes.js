@@ -275,7 +275,7 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
     );
 
     const feePayments = await query(
-      `SELECT fp.*, f.term as fee_title, f.term
+      `SELECT fp.*, f.term as fee_title, f.term, f.id as fee_id
        FROM fee_payments fp
        JOIN fees f ON fp.fee_id = f.id
        WHERE fp.student_id = ?
@@ -283,19 +283,52 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
       [id]
     );
 
-    // Build fee summary
+    // Build fee summary — include both naming conventions for backward-compat
     const feeRecords = await query(
-      'SELECT * FROM fees WHERE student_id = ?',
+      'SELECT * FROM fees WHERE student_id = ? ORDER BY created_at DESC',
       [id]
     );
-    const totalDue = feeRecords.reduce((sum, f) => sum + parseFloat(f.amount_due || 0), 0);
+    const totalDue  = feeRecords.reduce((sum, f) => sum + parseFloat(f.amount_due  || 0), 0);
     const totalPaid = feeRecords.reduce((sum, f) => sum + parseFloat(f.amount_paid || 0), 0);
+    const balance   = Math.max(0, totalDue - totalPaid);
+    // Pick the most recent unpaid fee id for online payment button
+    const latestFeePendingId = feeRecords.find(f => parseFloat(f.amount_paid || 0) < parseFloat(f.amount_due || 0))?.id
+                             || feeRecords[0]?.id
+                             || null;
     const feeSummary = {
-      total_due: parseFloat(totalDue.toFixed(2)),
-      total_paid: parseFloat(totalPaid.toFixed(2)),
-      balance: parseFloat(Math.max(0, totalDue - totalPaid).toFixed(2)),
-      records: feeRecords
+      id:          latestFeePendingId,                      // needed for pay-online button
+      total_due:   parseFloat(totalDue.toFixed(2)),
+      total_paid:  parseFloat(totalPaid.toFixed(2)),
+      balance:     parseFloat(balance.toFixed(2)),
+      amount_due:  parseFloat(totalDue.toFixed(2)),         // legacy frontend field
+      amount_paid: parseFloat(totalPaid.toFixed(2)),        // legacy frontend field
+      status:      balance <= 0 ? 'cleared' : (totalPaid > 0 ? 'partial' : 'unpaid'),
+      records:     feeRecords
     };
+
+    // Attendance summary
+    let attendanceSummary = { present: 0, absent: 0, late: 0, total: 0, percentage: 100 };
+    try {
+      const attRecords = await query(
+        'SELECT status FROM attendance WHERE student_id = ?', [id]
+      );
+      const present = attRecords.filter(a => a.status === 'present').length;
+      const absent  = attRecords.filter(a => a.status === 'absent').length;
+      const late    = attRecords.filter(a => a.status === 'late').length;
+      const total   = attRecords.length;
+      attendanceSummary = {
+        present, absent, late, total,
+        percentage: total > 0 ? Math.round(((present + late) / total) * 100) : 100
+      };
+    } catch(e) {}
+
+    // Discipline history
+    let disciplineRecords = [];
+    try {
+      disciplineRecords = await query(
+        'SELECT * FROM discipline WHERE student_id = ? ORDER BY date DESC LIMIT 20', [id]
+      );
+    } catch(e) {}
 
     return res.json({
       data: {
@@ -303,7 +336,9 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
         guardians,
         grades,
         feePayments,
-        feeSummary
+        feeSummary,
+        attendanceSummary,
+        disciplineRecords
       }
     });
   } catch (err) {
