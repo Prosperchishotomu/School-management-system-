@@ -197,5 +197,39 @@ router.post('/read-all', authenticateToken, async (req, res) => {
   }
 });
 
+// POST /notifications/delete-batch — Delete selected notifications by ID
+router.post('/delete-batch', authenticateToken, async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'No notification IDs provided for deletion.' } });
+    }
+    const cleanIds = ids.map(i => String(i).replace(/^ann_|^msg_/, ''));
+    const placeholders = cleanIds.map(() => '?').join(',');
+    await query(`DELETE FROM notifications WHERE id IN (${placeholders})`, cleanIds);
+    try { await query(`DELETE FROM teacher_messages WHERE id IN (${placeholders})`, cleanIds); } catch(e) {}
+    try { await query(`DELETE FROM announcements WHERE id IN (${placeholders})`, cleanIds); } catch(e) {}
+    return res.json({ data: { message: `Deleted ${cleanIds.length} items.` } });
+  } catch (err) {
+    console.error('Delete batch error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete selected notifications.' } });
+  }
+});
+
+// POST /notifications/clear-all — Delete all notifications for current user
+router.post('/clear-all', authenticateToken, async (req, res) => {
+  try {
+    await query(
+      `DELETE FROM notifications WHERE user_id = ? OR target_role = ? OR (school_id = ? AND user_id IS NULL)`,
+      [req.user.id, req.user.role, req.user.school_id]
+    );
+    return res.json({ data: { message: 'All notifications cleared.' } });
+  } catch (err) {
+    console.error('Clear all notifications error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to clear notifications.' } });
+  }
+});
+
 module.exports = router;
+
 

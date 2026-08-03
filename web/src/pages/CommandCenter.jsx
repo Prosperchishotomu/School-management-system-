@@ -261,17 +261,111 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      {/* KPI Row */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        <StatCard label="Schools"           value={t.schools}           icon={Building}      />
-        <StatCard label="Total Students"    value={t.students}          icon={Users}         />
-        <StatCard label="Staff Members"     value={t.staff}             icon={Users}         />
-        <StatCard label="Active Licenses"   value={t.active_licenses}   icon={Key}           />
-        <StatCard label="Expiring ≤30d"     value={t.expiring_licenses} icon={Key}    warning={t.expiring_licenses > 0} color="amber" />
-        <StatCard label="Active Alerts"     value={t.active_alerts}     icon={AlertTriangle} warning={t.active_alerts > 0} />
+        <StatCard label="Schools"           value={t.schools}           icon={Building}      onClick={() => handleCardClick('schools', 'Platform Schools Directory')} />
+        <StatCard label="Total Students"    value={t.students}          icon={Users}         onClick={() => handleCardClick('students', 'Student Population Breakdown')} />
+        <StatCard label="Staff Members"     value={t.staff}             icon={Users}         onClick={() => handleCardClick('staff', 'Staff Headcount Telemetry')} />
+        <StatCard label="Active Licenses"   value={t.active_licenses}   icon={Key}           onClick={() => handleCardClick('licenses', 'Active School Subscriptions')} />
+        <StatCard label="Expiring ≤30d"     value={t.expiring_licenses} icon={Key}    warning={t.expiring_licenses > 0} color="amber" onClick={() => handleCardClick('expiring', 'Licenses Expiring Soon')} />
+        <StatCard label="Active Alerts"     value={t.active_alerts}     icon={AlertTriangle} warning={t.active_alerts > 0} onClick={() => handleCardClick('alerts', 'Platform System Alerts')} />
       </div>
 
-      {/* Charts */}
+      {cardModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={() => setCardModal(null)}>
+          <div className="bg-paper rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-line-border/30 space-y-5 animate-scaleUp" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center border-b border-line-border/20 pb-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center text-teal-primary">
+                  <Activity className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-display font-bold text-ink">{cardModal.title}</h3>
+                  <p className="text-xs text-ink/50 font-sans">Live telemetry data audit</p>
+                </div>
+              </div>
+              <button onClick={() => setCardModal(null)} className="p-1.5 hover:bg-sage/10 rounded-lg text-ink/50 hover:text-ink cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto space-y-3 font-sans">
+              {cardModal.type === 'students' && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-ink/70 uppercase">Enrolled Students per Tenant School</h4>
+                  {studentsPerSchool.map((s, idx) => (
+                    <div key={idx} className="flex justify-between items-center p-3 bg-sage/10 rounded-xl border border-line-border/20">
+                      <span className="font-bold text-sm text-ink">{s.school_name}</span>
+                      <span className="font-mono font-bold text-xs bg-teal-primary/10 text-teal-primary px-2.5 py-1 rounded-lg">
+                        {s.student_count} Enrolled
+                      </span>
+                    </div>
+                  ))}
+                  {studentsPerSchool.length === 0 && <p className="text-xs text-ink/40 italic py-4">No enrolled student telemetry available.</p>}
+                </div>
+              )}
+
+              {cardModal.type === 'schools' && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-ink/70 uppercase">Registered Schools ({schools.length})</h4>
+                  {schools.map((s, idx) => (
+                    <div key={idx} className="flex justify-between items-center p-3 bg-sage/10 rounded-xl border border-line-border/20">
+                      <div>
+                        <span className="font-bold text-sm text-ink block">{s.name}</span>
+                        <span className="text-[10px] text-ink/50 font-mono">Code: {s.code || s.id}</span>
+                      </div>
+                      <span className="font-mono font-bold text-xs bg-teal-primary/10 text-teal-primary px-2.5 py-1 rounded-lg">
+                        {s.school_type || 'primary'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {cardModal.type === 'staff' && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-ink/70 uppercase">Platform Staff Telemetry Summary</h4>
+                  <div className="p-4 bg-teal-primary/10 rounded-xl border border-teal-primary/20 flex justify-between items-center">
+                    <span className="font-sans font-bold text-sm text-ink">Total Registered Educators & Staff</span>
+                    <span className="font-mono font-bold text-base text-teal-primary">{t.staff || 0} Members</span>
+                  </div>
+                  <p className="text-xs text-ink/60 leading-relaxed">Staff members are distributed across active primary and secondary school institutions with role-based dashboard permissions.</p>
+                </div>
+              )}
+
+              {(cardModal.type === 'licenses' || cardModal.type === 'expiring') && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-ink/70 uppercase">License Subscriptions</h4>
+                  {planBreakdown.map((p, idx) => (
+                    <div key={idx} className="flex justify-between items-center p-3 bg-sage/10 rounded-xl border border-line-border/20">
+                      <span className="font-bold text-sm text-ink capitalize">{p.name || p.plan || 'Standard'} Tier</span>
+                      <span className="font-mono font-bold text-xs bg-teal-primary/10 text-teal-primary px-2.5 py-1 rounded-lg">
+                        {p.value || p.count} Active Licenses
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {cardModal.type === 'alerts' && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-ink/70 uppercase">Platform Security & Audit Alerts ({t.active_alerts || 0})</h4>
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-900 flex items-start space-x-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <span><strong>Tenant Monitor:</strong> {t.active_alerts || 0} active alerts detected (unconfigured school tenants or expiring license keys).</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-line-border/20">
+              <button onClick={() => setCardModal(null)} className="px-4 py-2 bg-teal-primary text-paper text-xs font-bold font-sans rounded-xl hover:bg-teal-dark transition-colors cursor-pointer">
+                Close Telemetry
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="glass-card rounded-2xl p-5 lg:col-span-2">
           <h3 className="text-sm font-sans font-bold text-ink/70 mb-3">Students per School</h3>

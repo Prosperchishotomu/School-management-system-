@@ -1498,17 +1498,18 @@ router.get('/admin/stats', authenticateToken, requireRoles('super_admin'), async
   try {
     const [schoolCount]  = await query("SELECT COUNT(*) as cnt FROM schools WHERE status = 'active'");
     const [totalSchools] = await query("SELECT COUNT(*) as cnt FROM schools");
-    const [studentCount] = await query("SELECT COUNT(*) as cnt FROM students WHERE status = 'active'");
-    const [staffCount]   = await query("SELECT COUNT(*) as cnt FROM staff WHERE status = 'active'");
+    const [studentCount] = await query("SELECT COUNT(*) as cnt FROM students WHERE (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')");
+    const [staffCount]   = await query("SELECT COUNT(*) as cnt FROM staff WHERE (status IN ('active', 'enrolled') OR status IS NULL OR status != 'deactivated')");
 
     // Students per school
     const studentsPerSchool = await query(`
       SELECT s.name as school_name, COUNT(st.id) as student_count
       FROM schools s
-      LEFT JOIN students st ON s.id = st.school_id AND st.status = 'active'
+      LEFT JOIN students st ON s.id = st.school_id AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
       GROUP BY s.id, s.name
       ORDER BY s.name ASC
     `);
+
 
     // Plan breakdown
     let planBreakdown = [];
