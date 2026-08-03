@@ -421,6 +421,7 @@ const AttendanceRegister = () => {
   const [students, setStudents] = useState([]);
   const [attendance, setAttendance] = useState({});
   const [remarks, setRemarks] = useState({});
+  const [isClassTeacher, setIsClassTeacher] = useState(true);
   const [loading, setLoading] = useState(false);
   const [classesLoading, setClassesLoading] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -451,6 +452,7 @@ const AttendanceRegister = () => {
           const allStuds = res.data.students || [];
           const records = res.data.records || [];
           setStudents(allStuds);
+          setIsClassTeacher(res.data.is_class_teacher !== undefined ? Boolean(res.data.is_class_teacher) : true);
           
           const initialAtt = {};
           const initialRem = {};
@@ -475,6 +477,7 @@ const AttendanceRegister = () => {
       })
       .finally(() => setLoading(false));
   }, [activeSchoolId, selectedClass, date]);
+
 
   const handleStatusChange = (studentId, status) => {
     setAttendance(prev => ({
@@ -559,6 +562,13 @@ const AttendanceRegister = () => {
         </div>
       </div>
 
+      {!isClassTeacher && user?.role === 'teacher' && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-900 text-xs font-sans flex items-center space-x-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          <span><strong>Read-Only Register:</strong> You are viewing this class as a subject teacher. Only the designated Class Teacher (Form Master) for this class can mark or update daily attendance registers.</span>
+        </div>
+      )}
+
       {message.text && (
         <div className={`p-4 rounded-xl text-sm font-sans flex items-center space-x-2 ${
           message.type === 'success' ? 'bg-sage/30 text-teal-dark border border-teal-primary/20' : 'bg-brick-critical/10 text-brick-critical border border-brick-critical/20'
@@ -596,10 +606,10 @@ const AttendanceRegister = () => {
                             <button
                               key={status}
                               type="button"
-                              disabled={isSchoolAdmin}
+                              disabled={!isClassTeacher}
                               onClick={() => handleStatusChange(student.student_id, status)}
                               className={`px-3 py-1 text-xs font-semibold rounded-lg capitalize transition-all ${
-                                isSchoolAdmin ? 'cursor-not-allowed' : 'cursor-pointer'
+                                !isClassTeacher ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
                               } ${
                                 attendance[student.student_id] === status
                                   ? status === 'present' ? 'bg-teal-primary text-paper shadow-sm' :
@@ -617,8 +627,8 @@ const AttendanceRegister = () => {
                       <td className="py-4 px-6">
                         <input
                           type="text"
-                          disabled={isSchoolAdmin}
-                          placeholder={isSchoolAdmin ? "No remarks added" : "Add remark (e.g. sick note)"}
+                          disabled={!isClassTeacher}
+                          placeholder={!isClassTeacher ? "Read-only view" : "Add remark (e.g. sick note)"}
                           value={remarks[student.student_id] || ''}
                           onChange={(e) => handleRemarkChange(student.student_id, e.target.value)}
                           className="w-full px-3 py-1.5 border border-line-border/50 rounded-lg text-xs bg-white/35 focus:outline-none focus:border-teal-primary font-sans disabled:opacity-75 disabled:cursor-not-allowed"
@@ -639,7 +649,7 @@ const AttendanceRegister = () => {
           </div>
         </div>
 
-        {students.length > 0 && !loading && !isSchoolAdmin && (
+        {students.length > 0 && !loading && isClassTeacher && (
           <div className="flex justify-end">
             <button
               type="submit"
@@ -647,6 +657,7 @@ const AttendanceRegister = () => {
               className="flex items-center space-x-2 px-6 py-3 bg-teal-primary hover:bg-teal-dark text-paper font-sans font-semibold text-sm rounded-xl shadow-lg hover:shadow-teal-primary/25 transition-all cursor-pointer"
             >
               {saveLoading ? (
+
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Saving Register...</span>

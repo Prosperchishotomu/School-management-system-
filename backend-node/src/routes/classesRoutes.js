@@ -178,10 +178,25 @@ router.get('/classes/:classId/attendance', authenticateToken, async (req, res) =
       [schoolId, classId, recordDate]
     );
 
+    // Check class teacher ownership
+    const classRecord = await queryOne('SELECT form_master_id FROM classes WHERE id = ? AND school_id = ?', [classId, schoolId]);
+    let staffRecord = null;
+    if (req.user) {
+      staffRecord = await queryOne('SELECT id FROM staff WHERE user_id = ? OR id = ?', [req.user.id, req.user.id]);
+    }
+    const isClassTeacher = Boolean(
+      req.user?.role === 'school_admin' ||
+      req.user?.role === 'super_admin' ||
+      (classRecord && staffRecord && String(classRecord.form_master_id) === String(staffRecord.id)) ||
+      (classRecord && String(classRecord.form_master_id) === String(req.user?.id))
+    );
+
     return res.json({
       data: {
         students,
-        records
+        records,
+        is_class_teacher: isClassTeacher,
+        form_master_id: classRecord?.form_master_id || null
       }
     });
   } catch (err) {
@@ -193,15 +208,36 @@ router.get('/classes/:classId/attendance', authenticateToken, async (req, res) =
 // POST /schools/:schoolId/classes/:classId/attendance
 router.post('/classes/:classId/attendance', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
   try {
-    const { schoolId } = req.params;
-    const { date, entries } = req.body;
+    const { schoolId, classId } = req.params;
+    const { date, entries, records } = req.body;
+    const targetEntries = entries || records;
 
-    if (!entries || !Array.isArray(entries)) {
+    if (!targetEntries || !Array.isArray(targetEntries)) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Attendance entries array is required.' } });
     }
 
+    // Enforce: Class teachers are the ones who mark registers only!
+    if (req.user?.role === 'teacher') {
+      const classRecord = await queryOne('SELECT form_master_id FROM classes WHERE id = ? AND school_id = ?', [classId, schoolId]);
+      const staffRecord = await queryOne('SELECT id FROM staff WHERE user_id = ? OR id = ?', [req.user.id, req.user.id]);
+      
+      const isMaster = Boolean(
+        (classRecord && staffRecord && String(classRecord.form_master_id) === String(staffRecord.id)) ||
+        (classRecord && String(classRecord.form_master_id) === String(req.user.id))
+      );
+                       
+      if (!isMaster) {
+        return res.status(403).json({
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Access denied: Only designated Class Teachers (Form Masters) can mark attendance registers for this class.'
+          }
+        });
+      }
+    }
+
     const recordDate = date || new Date().toISOString().slice(0, 10);
-    for (const entry of entries) {
+    for (const entry of targetEntries) {
       if (entry.student_id) {
         const attId = 'ATT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
         await query(
@@ -213,12 +249,13 @@ router.post('/classes/:classId/attendance', authenticateToken, requireRoles('tea
       }
     }
 
-    return res.json({ data: { message: `Attendance saved for ${entries.length} students.` } });
+    return res.json({ data: { message: `Attendance register saved for ${targetEntries.length} students.` } });
   } catch (err) {
     console.error('Post class attendance error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save attendance.' } });
   }
 });
+
 
 // GET /schools/:schoolId/classes/:classId/results/export
 router.get('/classes/:classId/results/export', authenticateToken, async (req, res) => {
