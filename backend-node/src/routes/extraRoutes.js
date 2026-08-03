@@ -10,12 +10,28 @@ const { authenticateToken, requireRoles } = require('../middleware/auth');
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/subjects', authenticateToken, async (req, res) => {
   try {
-    const subjects = await query('SELECT * FROM subjects ORDER BY name ASC');
+    const schoolId = req.user?.school_id;
+    let schoolType = 'combined';
+    if (schoolId) {
+      const sch = await queryOne('SELECT school_type FROM schools WHERE id = ?', [schoolId]);
+      if (sch && sch.school_type) schoolType = sch.school_type.toLowerCase();
+    }
+
+    let sql = 'SELECT * FROM subjects';
+    if (schoolType.includes('primary')) {
+      sql += " WHERE (level IS NULL OR level = 'primary' OR level = 'all' OR level = '')";
+    } else if (schoolType.includes('secondary') || schoolType.includes('high')) {
+      sql += " WHERE (level IS NULL OR level = 'secondary' OR level = 'all' OR level = '')";
+    }
+    sql += ' ORDER BY name ASC';
+
+    const subjects = await query(sql);
     return res.json({ data: subjects });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch subjects.' } });
   }
 });
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GUARDIANS
@@ -1222,7 +1238,7 @@ router.post('/schools/:schoolId/assets/:id/return', authenticateToken, async (re
 
 router.get('/schools/:schoolId/timetable', authenticateToken, async (req, res) => {
   try {
-    const { class_id } = req.query;
+    const { class_id, teacher_name, teacher_id, mode } = req.query;
     let sql = `
       SELECT tt.*, c.name as class_name
       FROM timetable tt
@@ -1230,7 +1246,24 @@ router.get('/schools/:schoolId/timetable', authenticateToken, async (req, res) =
       WHERE tt.school_id = ?
     `;
     const params = [req.params.schoolId];
-    if (class_id) { sql += ' AND tt.class_id = ?'; params.push(class_id); }
+
+    if (class_id) {
+      sql += ' AND tt.class_id = ?';
+      params.push(class_id);
+    } else if (teacher_name || teacher_id || mode === 'teacher') {
+      // Find teacher name/id
+      let searchTeacher = teacher_name || teacher_id;
+      if (!searchTeacher && req.user) {
+        // Resolve teacher's name from staff or user profile
+        const staffRec = await queryOne('SELECT name FROM staff WHERE user_id = ? AND school_id = ?', [req.user.id, req.params.schoolId]);
+        searchTeacher = staffRec ? staffRec.name : req.user.username;
+      }
+      if (searchTeacher) {
+        sql += ' AND (LOWER(tt.teacher) LIKE LOWER(?) OR tt.teacher = ?)';
+        params.push(`%${searchTeacher}%`, searchTeacher);
+      }
+    }
+
     sql += ' ORDER BY tt.day ASC, tt.period ASC';
     const timetable = await query(sql, params);
     return res.json({ data: timetable });
@@ -1238,6 +1271,7 @@ router.get('/schools/:schoolId/timetable', authenticateToken, async (req, res) =
     return res.json({ data: [] });
   }
 });
+
 
 router.post('/schools/:schoolId/timetable', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {

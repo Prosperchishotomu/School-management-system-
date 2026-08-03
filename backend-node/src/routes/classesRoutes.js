@@ -87,13 +87,29 @@ router.post('/classes/promote', authenticateToken, requireRoles('school_admin', 
 // GET /schools/:schoolId/subjects
 router.get('/subjects', authenticateToken, async (req, res) => {
   try {
-    const subjects = await query('SELECT * FROM subjects ORDER BY name ASC');
+    const schoolId = req.params.schoolId || req.user.school_id;
+    let schoolType = 'combined';
+    if (schoolId) {
+      const sch = await queryOne('SELECT school_type FROM schools WHERE id = ?', [schoolId]);
+      if (sch && sch.school_type) schoolType = sch.school_type.toLowerCase();
+    }
+
+    let sql = 'SELECT * FROM subjects';
+    if (schoolType.includes('primary')) {
+      sql += " WHERE (level IS NULL OR level = 'primary' OR level = 'all' OR level = '')";
+    } else if (schoolType.includes('secondary') || schoolType.includes('high')) {
+      sql += " WHERE (level IS NULL OR level = 'secondary' OR level = 'all' OR level = '')";
+    }
+    sql += ' ORDER BY name ASC';
+
+    const subjects = await query(sql);
     return res.json({ data: subjects });
   } catch (err) {
     console.error('Get subjects error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch subjects.' } });
   }
 });
+
 
 // POST /schools/:schoolId/subjects
 router.post('/subjects', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { Plus, X, Loader2, Clock, Trash2, Calendar, Edit3, BookOpen } from 'lucide-react';
+import { Plus, X, Loader2, Clock, Trash2, Calendar, Edit3, BookOpen, User, Layers } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -13,6 +13,11 @@ const Timetable = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
+  // Unified Teacher Schedule state
+  const [viewMode, setViewMode] = useState('class'); // 'class' | 'teacher'
+  const [staffList, setStaffList] = useState([]);
+  const [selectedTeacher, setSelectedTeacher] = useState('');
+
   // Curriculum subjects list
   const [subjects, setSubjects] = useState([]);
   const [isCustomSubject, setIsCustomSubject] = useState(false);
@@ -32,8 +37,11 @@ const Timetable = () => {
 
   const canEdit = ['super_admin', 'school_admin'].includes(user?.role);
 
+  // Initial load
   useEffect(() => {
     if (!activeSchoolId) return;
+    
+    // Classes
     api.get(`/schools/${activeSchoolId}/classes`)
       .then(res => {
         setClasses(res.data || []);
@@ -41,41 +49,72 @@ const Timetable = () => {
       })
       .catch(() => {});
 
+    // Subjects (filtered by primary/secondary on backend)
     api.get(`/schools/${activeSchoolId}/subjects`)
       .then(res => {
         setSubjects(res.data || []);
       })
       .catch(() => {});
-  }, [activeSchoolId]);
 
-  // Load class specific timeslots from localstorage or fallbacks
+    // Staff roster (for teacher selector)
+    api.get(`/schools/${activeSchoolId}/staff`)
+      .then(res => {
+        const list = res.data || [];
+        setStaffList(list);
+        // Default to logged-in teacher if teacher role
+        if (user?.role === 'teacher') {
+          const match = list.find(s => s.user_id === user.id || s.email === user.email);
+          if (match) setSelectedTeacher(match.name);
+          else if (list.length > 0) setSelectedTeacher(list[0].name);
+        } else if (list.length > 0) {
+          setSelectedTeacher(list[0].name);
+        }
+      })
+      .catch(() => {});
+  }, [activeSchoolId, user]);
+
+  // Load class/teacher specific timeslots
   useEffect(() => {
-    if (!activeSchoolId || !selectedClass) return;
-    const key = `schoolbase_periods_${activeSchoolId}_${selectedClass}`;
+    if (!activeSchoolId) return;
+    const key = viewMode === 'class' ? `schoolbase_periods_${activeSchoolId}_${selectedClass}` : `schoolbase_periods_${activeSchoolId}_teacher`;
     const saved = localStorage.getItem(key);
     if (saved) {
       try {
         setPeriodsList(JSON.parse(saved));
-      } catch (e) {
-        // Fallback
-      }
+      } catch (e) {}
     } else {
       setPeriodsList([
         '07:30–08:10', '08:10–08:50', '08:50–09:30', '09:30–10:10', 'BREAK', '10:30–11:10', '11:10–11:50', '11:50–12:30', '12:30–13:10'
       ]);
     }
-  }, [activeSchoolId, selectedClass]);
+  }, [activeSchoolId, selectedClass, viewMode]);
 
+  // Fetch timetable depending on viewMode
   const fetchTimetable = () => {
-    if (!activeSchoolId || !selectedClass) return;
+    if (!activeSchoolId) return;
     setLoading(true);
-    api.get(`/schools/${activeSchoolId}/timetable?class_id=${selectedClass}`)
+    setError('');
+
+    let endpoint = `/schools/${activeSchoolId}/timetable`;
+    if (viewMode === 'class') {
+      if (!selectedClass) { setLoading(false); return; }
+      endpoint += `?class_id=${selectedClass}`;
+    } else {
+      // Unified teacher schedule mode
+      if (selectedTeacher) {
+        endpoint += `?teacher_name=${encodeURIComponent(selectedTeacher)}`;
+      } else {
+        endpoint += `?mode=teacher`;
+      }
+    }
+
+    api.get(endpoint)
       .then(res => { setTimetable(res.data || []); setError(''); })
       .catch(() => setError('Could not load timetable.'))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchTimetable(); }, [activeSchoolId, selectedClass]);
+  useEffect(() => { fetchTimetable(); }, [activeSchoolId, selectedClass, viewMode, selectedTeacher]);
 
   const slotMap = {};
   timetable.forEach(slot => {
@@ -88,6 +127,8 @@ const Timetable = () => {
   const handleSlotClick = (day, period) => {
     if (!canEdit) return;
     if (period === 'BREAK') return;
+    if (viewMode === 'teacher') return; // edit slots in class mode
+
     const existing = slotMap[`${day}-${period}`];
     
     // Check if existing subject is from curriculum
@@ -162,16 +203,18 @@ const Timetable = () => {
       return a.localeCompare(b);
     });
     setPeriodsList(updated);
-    localStorage.setItem(`schoolbase_periods_${activeSchoolId}_${selectedClass}`, JSON.stringify(updated));
+    const key = viewMode === 'class' ? `schoolbase_periods_${activeSchoolId}_${selectedClass}` : `schoolbase_periods_${activeSchoolId}_teacher`;
+    localStorage.setItem(key, JSON.stringify(updated));
     setNewPeriodName('');
   };
 
   // Delete a timeslot
   const handleDeletePeriod = (periodToDelete) => {
-    if (!window.confirm(`Delete the timeslot "${periodToDelete}"? Scheduled entries in this slot will remain in database but hidden from view.`)) return;
+    if (!window.confirm(`Delete the timeslot "${periodToDelete}"? Scheduled entries in this slot will remain in database.`)) return;
     const updated = periodsList.filter(p => p !== periodToDelete);
     setPeriodsList(updated);
-    localStorage.setItem(`schoolbase_periods_${activeSchoolId}_${selectedClass}`, JSON.stringify(updated));
+    const key = viewMode === 'class' ? `schoolbase_periods_${activeSchoolId}_${selectedClass}` : `schoolbase_periods_${activeSchoolId}_teacher`;
+    localStorage.setItem(key, JSON.stringify(updated));
   };
 
   const handleDragOver = (e) => {
@@ -180,7 +223,7 @@ const Timetable = () => {
 
   const handleDrop = async (e, day, period) => {
     e.preventDefault();
-    if (!canEdit) return;
+    if (!canEdit || viewMode !== 'class') return;
     try {
       const dragData = JSON.parse(e.dataTransfer.getData('text/plain') || '{}');
       const finalSubject = dragData.subject;
@@ -202,47 +245,90 @@ const Timetable = () => {
     }
   };
 
-  if (!activeSchoolId) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center min-h-[80vh] text-center">
-        <AlertTriangle className="w-16 h-16 text-amber-warning mb-4" />
-        <h2 className="text-2xl font-display font-bold text-ink">No Active School Selected</h2>
-        <p className="text-ink/60 max-w-md mt-2 font-sans text-sm">Select a school from the sidebar switcher to load class timetables.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="p-8 max-w-full mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-line-border/30 pb-4 gap-4">
         <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Timetable Manager</h2>
+          <h2 className="text-3xl font-display font-bold text-ink">Timetable & Schedule Manager</h2>
           <p className="text-sm font-sans text-ink/60 mt-1">
-            {canEdit ? 'Add, remove, or edit subjects, teachers, and customized timeslots per class.' : 'View weekly class schedules.'}
+            Class timetables and unified multi-class faculty teaching schedules.
           </p>
         </div>
-        <div className="flex items-center space-x-4">
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Mode Switcher */}
+          <div className="flex bg-sage/10 p-1 rounded-xl border border-line-border/30">
+            <button
+              onClick={() => setViewMode('class')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
+                viewMode === 'class' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Class Schedule</span>
+            </button>
+            <button
+              onClick={() => setViewMode('teacher')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
+                viewMode === 'teacher' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
+              }`}
+            >
+              <User className="w-3.5 h-3.5" />
+              <span>Unified Teacher Schedule</span>
+            </button>
+          </div>
+
           {canEdit && (
             <button
               onClick={() => setShowManagePeriods(!showManagePeriods)}
-              className="flex items-center space-x-2 px-4 py-2 border border-line-border/30 hover:bg-sage/10 text-ink text-xs font-semibold rounded-xl cursor-pointer"
+              className="flex items-center space-x-1.5 px-3.5 py-2 border border-line-border/30 hover:bg-sage/10 text-ink text-xs font-semibold rounded-xl cursor-pointer"
             >
               <Clock className="w-3.5 h-3.5 text-teal-primary" />
-              <span>{showManagePeriods ? 'Hide Timeslots Panel' : 'Manage Timeslots'}</span>
+              <span>{showManagePeriods ? 'Hide Timeslots' : 'Timeslots'}</span>
             </button>
           )}
           
-          <div className="flex items-center space-x-2">
-            <span className="text-xs font-bold text-ink/50 uppercase tracking-wider font-sans">Class:</span>
-            <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="bg-paper border border-line-border text-ink text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary font-sans font-semibold">
-              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
+          {/* Selector Dropdown */}
+          {viewMode === 'class' ? (
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold text-ink/50 uppercase tracking-wider font-sans">Class:</span>
+              <select value={selectedClass} onChange={e => setSelectedClass(e.target.value)} className="bg-paper border border-line-border text-ink text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary font-sans font-semibold">
+                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          ) : (
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold text-ink/50 uppercase tracking-wider font-sans">Teacher:</span>
+              <select value={selectedTeacher} onChange={e => setSelectedTeacher(e.target.value)} className="bg-paper border border-line-border text-ink text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary font-sans font-semibold">
+                {staffList.map(s => <option key={s.id} value={s.name}>{s.name} ({s.role_title || 'Teacher'})</option>)}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm">{error}</div>}
+
+      {/* Unified Schedule Banner Info */}
+      {viewMode === 'teacher' && (
+        <div className="p-4 bg-teal-primary/5 border border-teal-primary/20 rounded-2xl flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-xl bg-teal-primary text-paper flex items-center justify-center font-bold text-sm">
+              {selectedTeacher?.charAt(0) || 'T'}
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-ink">Unified Schedule: {selectedTeacher || 'Faculty Member'}</h3>
+              <p className="text-xs text-ink/60 font-sans">
+                Aggregated master timetable across all secondary classes assigned to this teacher ({timetable.length} scheduled periods).
+              </p>
+            </div>
+          </div>
+          <span className="px-3 py-1 bg-teal-primary/10 text-teal-dark font-bold text-xs rounded-full">
+            Unified Master Grid
+          </span>
+        </div>
+      )}
 
       {/* Timeslots Editor Panel */}
       {canEdit && showManagePeriods && (
@@ -251,7 +337,7 @@ const Timetable = () => {
             <Clock className="w-4 h-4 text-teal-primary" />
             <span>Timetable Timeslots Management</span>
           </h3>
-          <p className="text-xs text-ink/60 font-sans">Customize the periods / timeslots configuration for <b>{classes.find(c => String(c.id) === selectedClass)?.name}</b>.</p>
+          <p className="text-xs text-ink/60 font-sans">Customize period timeslots configuration.</p>
           
           <form onSubmit={handleAddPeriod} className="flex gap-2 max-w-md">
             <input
@@ -285,14 +371,14 @@ const Timetable = () => {
         </div>
       )}
 
-      {/* Draggable Subjects Palette */}
-      {canEdit && (
+      {/* Draggable Subjects Palette (Filtered by School Level) */}
+      {canEdit && viewMode === 'class' && (
         <div className="glass-card rounded-2xl p-5 border border-line-border/30 space-y-3 animate-fadeIn">
           <h3 className="text-xs font-bold text-ink uppercase tracking-wider flex items-center space-x-2">
             <BookOpen className="w-4 h-4 text-teal-primary" />
-            <span>Subject Palette (Drag &amp; Drop to Grid)</span>
+            <span>School Curriculum Palette (Level-Filtered Drag &amp; Drop)</span>
           </h3>
-          <p className="text-xs text-ink/65">Drag a subject badge from this panel and drop it into a timeslot cell on the grid below to schedule it instantly.</p>
+          <p className="text-xs text-ink/65">Drag a subject badge onto the grid below to assign it. (Secondary-only subjects are hidden for primary schools).</p>
           <div className="flex flex-wrap gap-2 pt-1">
             {subjects.map(sub => (
               <div
@@ -308,7 +394,7 @@ const Timetable = () => {
               </div>
             ))}
             {subjects.length === 0 && (
-              <span className="text-xs text-ink/40">No subjects registered for this school.</span>
+              <span className="text-xs text-ink/40">No subjects registered for this school level.</span>
             )}
           </div>
         </div>
@@ -349,17 +435,25 @@ const Timetable = () => {
                       >
                         <div
                           onClick={() => handleSlotClick(day, period)}
-                          className={`min-h-[60px] rounded-xl border transition-all flex flex-col items-center justify-center p-2 ${
-                            canEdit ? 'cursor-pointer hover:border-teal-primary/50 hover:bg-teal-primary/5' : ''
-                          } ${slot ? 'border-teal-primary/20 bg-teal-primary/5' : 'border-line-border/30 bg-transparent'}`}
+                          className={`min-h-[64px] rounded-xl border transition-all flex flex-col items-center justify-center p-2 ${
+                            canEdit && viewMode === 'class' ? 'cursor-pointer hover:border-teal-primary/50 hover:bg-teal-primary/5' : ''
+                          } ${slot ? 'border-teal-primary/30 bg-teal-primary/10' : 'border-line-border/30 bg-transparent'}`}
                         >
                           {slot ? (
                             <>
+                              {/* Display class name prominently in unified teacher view */}
+                              {viewMode === 'teacher' && slot.class_name && (
+                                <span className="text-[10px] font-bold text-teal-dark font-mono bg-teal-primary/20 px-2 py-0.5 rounded-md uppercase tracking-wider mb-1">
+                                  {slot.class_name}
+                                </span>
+                              )}
                               <span className="text-xs font-bold text-ink leading-snug">{slot.subject}</span>
-                              <span className="text-[10px] text-ink/50 mt-1 font-sans leading-none">{slot.teacher}</span>
+                              {viewMode === 'class' && (
+                                <span className="text-[10px] text-ink/50 mt-1 font-sans leading-none">{slot.teacher}</span>
+                              )}
                             </>
                           ) : (
-                            canEdit && <span className="text-[10px] text-ink/20 font-bold">+ Assign</span>
+                            canEdit && viewMode === 'class' && <span className="text-[10px] text-ink/20 font-bold">+ Assign</span>
                           )}
                         </div>
                       </td>
