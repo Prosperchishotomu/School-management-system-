@@ -56,40 +56,6 @@ const Students = () => {
   const [showParentDropdown, setShowParentDropdown] = useState(false);
   const [selectedExistingParent, setSelectedExistingParent] = useState(null);
 
-  const openEditParent = (p) => {
-    setEditingParent(p);
-    setParentForm({
-      name: p.name || '',
-      phone: p.phone || '',
-      email: p.email || '',
-      relation: p.relation || 'Mother',
-      national_id: p.national_id || ''
-    });
-    setShowParentModal(true);
-  };
-
-  const handleUpdateParent = async (e) => {
-    e.preventDefault();
-    if (!editingParent) return;
-    try {
-      await api.put(`/schools/${activeSchoolId}/guardians/${editingParent.id}`, parentForm);
-      setShowParentModal(false);
-      setEditingParent(null);
-      fetchData();
-    } catch (err) {
-      alert(err.message || 'Failed to update parent information.');
-    }
-  };
-
-  const handleDeleteParent = async (id) => {
-    if (!window.confirm('Are you sure you want to remove this parent record?')) return;
-    try {
-      await api.delete(`/schools/${activeSchoolId}/guardians/${id}`);
-      fetchData();
-    } catch (err) {
-      alert(err.message || 'Failed to delete parent record.');
-    }
-  };
 
 
   // Add modal
