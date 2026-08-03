@@ -431,7 +431,7 @@ router.get('/analytics/predictive', authenticateToken, async (req, res) => {
          FROM students st
          LEFT JOIN classes c ON st.class_id = c.id
          LEFT JOIN attendance a ON st.id = a.student_id
-         WHERE st.school_id = ? AND st.status = 'active'
+         WHERE st.school_id = ? AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
          GROUP BY st.id, st.first_name, st.last_name, st.admission_number, c.name
          HAVING total_records > 0 AND attendance_pct < 70
          ORDER BY attendance_pct ASC
@@ -556,7 +556,7 @@ router.get('/schools/:schoolId/attendance/weekly-reports', authenticateToken, as
               ROUND(AVG(CASE WHEN a.status = 'present' THEN 1 WHEN a.status IS NOT NULL THEN 0 END) * 100, 1) as attendance_rate,
               0 as volatility
        FROM classes c
-       LEFT JOIN students st ON c.id = st.class_id AND st.status = 'active'
+       LEFT JOIN students st ON c.id = st.class_id AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
        LEFT JOIN attendance a ON st.id = a.student_id AND a.date BETWEEN ? AND ?
        WHERE c.school_id = ?
        GROUP BY c.id, c.name`,
@@ -570,7 +570,8 @@ router.get('/schools/:schoolId/attendance/weekly-reports', authenticateToken, as
        FROM students st
        JOIN classes c ON st.class_id = c.id
        LEFT JOIN attendance a ON st.id = a.student_id AND a.date BETWEEN ? AND ?
-       WHERE st.school_id = ? AND st.status = 'active'
+       WHERE st.school_id = ? AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
+
        GROUP BY st.id, c.name
        HAVING absence_count >= 2
        ORDER BY absence_count DESC`,

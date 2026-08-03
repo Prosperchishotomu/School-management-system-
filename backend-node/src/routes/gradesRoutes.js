@@ -174,7 +174,7 @@ router.get('/results', authenticateToken, async (req, res) => {
     const { schoolId, classId } = req.params;
     const { term } = req.query;
 
-    const students = await query('SELECT id, first_name, last_name, admission_number FROM students WHERE school_id = ? AND class_id = ? AND status = "active" ORDER BY first_name ASC', [schoolId, classId]);
+    const students = await query('SELECT id, first_name, last_name, admission_number FROM students WHERE school_id = ? AND class_id = ? AND (status IN ("active", "enrolled") OR status IS NULL OR status != "transferred") ORDER BY first_name ASC', [schoolId, classId]);
     
     const results = [];
     for (const st of students) {

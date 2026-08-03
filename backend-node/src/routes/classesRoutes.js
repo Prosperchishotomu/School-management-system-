@@ -12,7 +12,7 @@ router.get('/classes', authenticateToken, async (req, res) => {
       `SELECT c.*, stf.name as form_master_name, COUNT(st.id) as total_students
        FROM classes c
        LEFT JOIN staff stf ON c.form_master_id = stf.id
-       LEFT JOIN students st ON c.id = st.class_id AND st.status = 'active'
+       LEFT JOIN students st ON c.id = st.class_id AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
        WHERE c.school_id = ?
        GROUP BY c.id
        ORDER BY c.name ASC`,
@@ -165,7 +165,7 @@ router.get('/classes/:classId/attendance', authenticateToken, async (req, res) =
     const students = await query(
       `SELECT id as student_id, CONCAT(first_name, ' ', last_name) as student_name, admission_number
        FROM students
-       WHERE school_id = ? AND class_id = ? AND status = 'active'
+       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
        ORDER BY first_name ASC`,
       [schoolId, classId]
     );
@@ -266,7 +266,7 @@ router.get('/classes/:classId/results/export', authenticateToken, async (req, re
     const students = await query(
       `SELECT id as student_id, first_name, last_name, admission_number
        FROM students
-       WHERE school_id = ? AND class_id = ? AND status = 'active'
+       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
        ORDER BY first_name ASC`,
       [schoolId, classId]
     );
@@ -333,7 +333,7 @@ router.get('/classes/:classId/results', authenticateToken, async (req, res) => {
     const students = await query(
       `SELECT id as student_id, first_name, last_name, admission_number
        FROM students
-       WHERE school_id = ? AND class_id = ? AND status = 'active'
+       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
        ORDER BY first_name ASC`,
       [schoolId, classId]
     );

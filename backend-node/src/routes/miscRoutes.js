@@ -325,7 +325,7 @@ router.get('/schools/:schoolId/dashboard/extended', authenticateToken, async (re
                 COALESCE(COUNT(CASE WHEN a.status = 'absent' THEN 1 END), 0) as absent,
                 COALESCE(ROUND(COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 0), 0) as pct
          FROM classes c
-         LEFT JOIN students st ON c.id = st.class_id AND st.status = 'active'
+         LEFT JOIN students st ON c.id = st.class_id AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
          LEFT JOIN attendance a ON st.id = a.student_id AND a.date = ?
          WHERE c.school_id = ?
          GROUP BY c.id, c.name, c.level`,
