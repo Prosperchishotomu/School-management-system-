@@ -6,7 +6,9 @@ import {
   Save,
   Filter,
   Loader2,
-  CheckCircle2
+  CheckCircle2,
+  Mic,
+  MicOff
 } from 'lucide-react';
 
 // NOTE: Grades.jsx represents ongoing coursework/CATs (raw individual assessment marks recorded by teachers).
@@ -28,6 +30,10 @@ const Grades = () => {
   
   const [students, setStudents] = useState([]);
   const [scores, setScores] = useState({}); // { student_id: score }
+
+  // Voice-Activated Grade Entry State
+  const [isListening, setIsListening] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('');
   
   const [classesLoading, setClassesLoading] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -39,6 +45,58 @@ const Grades = () => {
   const finalAssName = assessmentName === 'custom' ? customAssessmentName.trim() : assessmentName;
 
   const [subjectsList, setSubjectsList] = useState([]);
+
+  // Voice Recognition Handler (Web Speech API)
+  const handleToggleVoice = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Voice recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
+      return;
+    }
+
+    if (isListening) {
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      setMessage({ type: 'success', text: '🎙️ Voice Grade Entry Active! Speak student names and marks (e.g. "Kundai 85, Rufaro 92").' });
+    };
+
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+
+    recognition.onresult = (event) => {
+      let currentText = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        currentText += event.results[i][0].transcript;
+      }
+      setVoiceTranscript(currentText);
+
+      students.forEach(student => {
+        const firstName = (student.first_name || '').toLowerCase().trim();
+        const text = currentText.toLowerCase();
+        if (firstName && text.includes(firstName)) {
+          const match = text.match(new RegExp(`${firstName}[^0-9]*([0-9]{1,3})`, 'i'));
+          if (match && match[1]) {
+            const mark = parseInt(match[1], 10);
+            if (mark >= 0 && mark <= 100) {
+              setScores(prev => ({ ...prev, [student.student_id]: mark }));
+            }
+          }
+        }
+      });
+    };
+
+    recognition.start();
+  };
+
 
   // Fetch classes and registered subjects
   useEffect(() => {
@@ -164,7 +222,23 @@ const Grades = () => {
           <h2 className="text-3xl font-display font-bold text-ink">Grades Registry</h2>
           <p className="text-sm font-sans text-ink/60 mt-1">Record student scores for term assessments and exams.</p>
         </div>
+
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={handleToggleVoice}
+            className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl font-sans font-bold text-xs shadow-md transition-all cursor-pointer ${
+              isListening
+                ? 'bg-brick-critical text-paper animate-pulse'
+                : 'bg-teal-primary hover:bg-teal-dark text-paper'
+            }`}
+          >
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            <span>{isListening ? 'Stop Voice Entry' : '🎙️ Voice Grade Entry'}</span>
+          </button>
+        )}
       </div>
+
 
       {/* Configuration filters bar */}
       <div className="glass-card rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 items-end">
