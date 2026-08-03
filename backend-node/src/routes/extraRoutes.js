@@ -115,20 +115,38 @@ router.delete('/schools/:schoolId/teaching-assignments/:id', authenticateToken, 
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/schools/:schoolId/teacher-messages', authenticateToken, async (req, res) => {
   try {
-    const msgs = await query(
-      `SELECT tm.*, u.username as sender_name
-       FROM teacher_messages tm
-       LEFT JOIN users u ON tm.sender_id = u.id
-       WHERE tm.school_id = ?
-       ORDER BY tm.sent_at DESC LIMIT 50`,
-      [req.params.schoolId]
-    );
+    const { schoolId } = req.params;
+    const userId = req.user.id;
+    const isAdmin = ['school_admin', 'super_admin'].includes(req.user.role);
+
+    let msgs;
+    if (isAdmin) {
+      msgs = await query(
+        `SELECT tm.*, COALESCE(st.name, u.username, 'User') as sender_name
+         FROM teacher_messages tm
+         LEFT JOIN users u ON tm.sender_id = u.id
+         LEFT JOIN staff st ON u.id = st.user_id
+         WHERE tm.school_id = ?
+         ORDER BY tm.sent_at DESC LIMIT 50`,
+        [schoolId]
+      );
+    } else {
+      msgs = await query(
+        `SELECT tm.*, COALESCE(st.name, u.username, 'User') as sender_name
+         FROM teacher_messages tm
+         LEFT JOIN users u ON tm.sender_id = u.id
+         LEFT JOIN staff st ON u.id = st.user_id
+         WHERE tm.school_id = ? AND (tm.recipient_id = ? OR tm.sender_id = ? OR tm.recipient_id IS NULL)
+         ORDER BY tm.sent_at DESC LIMIT 50`,
+        [schoolId, userId, userId]
+      );
+    }
     return res.json({ data: msgs });
   } catch (err) {
-    // Table may not exist — return empty gracefully
     return res.json({ data: [] });
   }
 });
+
 
 router.post('/schools/:schoolId/teacher-messages', authenticateToken, async (req, res) => {
   try {
