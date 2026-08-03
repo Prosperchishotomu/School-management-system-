@@ -92,6 +92,12 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
   const { activeSchoolId } = useAuth();
   const [extendedData, setExtendedData] = useState(null);
   const [extLoading, setExtLoading] = useState(false);
+  const [cardModal, setCardModal] = useState(null);
+
+  const handleCardClick = (type, title) => {
+    setCardModal({ type, title });
+  };
+
 
   useEffect(() => {
     if (activeSchoolId) {
@@ -157,11 +163,12 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
 
         {/* Cockpit KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Enrolled Students" value={cockpit.kpis?.total_students ?? 0} icon={Users} />
-          <StatCard label="Active Faculty/Staff" value={cockpit.kpis?.total_staff ?? 0} icon={Users} />
-          <StatCard label="Total Classes" value={cockpit.kpis?.total_classes ?? 0} icon={Building} />
-          <StatCard label="Open Infractions" value={cockpit.kpis?.open_incidents ?? 0} icon={AlertTriangle} warning={cockpit.kpis?.open_incidents > 0} color="amber" />
+          <StatCard label="Enrolled Students" value={cockpit.kpis?.total_students ?? 0} icon={Users} onClick={() => handleCardClick('students', `${activeSchoolName} - Enrolled Students`)} />
+          <StatCard label="Active Faculty/Staff" value={cockpit.kpis?.total_staff ?? 0} icon={Users} onClick={() => handleCardClick('staff', `${activeSchoolName} - Staff Telemetry`)} />
+          <StatCard label="Total Classes" value={cockpit.kpis?.total_classes ?? 0} icon={Building} onClick={() => handleCardClick('schools', `${activeSchoolName} - Class Roster`)} />
+          <StatCard label="Open Infractions" value={cockpit.kpis?.open_incidents ?? 0} icon={AlertTriangle} warning={cockpit.kpis?.open_incidents > 0} color="amber" onClick={() => handleCardClick('alerts', `${activeSchoolName} - Infractions`)} />
         </div>
+
 
         {/* Dynamic Telemetry Sections */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
