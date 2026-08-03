@@ -388,22 +388,62 @@ const Students = () => {
         </div>
       )}
 
-      {/* Bulk Action Bar */}
-      {isAdmin && selectedIds.length > 0 && activeTab === 'students' && (
-        <div className="bg-amber-warning/15 border border-amber-warning/30 rounded-2xl p-4 flex items-center justify-between animate-fadeIn">
+      {/* Selection Action Bar (Appears when items are selected) */}
+      {selectedIds.length > 0 && activeTab === 'students' && (
+        <div className="bg-sage/15 border border-teal-primary/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 animate-fadeIn shadow-sm">
           <div className="flex items-center space-x-3 text-xs font-bold text-ink">
-            <span className="bg-amber-warning/20 text-amber-dark px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
-            <span>Bulk Actions: Permanently remove selected pupil records.</span>
+            <span className="bg-teal-primary text-paper px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
+            <span>Batch Actions: Manage selected student records.</span>
           </div>
-          <button
-            onClick={handleBulkDelete}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-brick-critical hover:bg-brick-critical/90 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete Selected ({selectedIds.length})</span>
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedIds.length === 1 && (
+              <button
+                onClick={() => window.location.href = `/students/${selectedIds[0]}`}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer border border-teal-primary/20 shadow-2xs"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>View</span>
+              </button>
+            )}
+
+            {selectedIds.length === 1 && (
+              <button
+                onClick={() => {
+                  const s = students.find(item => item.id === selectedIds[0]);
+                  if (s) openEdit(s);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer border border-amber-warning/30 shadow-2xs"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </button>
+            )}
+
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Suspend ${selectedIds.length} selected student(s)?`)) return;
+                await Promise.all(selectedIds.map(id => api.put(`/schools/${activeSchoolId}/students/${id}`, { status: 'suspended' }).catch(() => {})));
+                setSelectedIds([]);
+                fetchStudents();
+              }}
+              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf0e6] hover:bg-orange-500/25 text-[#a84b00] text-xs font-bold rounded-xl transition-all cursor-pointer border border-orange-500/30 shadow-2xs"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              <span>Suspend ({selectedIds.length})</span>
+            </button>
+
+            <button
+              onClick={handleBulkDelete}
+              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fbeae8] hover:bg-brick-critical/25 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer border border-brick-critical/30 shadow-2xs"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete ({selectedIds.length})</span>
+            </button>
+          </div>
         </div>
       )}
+
 
       {/* Students Table */}
       {activeTab === 'students' ? (

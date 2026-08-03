@@ -301,20 +301,62 @@ const Staff = () => {
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm font-sans">{error}</div>}
 
-      {/* Bulk Action Bar */}
-      {isPrincipal && selectedIds.length > 0 && (
-        <div className="bg-amber-warning/15 border border-amber-warning/30 rounded-2xl p-4 flex items-center justify-between animate-fadeIn">
+      {/* Selection Action Bar (Appears when items are selected) */}
+      {selectedIds.length > 0 && (
+        <div className="bg-sage/15 border border-teal-primary/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 animate-fadeIn shadow-sm">
           <div className="flex items-center space-x-3 text-xs font-bold text-ink">
-            <span className="bg-amber-warning/20 text-amber-dark px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
-            <span>Bulk Action: Remove selected faculty records and login user accounts.</span>
+            <span className="bg-teal-primary text-paper px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
+            <span>Batch Actions: Manage selected faculty records.</span>
           </div>
-          <button
-            onClick={handleBulkDeleteStaff}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-brick-critical hover:bg-brick-critical/90 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Delete Selected ({selectedIds.length})</span>
-          </button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedIds.length === 1 && (
+              <button
+                onClick={() => {
+                  const s = staff.find(item => item.id === selectedIds[0]);
+                  if (s) handleViewStaff(s);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer border border-teal-primary/20 shadow-2xs"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>View</span>
+              </button>
+            )}
+
+            {selectedIds.length === 1 && (
+              <button
+                onClick={() => {
+                  const s = staff.find(item => item.id === selectedIds[0]);
+                  if (s) openEditModal(s);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer border border-amber-warning/30 shadow-2xs"
+              >
+                <Edit3 className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </button>
+            )}
+
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Deactivate/Suspend ${selectedIds.length} selected staff member(s)?`)) return;
+                await Promise.all(selectedIds.map(id => api.put(`/schools/${activeSchoolId}/staff/${id}`, { status: 'deactivated' }).catch(() => {})));
+                setSelectedIds([]);
+                fetchStaff();
+              }}
+              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf0e6] hover:bg-orange-500/25 text-[#a84b00] text-xs font-bold rounded-xl transition-all cursor-pointer border border-orange-500/30 shadow-2xs"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              <span>Suspend ({selectedIds.length})</span>
+            </button>
+
+            <button
+              onClick={handleBulkDeleteStaff}
+              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fbeae8] hover:bg-brick-critical/25 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer border border-brick-critical/30 shadow-2xs"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete ({selectedIds.length})</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -350,6 +392,20 @@ const Staff = () => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
+              <th className="py-4 px-4 w-10 text-center">
+                <input
+                  type="checkbox"
+                  onChange={() => {
+                    if (selectedIds.length === filteredStaff.length && filteredStaff.length > 0) {
+                      setSelectedIds([]);
+                    } else {
+                      setSelectedIds(filteredStaff.map(s => s.id));
+                    }
+                  }}
+                  checked={filteredStaff.length > 0 && selectedIds.length === filteredStaff.length}
+                  className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
+                />
+              </th>
               <th className="py-4 px-6">Name</th>
               <th className="py-4 px-6">Role / Title</th>
               <th className="py-4 px-6">Email</th>
@@ -360,10 +416,20 @@ const Staff = () => {
           </thead>
           <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
             {loading ? (
-              <tr><td colSpan="6" className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
+              <tr><td colSpan="7" className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
             ) : filteredStaff.map((s) => (
               <tr key={s.id} className="hover:bg-sage/5 transition-colors">
+                <td className="py-4 px-4 text-center">
+
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(s.id)}
+                    onChange={() => setSelectedIds(prev => prev.includes(s.id) ? prev.filter(i => i !== s.id) : [...prev, s.id])}
+                    className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
+                  />
+                </td>
                 <td className="py-4 px-6 font-bold">
+
                   <button
                     onClick={() => handleViewStaff(s)}
                     className="text-left text-teal-primary hover:text-teal-dark hover:underline font-bold cursor-pointer transition-colors"
