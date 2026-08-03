@@ -89,7 +89,7 @@ router.post('/', authenticateToken, requireRoles('teacher', 'school_admin', 'sup
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Student ID, Subject, and Grade Value are required.' } });
     }
 
-        const gradeId = 'GRD' + Math.random().toString(36).substr(2, 5).toUpperCase();
+        const gradeId = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
     const mark = parseFloat(grade_value);
     const subjName = subject || req.body.subject_id;
 
@@ -147,7 +147,7 @@ router.post('/batch', authenticateToken, requireRoles('teacher', 'school_admin',
               [mark, numWeight, existing.id]
             );
           } else {
-            const gradeId = 'GRD' + Math.random().toString(36).substr(2, 5).toUpperCase();
+            const gradeId = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
             await query(
               `INSERT INTO grades (id, school_id, student_id, class_id, subject, grade_value, assessment_type, term, weight)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

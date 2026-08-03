@@ -25,9 +25,48 @@ async function queryOne(sql, params = []) {
   return results.length > 0 ? results[0] : null;
 }
 
-// Automatic schema table migrations
+// Automatic schema table migrations & column enhancements
 async function ensureTables() {
   try {
+    // 1. Collations & Column expansions (fix ER_CANT_AGGREGATE_2COLLATIONS & ER_DUP_ENTRY from truncation)
+    try { await query(`ALTER TABLE \`notifications\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`); } catch(e) {}
+    try { await query(`ALTER TABLE \`timetable\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`timetable\` MODIFY COLUMN \`school_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`timetable\` MODIFY COLUMN \`class_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`grades\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`grades\` MODIFY COLUMN \`school_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`grades\` MODIFY COLUMN \`student_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`grades\` MODIFY COLUMN \`class_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`announcements\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`announcements\` MODIFY COLUMN \`created_by\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` MODIFY COLUMN \`class_id\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`audit_logs\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+
+    // 2. Missing columns additions
+    // Students missing columns
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`dob\` DATE NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`date_of_birth\` DATE NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`home_address\` TEXT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`address\` TEXT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`nationality\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`religion\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`previous_school\` VARCHAR(100) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`medical_notes\` TEXT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`students\` ADD COLUMN IF NOT EXISTS \`leadership_position\` VARCHAR(100) NULL`); } catch(e) {}
+
+    // Schools missing bank & account details
+    try { await query(`ALTER TABLE \`schools\` ADD COLUMN IF NOT EXISTS \`bank_name\` VARCHAR(100) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`schools\` ADD COLUMN IF NOT EXISTS \`account_number\` VARCHAR(100) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`schools\` ADD COLUMN IF NOT EXISTS \`currency\` VARCHAR(10) DEFAULT 'USD'`); } catch(e) {}
+
+    // Announcements target_audience
+    try { await query(`ALTER TABLE \`announcements\` ADD COLUMN IF NOT EXISTS \`target_audience\` VARCHAR(50) DEFAULT 'all'`); } catch(e) {}
+
+    // Classes level
+    try { await query(`ALTER TABLE \`classes\` ADD COLUMN IF NOT EXISTS \`level\` VARCHAR(50) NULL`); } catch(e) {}
+
+    // Notifications fields
     await query(`
       CREATE TABLE IF NOT EXISTS \`notifications\` (
         \`id\` VARCHAR(50) PRIMARY KEY,
@@ -37,9 +76,14 @@ async function ensureTables() {
         \`message\` TEXT NOT NULL,
         \`is_read\` TINYINT(1) DEFAULT 0,
         \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    try { await query(`ALTER TABLE \`notifications\` ADD COLUMN IF NOT EXISTS \`target_role\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`notifications\` ADD COLUMN IF NOT EXISTS \`sender_id\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`notifications\` ADD COLUMN IF NOT EXISTS \`sender_name\` VARCHAR(100) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`notifications\` ADD COLUMN IF NOT EXISTS \`type\` VARCHAR(50) DEFAULT 'direct_message'`); } catch(e) {}
 
+    // Audit logs
     await query(`
       CREATE TABLE IF NOT EXISTS \`audit_logs\` (
         \`id\` VARCHAR(50) PRIMARY KEY,
@@ -50,13 +94,9 @@ async function ensureTables() {
         \`entity_id\` VARCHAR(100) DEFAULT NULL,
         \`description\` TEXT DEFAULT NULL,
         \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
-
-    // Migration: add description column if table was created with old schema
-    try {
-      await query(`ALTER TABLE \`audit_logs\` ADD COLUMN IF NOT EXISTS \`description\` TEXT DEFAULT NULL`);
-    } catch (e) { /* ignore */ }
+    try { await query(`ALTER TABLE \`audit_logs\` ADD COLUMN IF NOT EXISTS \`description\` TEXT DEFAULT NULL`); } catch (e) {}
 
     // Hostel migrations & tables
     await query(`
@@ -70,7 +110,7 @@ async function ensureTables() {
         \`notes\` TEXT DEFAULT NULL,
         \`applied_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     try { await query(`ALTER TABLE \`hostels\` ADD COLUMN IF NOT EXISTS \`warden_phone\` VARCHAR(30) DEFAULT NULL`); } catch (e) {}
@@ -93,6 +133,7 @@ async function ensureTables() {
     console.warn('Database table verification warning:', err.message);
   }
 }
+
 
 // Execute migration check on pool initialization
 ensureTables();

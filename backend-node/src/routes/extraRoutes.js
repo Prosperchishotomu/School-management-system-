@@ -1320,29 +1320,36 @@ router.put('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('
     const teacher = req.body.teacher || req.body.teacher_name || null;
     const class_id = req.body.class_id;
 
-    const existing = await queryOne('SELECT id FROM timetable WHERE id = ? AND school_id = ?', [id, schoolId]);
+    let existing = await queryOne('SELECT id FROM timetable WHERE id = ? AND school_id = ?', [id, schoolId]);
+    if (!existing && class_id && day && period) {
+      existing = await queryOne('SELECT id FROM timetable WHERE school_id = ? AND class_id = ? AND day = ? AND period = ?', [schoolId, class_id, day, period]);
+    }
+
     if (existing) {
       await query(
         `UPDATE timetable SET
-           class_id = COALESCE(?, class_id),
-           day      = COALESCE(?, day),
-           period   = COALESCE(?, period),
            subject  = COALESCE(?, subject),
            teacher  = COALESCE(?, teacher)
          WHERE id = ? AND school_id = ?`,
-        [class_id, day, period, subject, teacher, id, schoolId]
+        [subject, teacher, existing.id, schoolId]
       );
+      const result = await queryOne('SELECT * FROM timetable WHERE id = ?', [existing.id]);
+      return res.json({ data: result });
     } else {
       if (!class_id || !day || !period) {
         return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class, day, and period are required.' } });
       }
+      const newId = id || ('TT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4));
       await query(
         `INSERT INTO timetable (id, school_id, class_id, day, period, subject, teacher)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, schoolId, class_id, day, period, subject, teacher]
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE subject = VALUES(subject), teacher = VALUES(teacher)`,
+        [newId, schoolId, class_id, day, period, subject, teacher]
       );
+      const result = await queryOne('SELECT * FROM timetable WHERE school_id = ? AND class_id = ? AND day = ? AND period = ?', [schoolId, class_id, day, period]);
+      return res.json({ data: result });
     }
-    const result = await queryOne('SELECT * FROM timetable WHERE id = ?', [id]);
+
     return res.json({ data: result });
   } catch (err) {
     console.error('Update timetable error:', err);
