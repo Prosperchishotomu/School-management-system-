@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer, Eye, BookOpen, Phone, AtSign } from 'lucide-react';
+import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer, Eye, BookOpen, Phone, AtSign, Ban, CheckCircle2 } from 'lucide-react';
+
 import PrintReportModal from '../components/PrintReportModal';
 
 const Staff = () => {
