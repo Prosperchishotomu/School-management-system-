@@ -19,6 +19,8 @@ const UserManagement = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
+
 
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
@@ -154,6 +156,20 @@ const UserManagement = () => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
+              <th className="py-4 px-4 w-10 text-center">
+                <input
+                  type="checkbox"
+                  onChange={() => {
+                    if (selectedUserIds.length === users.length && users.length > 0) {
+                      setSelectedUserIds([]);
+                    } else {
+                      setSelectedUserIds(users.map(u => u.id));
+                    }
+                  }}
+                  checked={users.length > 0 && selectedUserIds.length === users.length}
+                  className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
+                />
+              </th>
               <th className="py-4 px-6">Name</th>
               <th className="py-4 px-6">Username</th>
               <th className="py-4 px-6">Contact Email / Phone</th>
@@ -164,9 +180,17 @@ const UserManagement = () => {
           </thead>
           <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
             {loading ? (
-              <tr><td colSpan="6" className="py-12 text-center text-xs text-ink/40">Loading users...</td></tr>
+              <tr><td colSpan="7" className="py-12 text-center text-xs text-ink/40">Loading users...</td></tr>
             ) : users.map(u => (
               <tr key={u.id} className="hover:bg-sage/5 transition-colors">
+                <td className="py-4 px-4 text-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.includes(u.id)}
+                    onChange={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(i => i !== u.id) : [...prev, u.id])}
+                    className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
+                  />
+                </td>
                 <td className="py-4 px-6 font-bold">{u.name}</td>
                 <td className="py-4 px-6 font-mono text-xs text-ink/70">{u.username}</td>
                 <td className="py-4 px-6">
@@ -187,47 +211,51 @@ const UserManagement = () => {
                   </span>
                 </td>
                 <td className="py-4 px-6 text-right whitespace-nowrap">
-                  <div className="flex items-center justify-end gap-1.5">
-                    <button
-                      onClick={() => alert(`User Account Details:\nName: ${u.username}\nRole: ${u.role}\nEmail: ${u.email || 'N/A'}`)}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>View</span>
-                    </button>
-                    <button
-                      onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
-                    >
-                      <KeyRound className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      onClick={() => handleDeactivate(u.id)}
-                      className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
-                        !u.is_active
-                          ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
-                          : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
-                      }`}
-                    >
-                      {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                      <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
-                    </button>
-                    <button
-                      onClick={() => handleDeactivate(u.id)}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete</span>
-                    </button>
-                  </div>
+                  {selectedUserIds.includes(u.id) ? (
+                    <div className="flex items-center justify-end gap-1.5 animate-fadeIn">
+                      <button
+                        onClick={() => alert(`User Account Details:\nName: ${u.username}\nRole: ${u.role}\nEmail: ${u.email || 'N/A'}`)}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>View</span>
+                      </button>
+                      <button
+                        onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeactivate(u.id)}
+                        className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
+                          !u.is_active
+                            ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
+                            : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
+                        }`}
+                      >
+                        {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeactivate(u.id)}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[11px] font-sans text-ink/30 italic select-none">Select row to action</span>
+                  )}
                 </td>
-
               </tr>
             ))}
             {users.length === 0 && !loading && (
-              <tr><td colSpan="6" className="py-8 text-center text-ink/50 text-xs">No users found.</td></tr>
+              <tr><td colSpan="7" className="py-8 text-center text-ink/50 text-xs">No users found.</td></tr>
             )}
+
           </tbody>
         </table>
       </div>

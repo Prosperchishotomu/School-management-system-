@@ -451,42 +451,47 @@ const Staff = () => {
                   </span>
                 </td>
                 <td className="py-4 px-6 text-right whitespace-nowrap">
-                  <div className="flex items-center justify-end gap-1.5">
-                    <button
-                      onClick={() => handleViewStaff(s)}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>View</span>
-                    </button>
-                    <button
-                      onClick={() => openEditModal(s)}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      onClick={() => handleToggleStatus(s)}
-                      title={s.status === 'deactivated' ? 'Activate Staff Member' : 'Suspend/Deactivate Staff Member'}
-                      className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
-                        s.status === 'deactivated'
-                          ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
-                          : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
-                      }`}
-                    >
-                      {s.status === 'deactivated' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                      <span>{s.status === 'deactivated' ? 'Activate' : 'Suspend'}</span>
-                    </button>
-                    <button
-                      onClick={() => handleDelete(s.id)}
-                      className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete</span>
-                    </button>
-                  </div>
+                  {selectedIds.includes(s.id) ? (
+                    <div className="flex items-center justify-end gap-1.5 animate-fadeIn">
+                      <button
+                        onClick={() => handleViewStaff(s)}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>View</span>
+                      </button>
+                      <button
+                        onClick={() => openEditModal(s)}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(s)}
+                        title={s.status === 'deactivated' ? 'Activate Staff Member' : 'Suspend/Deactivate Staff Member'}
+                        className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
+                          s.status === 'deactivated'
+                            ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
+                            : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
+                        }`}
+                      >
+                        {s.status === 'deactivated' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                        <span>{s.status === 'deactivated' ? 'Activate' : 'Suspend'}</span>
+                      </button>
+                      <button
+                        onClick={() => handleDelete(s.id)}
+                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[11px] font-sans text-ink/30 italic select-none">Select row to action</span>
+                  )}
                 </td>
+
               </tr>
             ))}
             {filteredStaff.length === 0 && !loading && (
