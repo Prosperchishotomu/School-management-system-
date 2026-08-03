@@ -35,7 +35,11 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class name is required.' } });
     }
 
+    const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, name.trim()]);
+    if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${name.trim()}' already exists in this school.` } });
+
     const classId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+
     await query(
       `INSERT INTO classes (id, school_id, name, level, capacity, form_master_id) VALUES (?, ?, ?, ?, ?, ?)`,
       [classId, schoolId, name.trim(), level || 'Primary', parseInt(capacity || 40), form_master_id || null]
@@ -120,7 +124,12 @@ router.post('/subjects', authenticateToken, requireRoles('school_admin', 'super_
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subject name is required.' } });
     }
 
+    const subjCode = code ? code.trim().toUpperCase() : name.substr(0, 3).toUpperCase();
+    const dupSubj = await queryOne('SELECT id FROM subjects WHERE LOWER(name) = LOWER(?) OR LOWER(code) = LOWER(?)', [name.trim(), subjCode]);
+    if (dupSubj) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Subject '${name.trim()}' (${subjCode}) already exists.` } });
+
     const subjectId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+
     await query(
       `INSERT INTO subjects (id, name, code, category, created_by) VALUES (?, ?, ?, ?, ?)`,
       [subjectId, name.trim(), code ? code.trim().toUpperCase() : name.substr(0, 3).toUpperCase(), category || 'general', req.user.id]

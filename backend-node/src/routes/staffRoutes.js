@@ -97,11 +97,20 @@ router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'),
       }
     }
 
+    // Check existing name in school
+    if (name && name.trim()) {
+      const existingName = await queryOne('SELECT id FROM staff WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, name.trim()]);
+      if (existingName) {
+        return res.status(409).json({ error: { code: 'DUPLICATE', message: `Staff member '${name.trim()}' is already registered in this school.` } });
+      }
+    }
+
     // Check existing username
     const existingUser = await queryOne('SELECT id FROM users WHERE username = ?', [finalUsername]);
     if (existingUser) {
       return res.status(400).json({ error: { code: 'DUPLICATE_USERNAME', message: 'Username already taken. Please provide a custom username.' } });
     }
+
 
     const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const staffId = 'STF' + Math.random().toString(36).substr(2, 5).toUpperCase();

@@ -1384,7 +1384,25 @@ router.post('/schools/:schoolId/hostel-allocations', authenticateToken, requireR
     if (!hostel_id || !targetStudentId) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Hostel and student are required.' } });
     }
+
+    // Check 1: Same bed can't have 2 occupants
+    if (room_number && bed_number) {
+      const bedOcc = await queryOne(
+        `SELECT id FROM hostel_allocations WHERE hostel_id = ? AND room_number = ? AND bed_number = ? AND status != 'checked_out'`,
+        [hostel_id, room_number, bed_number]
+      );
+      if (bedOcc) return res.status(409).json({ error: { code: 'DUPLICATE_BED', message: `Bed ${bed_number} in Room ${room_number} is already occupied by another student.` } });
+    }
+
+    // Check 2: Student already allocated a hostel
+    const stOcc = await queryOne(
+      `SELECT id FROM hostel_allocations WHERE occupant_id = ? AND status != 'checked_out'`,
+      [targetStudentId]
+    );
+    if (stOcc) return res.status(409).json({ error: { code: 'DUPLICATE_STUDENT', message: 'This student already has an active hostel residence allocation.' } });
+
     const id = 'HAL' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+
     await query(
       `INSERT INTO hostel_allocations (id, school_id, hostel_id, occupant_id, occupant_type, room_number, bed_number, term, allocated_date)
        VALUES (?, ?, ?, ?, 'student', ?, ?, ?, NOW())`,

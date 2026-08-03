@@ -68,12 +68,15 @@ const ParentPortal = () => {
     setLoading(true);
     api.get(`/schools/${activeSchoolId}/students`)
       .then(res => {
-        // Parents get auto-filtered students matching their parent record
-        const list = res.data?.data || res.data || [];
+        const rawList = res.data?.data || res.data || [];
+        const dedupeMap = new Map();
+        rawList.forEach(c => { if (c && c.id) dedupeMap.set(c.id, c); });
+        const list = Array.from(dedupeMap.values());
         setChildren(list);
         if (list.length > 0) {
           setSelectedChildId(list[0].id);
         }
+
       })
       .catch(err => {
         console.error(err);

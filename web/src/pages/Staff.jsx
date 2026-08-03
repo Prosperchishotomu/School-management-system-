@@ -73,11 +73,13 @@ const Staff = () => {
     }
   };
 
+  const dedupeById = (arr) => Array.from(new Map((arr || []).map(item => [item.id || item._id, item])).values());
+
   const fetchStaff = () => {
     if (!activeSchoolId) return;
     setLoading(true);
     api.get(`/schools/${activeSchoolId}/staff`)
-      .then(res => { setStaff(res.data || []); setError(''); })
+      .then(res => { setStaff(dedupeById(res.data || [])); setError(''); })
       .catch(() => setError('Failed to load staff roster.'))
       .finally(() => setLoading(false));
   };
@@ -85,16 +87,17 @@ const Staff = () => {
   const fetchClasses = () => {
     if (!activeSchoolId) return;
     api.get(`/schools/${activeSchoolId}/classes`)
-      .then(res => { setClasses(res.data || []); })
+      .then(res => { setClasses(dedupeById(res.data || [])); })
       .catch(() => {});
   };
 
   const fetchMessages = () => {
     if (!activeSchoolId) return;
     api.get(`/schools/${activeSchoolId}/teacher-messages`)
-      .then(res => { setMessages(res.data || []); })
+      .then(res => { setMessages(dedupeById(res.data || [])); })
       .catch(() => {});
   };
+
 
   useEffect(() => {
     fetchStaff();

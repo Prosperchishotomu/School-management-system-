@@ -89,12 +89,17 @@ const Notifications = () => {
         canReply: Boolean(m.sender_id && m.sender_id !== user?.id)
       }));
 
-      // Merge and sort newest first
-      const merged = [...notifList, ...annList, ...msgList].sort((a, b) =>
+      // Merge, deduplicate by ID, and sort newest first
+      const dedupeMap = new Map();
+      [...notifList, ...annList, ...msgList].forEach(item => {
+        if (item.id) dedupeMap.set(item.id, item);
+      });
+      const merged = Array.from(dedupeMap.values()).sort((a, b) =>
         new Date(b.created_at || Date.now()) - new Date(a.created_at || Date.now())
       );
 
       setNotifications(merged);
+
     } catch (err) {
       setError('Could not retrieve notifications feed.');
     } finally {

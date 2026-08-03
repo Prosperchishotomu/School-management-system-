@@ -128,6 +128,13 @@ router.post('/',
     const dup = await queryOne('SELECT id FROM students WHERE admission_number = ? AND school_id = ?', [finalAdmNumber, schoolId]);
     if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Admission number '${finalAdmNumber}' is already registered.` } });
 
+    // Duplicate student name & class check
+    const nameDup = await queryOne(
+      'SELECT id FROM students WHERE school_id = ? AND LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?) AND class_id = ? AND status != "transferred"',
+      [schoolId, first_name.trim(), last_name.trim(), class_id]
+    );
+    if (nameDup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Student '${first_name.trim()} ${last_name.trim()}' is already registered in this class.` } });
+
     const studentId = 'STD' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const dobVal = dob || date_of_birth || null;
     const addrVal = address || home_address || null;

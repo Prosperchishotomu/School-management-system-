@@ -68,21 +68,23 @@ const Students = () => {
   const [editError,     setEditError]     = useState('');
   const [editLoading,   setEditLoading]   = useState(false);
 
+  const dedupeById = (arr) => Array.from(new Map((arr || []).map(item => [item.id || item._id, item])).values());
+
   const fetchData = useCallback(() => {
     if (!activeSchoolId) return;
     setLoading(true);
 
     if (isAdmin) {
       api.get(`/schools/${activeSchoolId}/classes`)
-        .then(res => { if (res.data) setClasses(res.data); })
+        .then(res => { if (res.data) setClasses(dedupeById(res.data)); })
         .catch(() => {});
       api.get(`/schools/${activeSchoolId}/guardians`)
-        .then(res => { if (res.data) setParents(res.data); })
+        .then(res => { if (res.data) setParents(dedupeById(res.data)); })
         .catch(() => {});
     } else if (isTeacher) {
       // Teachers need class list for filtering too
       api.get(`/schools/${activeSchoolId}/classes`)
-        .then(res => { if (res.data) setClasses(res.data); })
+        .then(res => { if (res.data) setClasses(dedupeById(res.data)); })
         .catch(() => {});
     }
 
@@ -93,13 +95,14 @@ const Students = () => {
 
     api.get(`/schools/${activeSchoolId}/students?${q}`)
       .then(res => {
-        setStudents(res.data || []);
+        setStudents(dedupeById(res.data || []));
         if (res.meta) setTotalPages(Math.ceil((res.meta.total || 1) / (res.meta.per_page || 15)));
         setError('');
       })
       .catch(() => setError('Failed to load student roster.'))
       .finally(() => setLoading(false));
   }, [activeSchoolId, page, classFilter, statusFilter, search, isAdmin, isTeacher]);
+
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
