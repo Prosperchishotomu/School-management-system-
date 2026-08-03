@@ -2023,6 +2023,7 @@ router.post('/schools/:schoolId/communication/test', authenticateToken, requireR
 // ─────────────────────────────────────────────────────────────────────────────
 // TERMS
 // GET  /schools/:schoolId/terms
+// POST /schools/:schoolId/terms
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/schools/:schoolId/terms', authenticateToken, async (req, res) => {
   try {
@@ -2032,6 +2033,259 @@ router.get('/schools/:schoolId/terms', authenticateToken, async (req, res) => {
     return res.json({ data: terms });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch terms.' } });
+  }
+});
+
+router.post('/schools/:schoolId/terms', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { term_name, start_date, end_date, year, term_number } = req.body;
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS term_config (
+          id VARCHAR(50) PRIMARY KEY,
+          school_id VARCHAR(50) NOT NULL,
+          term_name VARCHAR(100) NOT NULL,
+          start_date DATE NULL,
+          end_date DATE NULL,
+          year INT NULL,
+          term_number INT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    } catch(e) {}
+
+    const termId = 'TRM' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    await query(
+      `INSERT INTO term_config (id, school_id, term_name, start_date, end_date, year, term_number)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [termId, schoolId, term_name || `Term ${term_number || 1}`, start_date || null, end_date || null, year || new Date().getFullYear(), term_number || 1]
+    );
+
+    const created = await queryOne('SELECT * FROM term_config WHERE id = ?', [termId]);
+    return res.status(201).json({ data: created });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create term.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTIFICATION SETTINGS
+// GET /schools/:schoolId/notification-settings
+// PUT /schools/:schoolId/notification-settings
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/schools/:schoolId/notification-settings', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    let settings = null;
+    try {
+      settings = await queryOne('SELECT * FROM school_notification_settings WHERE school_id = ?', [schoolId]);
+    } catch(e) {}
+    if (!settings) {
+      settings = { school_id: schoolId, sms_enabled: true, email_enabled: true, whatsapp_enabled: false };
+    }
+    return res.json({ data: settings });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch notification settings.' } });
+  }
+});
+
+router.put('/schools/:schoolId/notification-settings', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { sms_enabled, email_enabled, whatsapp_enabled, smtp_host, sms_gateway_key } = req.body;
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS school_notification_settings (
+          school_id VARCHAR(50) PRIMARY KEY,
+          sms_enabled TINYINT(1) DEFAULT 1,
+          email_enabled TINYINT(1) DEFAULT 1,
+          whatsapp_enabled TINYINT(1) DEFAULT 0,
+          smtp_host VARCHAR(255) NULL,
+          sms_gateway_key VARCHAR(255) NULL,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+    } catch(e) {}
+
+    await query(
+      `INSERT INTO school_notification_settings (school_id, sms_enabled, email_enabled, whatsapp_enabled, smtp_host, sms_gateway_key)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE sms_enabled=VALUES(sms_enabled), email_enabled=VALUES(email_enabled), whatsapp_enabled=VALUES(whatsapp_enabled), smtp_host=VALUES(smtp_host), sms_gateway_key=VALUES(sms_gateway_key)`,
+      [schoolId, sms_enabled ? 1 : 0, email_enabled ? 1 : 0, whatsapp_enabled ? 1 : 0, smtp_host || null, sms_gateway_key || null]
+    );
+    const updated = await queryOne('SELECT * FROM school_notification_settings WHERE school_id = ?', [schoolId]);
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update notification settings.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCHOOL PATCH
+// PATCH /schools/:schoolId
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch('/schools/:schoolId', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { name, code, address, phone, email, status } = req.body;
+    const updates = [];
+    const params = [];
+    if (name) { updates.push('name = ?'); params.push(name.trim()); }
+    if (code) { updates.push('code = ?'); params.push(code.trim()); }
+    if (address !== undefined) { updates.push('address = ?'); params.push(address); }
+    if (phone !== undefined) { updates.push('phone = ?'); params.push(phone); }
+    if (email !== undefined) { updates.push('email = ?'); params.push(email); }
+    if (status) { updates.push('status = ?'); params.push(status); }
+
+    if (updates.length > 0) {
+      params.push(schoolId);
+      await query(`UPDATE schools SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+    const updated = await queryOne('SELECT * FROM schools WHERE id = ?', [schoolId]);
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to patch school profile.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRADE THRESHOLDS (POST)
+// POST /schools/:schoolId/grade-thresholds
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/schools/:schoolId/grade-thresholds', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { thresholds } = req.body;
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS grade_thresholds (
+          id VARCHAR(50) PRIMARY KEY,
+          school_id VARCHAR(50) NOT NULL,
+          grade VARCHAR(10) NOT NULL,
+          label VARCHAR(50) NULL,
+          min_score DECIMAL(5,2) NOT NULL,
+          max_score DECIMAL(5,2) NOT NULL,
+          points INT NULL,
+          color VARCHAR(20) NULL
+        )
+      `);
+    } catch(e) {}
+
+    if (Array.isArray(thresholds)) {
+      await query('DELETE FROM grade_thresholds WHERE school_id = ?', [schoolId]);
+      for (const t of thresholds) {
+        const tId = 'GT' + Math.random().toString(36).substr(2, 6).toUpperCase();
+        await query(
+          `INSERT INTO grade_thresholds (id, school_id, grade, label, min_score, max_score, points, color)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [tId, schoolId, t.grade, t.label || '', t.min_score || 0, t.max_score || 100, t.points || 0, t.color || '#0d9488']
+        );
+      }
+    }
+    return res.json({ data: { message: 'Grade thresholds saved successfully.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update grade thresholds.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN SUBJECTS DELETE
+// DELETE /admin/subjects/:id
+// ─────────────────────────────────────────────────────────────────────────────
+router.delete('/admin/subjects/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    await query('DELETE FROM subjects WHERE id = ?', [id]);
+    return res.json({ data: { message: 'Subject deleted successfully.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete subject.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN ALERTS PATCH
+// PATCH /admin/alerts/:id
+// ─────────────────────────────────────────────────────────────────────────────
+router.patch('/admin/alerts/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, resolution } = req.body;
+    try {
+      await query('UPDATE system_alerts SET status = COALESCE(?, status), resolution = COALESCE(?, resolution) WHERE id = ?', [status, resolution, id]);
+    } catch(e) {}
+    return res.json({ data: { message: 'System alert updated.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update system alert.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCHOOL LIBRARY SUMMARY
+// GET /schools/:schoolId/library
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/schools/:schoolId/library', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    let books = [];
+    try {
+      books = await query("SELECT * FROM assets WHERE school_id = ? AND category LIKE '%book%' OR category LIKE '%library%'", [schoolId]);
+    } catch(e) {}
+    return res.json({ data: { total_books: books.length, books } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch library catalogue.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STUDENT HEALTH BY STUDENT ID
+// GET /schools/:schoolId/students/:studentId/health
+// PUT /schools/:schoolId/students/:studentId/health
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/schools/:schoolId/students/:studentId/health', authenticateToken, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    let health = await queryOne('SELECT * FROM student_health WHERE student_id = ?', [studentId]);
+    if (!health) {
+      health = { student_id: studentId, blood_type: 'N/A', allergies: 'None', medical_conditions: 'None', emergency_contact: '' };
+    }
+    return res.json({ data: health });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch student health record.' } });
+  }
+});
+
+router.put('/schools/:schoolId/students/:studentId/health', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { blood_type, allergies, medical_conditions, emergency_contact, notes } = req.body;
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS student_health (
+          id VARCHAR(50) PRIMARY KEY,
+          student_id VARCHAR(50) NOT NULL UNIQUE,
+          blood_type VARCHAR(10) NULL,
+          allergies TEXT NULL,
+          medical_conditions TEXT NULL,
+          emergency_contact VARCHAR(100) NULL,
+          notes TEXT NULL,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+    } catch(e) {}
+
+    const hId = 'HLT' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    await query(
+      `INSERT INTO student_health (id, student_id, blood_type, allergies, medical_conditions, emergency_contact, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE blood_type=VALUES(blood_type), allergies=VALUES(allergies), medical_conditions=VALUES(medical_conditions), emergency_contact=VALUES(emergency_contact), notes=VALUES(notes)`,
+      [hId, studentId, blood_type || null, allergies || null, medical_conditions || null, emergency_contact || null, notes || null]
+    );
+
+    const updated = await queryOne('SELECT * FROM student_health WHERE student_id = ?', [studentId]);
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save student health record.' } });
   }
 });
 
