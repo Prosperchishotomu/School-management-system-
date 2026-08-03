@@ -483,7 +483,7 @@ function AppRoutes() {
       <Route
         path="/notifications"
         element={
-          <ProtectedRoute allowedRoles={['super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
             <LayoutShell>
               <Notifications />
             </LayoutShell>

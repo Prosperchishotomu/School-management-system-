@@ -16,6 +16,7 @@ import {
   Loader2,
   HelpCircle
 } from 'lucide-react';
+import PrintReportModal from '../components/PrintReportModal';
 
 const Fees = () => {
   const { activeSchoolId, user } = useAuth();
@@ -29,6 +30,7 @@ const Fees = () => {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   // Admin Tab selection: 'ledger' | 'approvals' | 'config'
   const [activeTab, setActiveTab] = useState('ledger');
@@ -65,6 +67,55 @@ const Fees = () => {
   // Electronic Receipt Modal State
   const [activeReceipt, setActiveReceipt] = useState(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
+
+  // Cash payment modal state
+  const [cashModalFee, setCashModalFee] = useState(null);
+  const [cashAmount, setCashAmount] = useState('');
+  const [cashMethod, setCashMethod] = useState('cash');
+  const [cashRef, setCashRef] = useState('');
+  const [cashNotes, setCashNotes] = useState('');
+  const [cashLoading, setCashLoading] = useState(false);
+  const [cashError, setCashError] = useState('');
+  const [cashSuccess, setCashSuccess] = useState('');
+
+  const openCashModal = (fee) => {
+    setCashModalFee(fee);
+    const balance = parseFloat(fee.amount_due) - parseFloat(fee.amount_paid);
+    setCashAmount(balance > 0 ? balance.toFixed(2) : '');
+    setCashRef('');
+    setCashNotes('');
+    setCashMethod('cash');
+    setCashError('');
+    setCashSuccess('');
+  };
+
+  const handleRecordCashSubmit = async (e) => {
+    e.preventDefault();
+    if (!cashModalFee || !cashAmount || parseFloat(cashAmount) <= 0) {
+      setCashError('Please enter a valid payment amount.');
+      return;
+    }
+    setCashLoading(true);
+    setCashError('');
+    try {
+      await api.post(`/schools/${activeSchoolId}/fees/${cashModalFee.id}/payments`, {
+        amount_paid: parseFloat(cashAmount),
+        payment_method: cashMethod,
+        reference: cashRef || null,
+        notes: cashNotes || null
+      });
+      setCashSuccess('Payment recorded successfully!');
+      setTimeout(() => {
+        setCashModalFee(null);
+        fetchFees();
+        fetchPaymentsHistory();
+      }, 1000);
+    } catch (err) {
+      setCashError(err.message || 'Failed to record cash payment.');
+    } finally {
+      setCashLoading(false);
+    }
+  };
 
   // Load fee structures
   const fetchFees = () => {
@@ -115,10 +166,21 @@ const Fees = () => {
       .finally(() => setRemoteLoading(false));
   };
 
+  const [paymentsHistory, setPaymentsHistory] = useState([]);
+
+  // Load payment transactions history
+  const fetchPaymentsHistory = () => {
+    if (!activeSchoolId) return;
+    api.get(`/schools/${activeSchoolId}/fee-payments`)
+      .then(res => setPaymentsHistory(res.data || []))
+      .catch(err => console.error('Error fetching payment history:', err));
+  };
+
   useEffect(() => {
     fetchFees();
     fetchBankDetails();
     fetchRemotePayments();
+    fetchPaymentsHistory();
 
     const params = new URLSearchParams(window.location.search);
     const receiptId = params.get('receipt');
@@ -134,9 +196,8 @@ const Fees = () => {
   };
 
   const handleExport = () => {
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost/backend/api/v1';
-    const exportUrl = `${apiBase}/schools/${activeSchoolId}/fees/export?token=${sessionStorage.getItem('schoolbase_token')}`;
-    window.open(exportUrl, '_blank');
+    api.downloadFile(`/schools/${activeSchoolId}/fees/export`, `fees_${activeSchoolId}.csv`)
+      .catch(err => console.error('Export error:', err));
   };
 
   // Save bank configuration
@@ -256,6 +317,22 @@ const Fees = () => {
                   <span>Print PDF</span>
                 </button>
                 <button
+                  onClick={() => {
+                    const content = `=====================================================\nOFFICIAL TUITION PAYMENT RECEIPT - ${activeReceipt.school_name}\n=====================================================\nReceipt ID: ${activeReceipt.id}\nDate: ${activeReceipt.payment_date}\nStudent: ${activeReceipt.first_name} ${activeReceipt.last_name} (Adm: ${activeReceipt.admission_number})\nTerm: ${activeReceipt.term}\n-----------------------------------------------------\nAmount Due: $${parseFloat(activeReceipt.amount_due).toFixed(2)}\nAmount Paid: $${parseFloat(activeReceipt.amount_paid).toFixed(2)}\nPayment Method: ${activeReceipt.payment_method}\nReference Code: ${activeReceipt.reference || '-'}\nCashier: ${activeReceipt.cashier_name || 'System Auto'}\n-----------------------------------------------------\nCryptographic Hash: ${activeReceipt.authenticity_signature}\n=====================================================`;
+                    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `Receipt_${activeReceipt.id}.txt`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-ink text-paper rounded-lg text-xs font-semibold hover:bg-ink/80 cursor-pointer"
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>Download</span>
+                </button>
+                <button
                   onClick={() => setActiveReceipt(null)}
                   className="px-3 py-1.5 border border-line-border rounded-lg text-xs hover:bg-sage/10 cursor-pointer text-ink font-semibold"
                 >
@@ -302,7 +379,7 @@ const Fees = () => {
                   </div>
                   <div className="flex justify-between text-ink/70">
                     <span>Reference / Signature:</span>
-                    <span className="font-mono text-[10px]">{activeReceipt.reference || '—'}</span>
+                    <span className="font-mono text-[10px]">{activeReceipt.reference || '-'}</span>
                   </div>
                   <div className="flex justify-between text-ink/70">
                     <span>Handled By:</span>
@@ -374,11 +451,18 @@ const Fees = () => {
         <div>
           <h2 className="text-3xl font-display font-bold text-ink">Fees &amp; Payments Ledger</h2>
           <p className="text-sm font-sans text-ink/60 mt-1">
-            {isParent ? 'Review child tuition structures, check bank details, and declare remote transactions.' : 'Append-only receipts — balances are computed, never edited directly.'}
+            {isParent ? 'Review child tuition structures, check bank details, and declare remote transactions.' : 'Append-only receipts - balances are computed, never edited directly.'}
           </p>
         </div>
         {!isParent && (
-          <div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Export PDF Report</span>
+            </button>
             <button
               onClick={handleExport}
               className="flex items-center space-x-1.5 px-3.5 py-2.5 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 transition-colors cursor-pointer"
@@ -626,6 +710,14 @@ const Fees = () => {
               Ledger Balances
             </button>
             <button
+              onClick={() => setActiveTab('payments')}
+              className={`pb-3 font-semibold border-b-2 transition-colors cursor-pointer ${
+                activeTab === 'payments' ? 'border-teal-primary text-teal-primary' : 'border-transparent text-ink/60 hover:text-ink'
+              }`}
+            >
+              Payment Transactions ({paymentsHistory.length})
+            </button>
+            <button
               onClick={() => setActiveTab('approvals')}
               className={`pb-3 font-semibold border-b-2 transition-colors cursor-pointer flex items-center space-x-1.5 ${
                 activeTab === 'approvals' ? 'border-teal-primary text-teal-primary' : 'border-transparent text-ink/60 hover:text-ink'
@@ -717,12 +809,23 @@ const Fees = () => {
                               </span>
                             </td>
                             <td className="py-4 px-6 text-right">
-                              <a
-                                href={`/students/${fee.student_id}`}
-                                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg transition-colors"
-                              >
-                                View Profile
-                              </a>
+                              <div className="flex items-center justify-end space-x-2">
+                                {balance > 0 && (
+                                  <button
+                                    onClick={() => openCashModal(fee)}
+                                    className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-teal-primary text-paper rounded-lg text-xs font-semibold hover:bg-teal-dark transition-colors cursor-pointer"
+                                  >
+                                    <CreditCard className="w-3 h-3" />
+                                    <span>Record Cash</span>
+                                  </button>
+                                )}
+                                <a
+                                  href={`/students/${fee.student_id}`}
+                                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg transition-colors"
+                                >
+                                  View Profile
+                                </a>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -742,6 +845,57 @@ const Fees = () => {
                     <button onClick={() => setPage(p => Math.min(p + 1, totalPages))} disabled={page === totalPages} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold text-ink/70 disabled:opacity-40 cursor-pointer">Next</button>
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Tab Content: Payment Transactions History */}
+          {activeTab === 'payments' && (
+            <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
+                      <th className="py-4 px-6">Payment Ref / ID</th>
+                      <th className="py-4 px-6">Date</th>
+                      <th className="py-4 px-6">Student</th>
+                      <th className="py-4 px-6">Class</th>
+                      <th className="py-4 px-6 text-right">Amount Paid</th>
+                      <th className="py-4 px-6">Method</th>
+                      <th className="py-4 px-6">Handled By</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
+                    {paymentsHistory.map((p) => (
+                      <tr key={p.id} className="hover:bg-sage/5 transition-colors">
+                        <td className="py-4 px-6 font-mono font-bold text-xs text-teal-primary">{p.reference || p.id}</td>
+                        <td className="py-4 px-6 font-mono text-xs numeric-data">{p.payment_date}</td>
+                        <td className="py-4 px-6">
+                          <span className="font-bold">{p.first_name} {p.last_name}</span>
+                          <span className="block text-[10px] text-ink/50 font-mono">Adm: {p.admission_number}</span>
+                        </td>
+                        <td className="py-4 px-6 text-xs">{p.class_name || 'Unassigned'}</td>
+                        <td className="py-4 px-6 text-right font-mono font-bold text-teal-primary">${parseFloat(p.amount_paid).toFixed(2)}</td>
+                        <td className="py-4 px-6 capitalize text-xs">{p.payment_method?.replace('_', ' ')}</td>
+                        <td className="py-4 px-6 text-xs text-ink/70">{p.cashier_name}</td>
+                        <td className="py-4 px-6 text-right">
+                          <button
+                            onClick={() => handleViewReceipt(p.id)}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                          >
+                            <FileText className="w-3 h-3" />
+                            <span>Receipt</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {paymentsHistory.length === 0 && (
+                      <tr>
+                        <td colSpan="7" className="py-10 text-center text-ink/40 text-xs">No fee payments logged yet.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -928,6 +1082,111 @@ const Fees = () => {
           </div>
         </div>
       )}
+      {/* Record Cash Payment Modal */}
+      {cashModalFee && (
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-10 overflow-y-auto non-printable">
+          <div className="bg-paper rounded-2xl w-full max-w-md overflow-hidden border border-line-border/30 shadow-2xl relative my-4">
+            <div className="flex items-center justify-between p-6 border-b border-line-border/30">
+              <div>
+                <h3 className="text-lg font-display font-bold text-ink">Record Cash / Direct Payment</h3>
+                <p className="text-xs text-ink/60 mt-0.5">{cashModalFee.student_first_name} {cashModalFee.student_last_name} ({cashModalFee.term})</p>
+              </div>
+              <button onClick={() => setCashModalFee(null)} className="text-ink/50 hover:text-ink cursor-pointer"><XCircle className="w-5 h-5" /></button>
+            </div>
+            {cashError && <div className="mx-6 mt-4 p-3 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{cashError}</div>}
+            {cashSuccess && <div className="mx-6 mt-4 p-3 rounded-xl bg-sage/20 border border-teal-primary/20 text-teal-dark text-xs font-semibold">{cashSuccess}</div>}
+            <form onSubmit={handleRecordCashSubmit} className="p-6 space-y-4 font-sans text-xs">
+              <div>
+                <label className="block font-semibold text-ink/70 mb-1">Amount Received ($) *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={cashAmount}
+                  onChange={(e) => setCashAmount(e.target.value)}
+                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono font-bold text-sm focus:outline-none focus:border-teal-primary"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-ink/70 mb-1">Payment Method</label>
+                <select
+                  value={cashMethod}
+                  onChange={(e) => setCashMethod(e.target.value)}
+                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
+                >
+                  <option value="cash">Physical Cash</option>
+                  <option value="bank_transfer">Bank Wire / Deposit</option>
+                  <option value="mobile_money">Mobile Money (EcoCash / InnBucks)</option>
+                  <option value="pos_card">POS Swiped Card</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-semibold text-ink/70 mb-1">Receipt / Reference Code (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. CASH-1092 or BANK-TX88"
+                  value={cashRef}
+                  onChange={(e) => setCashRef(e.target.value)}
+                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-semibold text-ink/70 mb-1">Notes / Cashier Remarks (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Paid in USD bills"
+                  value={cashNotes}
+                  onChange={(e) => setCashNotes(e.target.value)}
+                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
+                />
+              </div>
+              <div className="pt-2 flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setCashModalFee(null)}
+                  className="px-4 py-2 border border-line-border rounded-xl text-ink font-semibold hover:bg-sage/10 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={cashLoading}
+                  className="px-5 py-2 bg-teal-primary text-paper rounded-xl font-semibold hover:bg-teal-dark disabled:opacity-50 cursor-pointer flex items-center space-x-1"
+                >
+                  {cashLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{cashLoading ? 'Recording...' : 'Save Payment'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Print / PDF Report Modal */}
+      <PrintReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        title="FINANCIAL ACCOUNTS & TUITION FEES LEDGER"
+        subtitle={`Official Bursar Report • ${fees.length} Invoices Active`}
+        schoolName="SchoolBase Financial Operations Desk"
+        summaryCards={[
+          { label: 'Total Invoices', value: fees.length },
+          { label: 'Total Due (USD)', value: `$${fees.reduce((acc, f) => acc + parseFloat(f.amount_due || 0), 0).toFixed(2)}` },
+          { label: 'Total Collected (USD)', value: `$${fees.reduce((acc, f) => acc + parseFloat(f.amount_paid || 0), 0).toFixed(2)}` },
+          { label: 'Cleared Invoices', value: fees.filter(f => f.status === 'cleared').length }
+        ]}
+        columns={[
+          { header: 'Admission No.', accessor: 'admission_number' },
+          { header: 'Student Name', accessor: row => `${row.first_name} ${row.last_name}` },
+          { header: 'Class', accessor: row => row.class_name || 'Unassigned' },
+          { header: 'Term', accessor: 'term' },
+          { header: 'Amount Due', accessor: row => `$${parseFloat(row.amount_due || 0).toFixed(2)}` },
+          { header: 'Amount Paid', accessor: row => `$${parseFloat(row.amount_paid || 0).toFixed(2)}` },
+          { header: 'Status', accessor: 'status' }
+        ]}
+        data={fees}
+        userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
+      />
     </div>
   );
 };

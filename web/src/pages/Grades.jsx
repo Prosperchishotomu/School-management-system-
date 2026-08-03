@@ -12,12 +12,13 @@ import {
 // NOTE: Grades.jsx represents ongoing coursework/CATs (raw individual assessment marks recorded by teachers).
 // For formal term-end reports or published report cards, see Results.jsx.
 const Grades = () => {
-  const { activeSchoolId } = useAuth();
+  const { activeSchoolId, user } = useAuth();
   
   const [classes, setClasses] = useState([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [term, setTerm] = useState('2026-T1');
   const [subject, setSubject] = useState('Mathematics');
+  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
   const [assessmentType, setAssessmentType] = useState('test');
   const [assessmentName, setAssessmentName] = useState('Test 1');
   const [customAssessmentName, setCustomAssessmentName] = useState('');
@@ -33,21 +34,30 @@ const Grades = () => {
   const [saveLoading, setSaveLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
+  const isReadOnly = user?.role === 'school_admin' || user?.role === 'super_admin';
+
   const finalAssName = assessmentName === 'custom' ? customAssessmentName.trim() : assessmentName;
 
-  // Fetch classes
+  const [subjectsList, setSubjectsList] = useState([]);
+
+  // Fetch classes and registered subjects
   useEffect(() => {
     if (!activeSchoolId) return;
     setClassesLoading(true);
-    api.get(`/schools/${activeSchoolId}/classes`)
-      .then(res => {
-        if (res.data) {
-          setClasses(res.data);
-          if (res.data.length > 0) setSelectedClass(res.data[0].id);
-        }
-      })
-      .catch(err => console.error('Error fetching classes:', err))
-      .finally(() => setClassesLoading(false));
+    Promise.all([
+      api.get(`/schools/${activeSchoolId}/classes`).catch(() => ({ data: [] })),
+      api.get(`/schools/${activeSchoolId}/subjects`).catch(() => ({ data: [] }))
+    ]).then(([clsRes, subRes]) => {
+      if (clsRes.data) {
+        setClasses(clsRes.data);
+        if (clsRes.data.length > 0) setSelectedClass(clsRes.data[0].id);
+      }
+      if (subRes.data && subRes.data.length > 0) {
+        setSubjectsList(subRes.data);
+        setSubject(subRes.data[0].name);
+      }
+    }).catch(err => console.error('Error fetching classes/subjects:', err))
+    .finally(() => setClassesLoading(false));
   }, [activeSchoolId]);
 
   // Fetch student grades sheet when filters change
@@ -58,29 +68,56 @@ const Grades = () => {
 
     api.get(`/schools/${activeSchoolId}/classes/${selectedClass}/grades?term=${term}`)
       .then(res => {
-        if (res.data) {
-          setStudents(res.data);
-          
-          const initialScores = {};
-          res.data.forEach(item => {
-            const matchedGrade = item.grades.find(
-              g => g.subject === subject && 
-                   g.assessment_type === assessmentType &&
-                   g.assessment_name === finalAssName
-            );
-            initialScores[item.student_id] = matchedGrade ? matchedGrade.grade_value : '';
-          });
-          setScores(initialScores);
-        }
+        const rawList = Array.isArray(res.data) 
+          ? res.data 
+          : (res.data?.averaged_grades || res.data?.raw_grades || []);
+        
+        const studentMap = {};
+        rawList.forEach(item => {
+          const stId = item.student_id || item.id;
+          if (!stId) return;
+          if (!studentMap[stId]) {
+            studentMap[stId] = {
+              student_id: stId,
+              id: stId,
+              first_name: item.first_name || '',
+              last_name: item.last_name || '',
+              admission_number: item.admission_number || '',
+              grades: []
+            };
+          }
+          if (Array.isArray(item.scores)) {
+            studentMap[stId].grades.push(...item.scores);
+          } else if (item.subject) {
+            studentMap[stId].grades.push(item);
+          }
+        });
+
+        const uniqueStudents = Object.values(studentMap);
+        setStudents(uniqueStudents);
+        
+        const initialScores = {};
+        uniqueStudents.forEach(item => {
+          const stId = item.student_id || item.id;
+          const gradesArr = Array.isArray(item.scores) ? item.scores : (item.grades || []);
+          const matchedGrade = gradesArr.find(
+            g => (g.subject === subject || g.subject_name === subject) && 
+            (g.assessment_type === assessmentType || !assessmentType)
+          );
+          initialScores[stId] = matchedGrade ? matchedGrade.grade_value : '';
+        });
+        setScores(initialScores);
       })
       .catch(err => {
         console.error('Error fetching grades:', err);
+        setStudents([]);
         setMessage({ type: 'error', text: 'Failed to fetch grades sheet.' });
       })
       .finally(() => setLoading(false));
   }, [activeSchoolId, selectedClass, term, subject, assessmentType, assessmentName, customAssessmentName]);
 
   const handleScoreChange = (studentId, value) => {
+    if (isReadOnly) return;
     setScores(prev => ({
       ...prev,
       [studentId]: value
@@ -89,21 +126,24 @@ const Grades = () => {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (isReadOnly) return;
     setSaveLoading(true);
     setMessage({ type: '', text: '' });
 
-    const records = students.map(s => ({
-      student_id: s.student_id,
-      subject,
-      grade_value: scores[s.student_id] === '' ? 0 : Number(scores[s.student_id]),
-      assessment_type: assessmentType,
-      assessment_name: finalAssName || 'Test 1',
-      weight: Number(weight)
+    const safeStudents = Array.isArray(students) ? students : [];
+    const records = safeStudents.map(s => ({
+      student_id: s.student_id || s.id,
+      grade_value: scores[s.student_id || s.id] === '' ? 0 : Number(scores[s.student_id || s.id]),
+      comments: null
     }));
 
     try {
-      const res = await api.put(`/schools/${activeSchoolId}/classes/${selectedClass}/grades?term=${term}`, {
-        records
+      const res = await api.post(`/schools/${activeSchoolId}/classes/${selectedClass}/grades/batch`, {
+        subject,
+        assessment_type: assessmentType,
+        term,
+        weight: Number(weight),
+        entries: records
       });
       if (res.data) {
         setMessage({ type: 'success', text: 'Grades entries saved successfully.' });
@@ -159,20 +199,75 @@ const Grades = () => {
           </select>
         </div>
 
-        <div className="flex flex-col space-y-1">
-          <label className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">Subject</label>
-          <select
+        <div className="flex flex-col space-y-1 relative">
+          <label className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">Subject (Auto-suggest)</label>
+          <input
+            type="text"
             value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            className="w-full bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2"
-          >
-            <option value="Mathematics">Mathematics</option>
-            <option value="English">English</option>
-            <option value="Shona">Shona</option>
-            <option value="Ndebele">Ndebele</option>
-            <option value="Science">General Science</option>
-            <option value="Heritage">Heritage Studies</option>
-          </select>
+            onChange={(e) => {
+              setSubject(e.target.value);
+              setShowSubjectDropdown(true);
+            }}
+            onFocus={() => setShowSubjectDropdown(true)}
+            placeholder="Type subject name..."
+            className="w-full bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2 font-semibold focus:outline-none focus:border-teal-primary"
+          />
+          {showSubjectDropdown && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-paper border border-line-border rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
+              {(subjectsList.length > 0 ? subjectsList : [
+                { name: 'Mathematics', code: 'MTH' },
+                { name: 'English Language', code: 'ENG' },
+                { name: 'Shona', code: 'SNA' },
+                { name: 'Ndebele', code: 'NDB' },
+                { name: 'Combined Science', code: 'CSC' },
+                { name: 'Heritage Studies', code: 'HST' },
+                { name: 'Geography', code: 'GEO' },
+                { name: 'History', code: 'HIS' },
+                { name: 'Physics', code: 'PHY' },
+                { name: 'Chemistry', code: 'CHM' },
+                { name: 'Biology', code: 'BIO' },
+                { name: 'Accounting', code: 'ACC' },
+                { name: 'Business Studies', code: 'BST' },
+                { name: 'Computer Science', code: 'CSC' }
+              ]).filter(s => s.name.toLowerCase().includes((subject || '').toLowerCase())).length > 0 ? (
+                (subjectsList.length > 0 ? subjectsList : [
+                  { name: 'Mathematics', code: 'MTH' },
+                  { name: 'English Language', code: 'ENG' },
+                  { name: 'Shona', code: 'SNA' },
+                  { name: 'Ndebele', code: 'NDB' },
+                  { name: 'Combined Science', code: 'CSC' },
+                  { name: 'Heritage Studies', code: 'HST' },
+                  { name: 'Geography', code: 'GEO' },
+                  { name: 'History', code: 'HIS' },
+                  { name: 'Physics', code: 'PHY' },
+                  { name: 'Chemistry', code: 'CHM' },
+                  { name: 'Biology', code: 'BIO' },
+                  { name: 'Accounting', code: 'ACC' },
+                  { name: 'Business Studies', code: 'BST' },
+                  { name: 'Computer Science', code: 'CSC' }
+                ])
+                .filter(s => s.name.toLowerCase().includes((subject || '').toLowerCase()))
+                .map(s => (
+                  <button
+                    key={s.id || s.code || s.name}
+                    type="button"
+                    onClick={() => {
+                      setSubject(s.name);
+                      setShowSubjectDropdown(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-sans hover:bg-teal-primary/10 hover:text-teal-dark flex justify-between items-center transition-colors cursor-pointer"
+                  >
+                    <span className="font-semibold">{s.name}</span>
+                    <span className="text-[10px] text-ink/40 font-mono">{s.code}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="p-3 text-[11px] text-ink/50 italic">
+                  No registered curriculum subject matching "{subject}". Select from listed subjects.
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col space-y-1">
@@ -233,6 +328,7 @@ const Grades = () => {
             className="w-full bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2 font-mono numeric-data"
             value={weight}
             onChange={(e) => setWeight(e.target.value)}
+            disabled={isReadOnly}
           />
         </div>
       </div>
@@ -247,6 +343,7 @@ const Grades = () => {
             className="w-full bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary"
             value={customAssessmentName}
             onChange={(e) => setCustomAssessmentName(e.target.value)}
+            disabled={isReadOnly}
           />
         </div>
       )}
@@ -266,21 +363,22 @@ const Grades = () => {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-                  <th className="py-4 px-6 w-1/2">Student Name</th>
-                  <th className="py-4 px-6 text-right w-1/4">Raw Mark (%)</th>
-                  <th className="py-4 px-6 w-1/4">Verification Flag</th>
+                  <th className="py-4 px-6">Student Name</th>
+                  <th className="py-4 px-6 text-right">Raw Mark (%)</th>
+                  <th className="py-4 px-6 text-center">Unified Subject Avg</th>
+                  <th className="py-4 px-6">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
                 {loading ? (
                   <tr>
-                    <td colSpan="3" className="py-12 text-center text-ink/40 text-xs">
+                    <td colSpan="4" className="py-12 text-center text-ink/40 text-xs">
                       Loading grades sheet data...
                     </td>
                   </tr>
                 ) : (
                   (() => {
-                    const list = [...students];
+                    const list = Array.isArray(students) ? [...students] : [];
                     if (sortBy === 'performance-desc') {
                       list.sort((a, b) => {
                         const sA = scores[a.student_id] !== '' && scores[a.student_id] !== undefined ? Number(scores[a.student_id]) : -1;
@@ -300,38 +398,56 @@ const Grades = () => {
                         return nameA.localeCompare(nameB);
                       });
                     }
-                    return list.map((student) => (
-                      <tr key={student.student_id} className="hover:bg-sage/5 transition-colors">
-                        <td className="py-4 px-6 font-bold">{student.first_name} {student.last_name}</td>
-                        <td className="py-4 px-6 text-right">
-                          <div className="inline-flex items-center space-x-2 justify-end w-32">
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              placeholder="0"
-                              className="w-20 px-3 py-1.5 border border-line-border rounded-lg text-right text-xs font-mono numeric-data"
-                              value={scores[student.student_id] !== undefined ? scores[student.student_id] : ''}
-                              onChange={(e) => handleScoreChange(student.student_id, e.target.value)}
-                            />
-                            <span className="text-xs font-semibold text-ink/50">%</span>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className={`inline-flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${
-                            scores[student.student_id] !== '' ? 'text-teal-primary' : 'text-ink/35'
-                          }`}>
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            <span>{scores[student.student_id] !== '' ? 'Entered' : 'Missing'}</span>
-                          </span>
-                        </td>
-                      </tr>
-                    ));
+                    return list.map((student) => {
+                      const subjectGrades = (student.grades || []).filter(g => g.subject === subject);
+                      const totalW = subjectGrades.reduce((sum, g) => sum + (parseFloat(g.weight) || 1), 0);
+                      const weightedSum = subjectGrades.reduce((sum, g) => sum + ((parseFloat(g.grade_value) || 0) * (parseFloat(g.weight) || 1)), 0);
+                      const subjectAvg = totalW > 0 ? (weightedSum / totalW).toFixed(1) : null;
+                      const countTests = subjectGrades.length;
+
+                      return (
+                        <tr key={student.student_id} className="hover:bg-sage/5 transition-colors">
+                          <td className="py-4 px-6 font-bold">{student.first_name} {student.last_name}</td>
+                          <td className="py-4 px-6 text-right">
+                            <div className="inline-flex items-center space-x-2 justify-end w-32">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                placeholder="0"
+                                className="w-20 px-3 py-1.5 border border-line-border rounded-lg text-right text-xs font-mono numeric-data disabled:opacity-60 disabled:cursor-not-allowed"
+                                value={scores[student.student_id] !== undefined ? scores[student.student_id] : ''}
+                                onChange={(e) => handleScoreChange(student.student_id, e.target.value)}
+                                disabled={isReadOnly}
+                              />
+                              <span className="text-xs font-semibold text-ink/50">%</span>
+                            </div>
+                          </td>
+                          <td className="py-4 px-6 text-center">
+                            {subjectAvg !== null ? (
+                              <span className="inline-block px-2.5 py-1 rounded-full text-xs font-bold font-mono bg-teal-primary/10 text-teal-primary border border-teal-primary/20">
+                                {subjectAvg}% <span className="text-[9px] text-ink/50 font-sans">({countTests} {countTests === 1 ? 'test' : 'tests'})</span>
+                              </span>
+                            ) : (
+                              <span className="text-xs text-ink/35 font-mono">-</span>
+                            )}
+                          </td>
+                          <td className="py-4 px-6">
+                            <span className={`inline-flex items-center space-x-1 text-[10px] font-bold uppercase tracking-wider ${
+                              scores[student.student_id] !== '' ? 'text-teal-primary' : 'text-ink/35'
+                            }`}>
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>{scores[student.student_id] !== '' ? 'Entered' : 'Missing'}</span>
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    });
                   })()
                 )}
                 {students.length === 0 && !loading && (
                   <tr>
-                    <td colSpan="3" className="py-12 text-center text-ink/50 text-xs">
+                    <td colSpan="4" className="py-12 text-center text-ink/50 text-xs">
                       No students found in this class scope.
                     </td>
                   </tr>
@@ -341,7 +457,7 @@ const Grades = () => {
           </div>
         </div>
 
-        {students.length > 0 && !loading && (
+        {students.length > 0 && !loading && !isReadOnly && (
           <div className="flex justify-end">
             <button
               type="submit"

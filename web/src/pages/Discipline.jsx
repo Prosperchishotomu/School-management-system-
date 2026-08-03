@@ -184,7 +184,7 @@ const Discipline = () => {
                         {studentResults.map(s => (
                           <button key={s.id} type="button" onClick={() => { setSelectedStudent(s); setStudentResults([]); setStudentSearch(''); }}
                             className="w-full text-left px-3 py-2 text-xs hover:bg-sage/20 transition-colors cursor-pointer">
-                            {s.first_name} {s.last_name} — {s.class_name}
+                            {s.first_name} {s.last_name} - {s.class_name}
                           </button>
                         ))}
                       </div>

@@ -145,9 +145,8 @@ const Results = () => {
   };
 
   const handleExport = () => {
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost/backend/api/v1';
-    const exportUrl = `${apiBase}/schools/${activeSchoolId}/classes/${selectedClass}/results/export?term=${term}&token=${sessionStorage.getItem('schoolbase_token')}`;
-    window.open(exportUrl, '_blank');
+    api.downloadFile(`/schools/${activeSchoolId}/classes/${selectedClass}/results/export?term=${term}`, `results_${selectedClass}_${term}.csv`)
+      .catch(err => console.error('Export error:', err));
   };
 
   const isPublished = results.some(r => r.status === 'published');
@@ -237,11 +236,11 @@ const Results = () => {
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-left max-w-3xl mx-auto pt-6 text-xs text-ink/70">
               <div>
                 <span className="block text-[9px] font-bold text-ink/45 uppercase tracking-wider">Student Name</span>
-                <span className="text-sm font-bold text-ink">{activeKidName || 'N/A'}</span>
+                <span className="text-sm font-bold text-ink">{activeKidName || '-'}</span>
               </div>
               <div>
                 <span className="block text-[9px] font-bold text-ink/45 uppercase tracking-wider">Admission Number</span>
-                <span className="text-sm font-mono font-bold text-ink">{kidProfile?.student?.admission_number || 'N/A'}</span>
+                <span className="text-sm font-mono font-bold text-ink">{kidProfile?.student?.admission_number || '-'}</span>
               </div>
               <div>
                 <span className="block text-[9px] font-bold text-ink/45 uppercase tracking-wider">Grade / Class</span>
@@ -265,7 +264,7 @@ const Results = () => {
                 <span className="text-[10px] text-ink/50 font-bold uppercase tracking-wider">Form Position</span>
                 <div className="mt-2">
                   <h4 className="text-xl font-bold font-mono text-teal-primary">
-                    {kidRank.form_rank || '—'} <span className="text-[10px] text-ink/40 font-normal">of {kidRank.form_total || '—'}</span>
+                    {kidRank.form_rank || '-'} <span className="text-[10px] text-ink/40 font-normal">of {kidRank.form_total || '-'}</span>
                   </h4>
                 </div>
               </div>
@@ -475,7 +474,7 @@ const Results = () => {
                       {res.rank} <span className="text-[10px] text-ink/45 font-normal">of {res.class_total || results.length}</span>
                     </td>
                     <td className="py-4 px-6 text-center font-mono font-bold text-teal-primary/80 numeric-data">
-                      {res.form_rank || '—'} <span className="text-[10px] text-ink/45 font-normal">of {res.form_total || '—'}</span>
+                      {res.form_rank || '-'} <span className="text-[10px] text-ink/45 font-normal">of {res.form_total || '-'}</span>
                     </td>
                     <td className="py-4 px-6 font-bold">{res.student_name || `${res.first_name} ${res.last_name}`}</td>
                     <td className="py-4 px-6 text-center font-mono font-bold numeric-data">{res.overall_percentage}%</td>

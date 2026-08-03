@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { Plus, X, Loader2, Clock, Trash2, Calendar, Edit3 } from 'lucide-react';
+import { Plus, X, Loader2, Clock, Trash2, Calendar, Edit3, BookOpen } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -30,7 +30,7 @@ const Timetable = () => {
   const [slotLoading, setSlotLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const canEdit = user?.role === 'super_admin';
+  const canEdit = ['super_admin', 'school_admin'].includes(user?.role);
 
   useEffect(() => {
     if (!activeSchoolId) return;

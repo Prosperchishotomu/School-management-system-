@@ -29,6 +29,38 @@ const Library = () => {
   const [selectedAssetForLend, setSelectedAssetForLend] = useState(null);
   const [lendForm, setLendForm] = useState({ holder_type: 'student', holder_id: '' });
   const [lendLoading, setLendLoading] = useState(false);
+  const [borrowerOptions, setBorrowerOptions] = useState([]);
+  const [loadingBorrowers, setLoadingBorrowers] = useState(false);
+
+  useEffect(() => {
+    if (!showLendModal || !activeSchoolId) return;
+    setLoadingBorrowers(true);
+    if (lendForm.holder_type === 'student') {
+      api.get(`/schools/${activeSchoolId}/students?per_page=100`)
+        .then(res => {
+          const list = (res.data || []).map(s => ({
+            id: s.id,
+            name: `${s.first_name} ${s.last_name} (Adm: ${s.admission_number || s.id})`
+          }));
+          setBorrowerOptions(list);
+          if (list.length > 0) setLendForm(prev => ({ ...prev, holder_id: list[0].id }));
+        })
+        .catch(() => setBorrowerOptions([]))
+        .finally(() => setLoadingBorrowers(false));
+    } else {
+      api.get(`/schools/${activeSchoolId}/staff`)
+        .then(res => {
+          const list = (res.data || []).map(st => ({
+            id: st.id,
+            name: `${st.name} (${st.role_title || 'Staff'})`
+          }));
+          setBorrowerOptions(list);
+          if (list.length > 0) setLendForm(prev => ({ ...prev, holder_id: list[0].id }));
+        })
+        .catch(() => setBorrowerOptions([]))
+        .finally(() => setLoadingBorrowers(false));
+    }
+  }, [showLendModal, lendForm.holder_type, activeSchoolId]);
 
   const fetchAssets = () => {
     if (!activeSchoolId) return;
@@ -191,7 +223,7 @@ const Library = () => {
               <tr><td colSpan="5" className="py-12 text-center text-xs text-ink/40">Loading repository items...</td></tr>
             ) : filteredAssets.map(a => (
               <tr key={a.id} className="hover:bg-sage/5 transition-colors">
-                <td className="py-4 px-6 font-mono text-xs numeric-data text-ink/60">{a.code || '—'}</td>
+                <td className="py-4 px-6 font-mono text-xs numeric-data text-ink/60">{a.code || '-'}</td>
                 <td className="py-4 px-6">
                   <div className="font-bold text-ink">{a.name}</div>
                   <span className="text-[10px] text-ink/50 block mt-0.5">{a.description}</span>
@@ -295,8 +327,27 @@ const Library = () => {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Borrower ID *</label>
-                <input required type="text" placeholder="e.g. STD00001 or USR00003" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={lendForm.holder_id} onChange={e => setLendForm({...lendForm, holder_id: e.target.value})} />
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Select Borrower Name *</label>
+                {loadingBorrowers ? (
+                  <div className="flex items-center space-x-2 py-2 text-xs text-ink/50">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-primary" />
+                    <span>Loading borrower list...</span>
+                  </div>
+                ) : borrowerOptions.length > 0 ? (
+                  <select
+                    required
+                    className="w-full px-3 py-2 border border-line-border rounded-lg text-xs bg-paper focus:outline-none focus:border-teal-primary cursor-pointer font-medium"
+                    value={lendForm.holder_id}
+                    onChange={e => setLendForm({...lendForm, holder_id: e.target.value})}
+                  >
+                    <option value="">Select Borrower</option>
+                    {borrowerOptions.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input required type="text" placeholder="e.g. STD00001 or USR00003" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={lendForm.holder_id} onChange={e => setLendForm({...lendForm, holder_id: e.target.value})} />
+                )}
               </div>
               <div className="pt-2 flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowLendModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>

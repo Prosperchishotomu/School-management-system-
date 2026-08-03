@@ -2,8 +2,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
 import {
-  Search, Filter, Plus, User, X, Eye, Edit2, ArrowRightLeft, ChevronLeft, ChevronRight, FileText
+  Search, Filter, Plus, User, X, Eye, Edit2, ArrowRightLeft, ChevronLeft, ChevronRight, FileText,
+  Crown, Trash2, Users, Award, Printer, Ban, CheckCircle2, ShieldAlert
 } from 'lucide-react';
+import PrintReportModal from '../components/PrintReportModal';
 
 const STATUS_COLORS = {
   enrolled:    'bg-sage/35 text-teal-dark',
@@ -15,16 +17,11 @@ const STATUS_COLORS = {
 };
 
 const EMPTY_FORM = {
-  // Section 1 — Identity
   admission_number: '', first_name: '', middle_name: '', last_name: '',
   date_of_birth: '', gender: 'male',
-  // Section 2 — Enrollment
-  class_id: '', previous_school: '',
-  // Section 3 — Personal
+  class_id: '', previous_school: '', leadership_position: 'none',
   nationality: '', home_address: '', religion: '',
-  // Section 4 — Medical
   medical_notes: '',
-  // Section 5 — Guardian
   guardian_name: '', guardian_phone: '', guardian_email: '', guardian_national_id: '', guardian_relation: 'Mother',
 };
 
@@ -35,7 +32,9 @@ const Students = () => {
   const isTeacher    = user?.role === 'teacher';
   const isParent     = user?.role === 'parent';
 
+  const [activeTab,    setActiveTab]   = useState('students'); // 'students' | 'parents'
   const [students,    setStudents]    = useState([]);
+  const [parents,     setParents]     = useState([]);
   const [classes,     setClasses]     = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState('');
@@ -45,12 +44,22 @@ const Students = () => {
   const [page,        setPage]        = useState(1);
   const [totalPages,  setTotalPages]  = useState(1);
 
+  // Bulk selection & PDF Modal states
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showReportModal, setShowReportModal] = useState(false);
+
+  // Parent Edit Modal
+  const [showParentModal, setShowParentModal] = useState(false);
+  const [editingParent, setEditingParent] = useState(null);
+  const [parentForm, setParentForm] = useState({ name: '', phone: '', email: '', relation: '', national_id: '' });
+
   // Add modal
   const [showAddModal,  setShowAddModal]  = useState(false);
   const [newStudent,    setNewStudent]    = useState(EMPTY_FORM);
   const [addError,      setAddError]      = useState('');
   const [addLoading,    setAddLoading]    = useState(false);
   const [activeSection, setActiveSection] = useState(1);
+  const [createdParentCreds, setCreatedParentCreds] = useState(null);
 
   // Edit / Transfer modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -67,10 +76,19 @@ const Students = () => {
       api.get(`/schools/${activeSchoolId}/classes`)
         .then(res => { if (res.data) setClasses(res.data); })
         .catch(() => {});
+      api.get(`/schools/${activeSchoolId}/guardians`)
+        .then(res => { if (res.data) setParents(res.data); })
+        .catch(() => {});
+    } else if (isTeacher) {
+      // Teachers need class list for filtering too
+      api.get(`/schools/${activeSchoolId}/classes`)
+        .then(res => { if (res.data) setClasses(res.data); })
+        .catch(() => {});
     }
 
-    const q = new URLSearchParams({ page, per_page: 15, search });
-    if (isAdmin && classFilter) q.set('class_id', classFilter);
+    const q = new URLSearchParams({ page, per_page: 15 });
+    if (search) q.set('search', search);
+    if (classFilter) q.set('class_id', classFilter);
     if (isAdmin && statusFilter) q.set('status', statusFilter);
 
     api.get(`/schools/${activeSchoolId}/students?${q}`)
@@ -81,18 +99,47 @@ const Students = () => {
       })
       .catch(() => setError('Failed to load student roster.'))
       .finally(() => setLoading(false));
-  }, [activeSchoolId, page, classFilter, statusFilter, isAdmin]);
+  }, [activeSchoolId, page, classFilter, statusFilter, search, isAdmin, isTeacher]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleDeleteStudent = async (studentId) => {
+    if (!window.confirm('Are you sure you want to delete or withdraw this student?')) return;
+    try {
+      await api.delete(`/schools/${activeSchoolId}/students/${studentId}?force=true`);
+      fetchData();
+    } catch (err) {
+      alert(err.message || 'Failed to delete student.');
+    }
+  };
 
   // ── Add Student ─────────────────────────────────────────────────────────────
   const handleAddStudent = async (e) => {
     e.preventDefault();
+    // Client-side guardian contact validation
+    if (!newStudent.guardian_name || !newStudent.guardian_name.trim()) {
+      setAddError('Guardian name is required. Please go to Section 5 and fill in the Guardian details.');
+      setActiveSection(5);
+      return;
+    }
+    if (!newStudent.guardian_phone && !newStudent.guardian_email) {
+      setAddError('Guardian contact is required. Please provide at least a phone number or email address in Section 5.');
+      setActiveSection(5);
+      return;
+    }
     setAddLoading(true); setAddError('');
     try {
       const res = await api.post(`/schools/${activeSchoolId}/students`, newStudent);
       if (res.data) {
         setShowAddModal(false);
+        if (res.data.parent_credentials) {
+          setCreatedParentCreds({
+            studentName: `${res.data.first_name} ${res.data.last_name}`,
+            admissionNumber: res.data.admission_number,
+            username: res.data.parent_credentials.username,
+            tempPassword: res.data.parent_credentials.temp_password
+          });
+        }
         setNewStudent(EMPTY_FORM);
         setActiveSection(1);
         fetchData();
@@ -109,6 +156,7 @@ const Students = () => {
       first_name: s.first_name, last_name: s.last_name, middle_name: s.middle_name || '',
       date_of_birth: s.date_of_birth, gender: s.gender, status: s.status,
       class_id: s.class_id || '', admission_number: s.admission_number,
+      leadership_position: s.leadership_position || 'none',
       nationality: s.nationality || '', home_address: s.home_address || '',
       religion: s.religion || '', previous_school: s.previous_school || '',
       medical_notes: s.medical_notes || '',
@@ -130,10 +178,73 @@ const Students = () => {
     }
   };
 
+  const handleToggleSuspend = async (s) => {
+    const nextStatus = s.status === 'suspended' ? 'enrolled' : 'suspended';
+    const confirmMsg = s.status === 'suspended'
+      ? `Reinstate student '${s.first_name} ${s.last_name}' to enrolled status?`
+      : `Suspend student '${s.first_name} ${s.last_name}'?`;
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      await api.patch(`/schools/${activeSchoolId}/students/${s.id}`, { status: nextStatus });
+      fetchData();
+    } catch (err) {
+      alert(err.message || 'Failed to update student status.');
+    }
+  };
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedIds(students.map(s => s.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleToggleSelect = (id) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} selected student records? This action cannot be undone.`)) return;
+    try {
+      await api.post(`/schools/${activeSchoolId}/students/bulk-delete`, { student_ids: selectedIds });
+      setSelectedIds([]);
+      fetchData();
+    } catch (err) {
+      alert(err.message || 'Failed to bulk delete student records.');
+    }
+  };
+
+  const openEditParent = (p) => {
+    setEditingParent(p);
+    setParentForm({
+      name: p.name || '',
+      phone: p.phone || '',
+      email: p.email || '',
+      relation: p.relation || 'Parent',
+      national_id: p.national_id || '',
+    });
+    setShowParentModal(true);
+  };
+
+  const handleSaveParent = async (e) => {
+    e.preventDefault();
+    if (!editingParent) return;
+    try {
+      await api.patch(`/schools/${activeSchoolId}/students/guardians/${editingParent.id}`, parentForm);
+      setShowParentModal(false);
+      fetchData();
+    } catch (err) {
+      alert(err.message || 'Failed to update parent details.');
+    }
+  };
+
   const handleExport = () => {
-    const apiBase = import.meta.env.VITE_API_URL || 'http://localhost/backend/api/v1';
-    const exportUrl = `${apiBase}/schools/${activeSchoolId}/students/export?token=${sessionStorage.getItem('schoolbase_token')}`;
-    window.open(exportUrl, '_blank');
+    api.downloadFile(`/schools/${activeSchoolId}/students/export`, `students_${activeSchoolId}.csv`)
+      .catch(err => console.error('Export error:', err));
   };
 
   const sections = [
@@ -159,6 +270,23 @@ const Students = () => {
   const inputCls = 'w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs bg-paper text-ink';
   const labelCls = 'block text-xs font-semibold text-ink/70 mb-1';
 
+  // Format PDF Report Columns
+  const reportColumns = [
+    { header: 'Admission No.', accessor: 'admission_number' },
+    { header: 'Student Name', accessor: row => `${row.first_name} ${row.middle_name ? row.middle_name + ' ' : ''}${row.last_name}` },
+    { header: 'Class', accessor: row => row.class_name || 'Unassigned' },
+    { header: 'Gender', accessor: 'gender' },
+    { header: 'DOB', accessor: 'date_of_birth' },
+    { header: 'Status', accessor: 'status' },
+  ];
+
+  const reportKpis = [
+    { label: 'Total Roster', value: students.length },
+    { label: 'Enrolled Pupils', value: students.filter(s => s.status === 'enrolled' || s.status === 'active').length },
+    { label: 'Suspended Pupils', value: students.filter(s => s.status === 'suspended').length },
+    { label: 'Classes Mapped', value: classes.length }
+  ];
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
@@ -173,6 +301,13 @@ const Students = () => {
         </div>
         {isAdmin && (
           <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Export PDF Report</span>
+            </button>
             <button
               onClick={handleExport}
               className="flex items-center space-x-1.5 px-3.5 py-2.5 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 transition-colors cursor-pointer"
@@ -192,8 +327,32 @@ const Students = () => {
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm font-sans">{error}</div>}
 
-      {/* Filters — admins only */}
+      {/* Tab Switcher for Admins */}
       {isAdmin && (
+        <div className="flex border-b border-line-border/30 gap-6 text-sm font-sans font-bold">
+          <button
+            onClick={() => setActiveTab('students')}
+            className={`pb-3 transition-all cursor-pointer flex items-center space-x-2 ${
+              activeTab === 'students' ? 'border-b-2 border-teal-primary text-teal-primary' : 'text-ink/50 hover:text-ink'
+            }`}
+          >
+            <User className="w-4 h-4" />
+            <span>Students Directory ({students.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('parents')}
+            className={`pb-3 transition-all cursor-pointer flex items-center space-x-2 ${
+              activeTab === 'parents' ? 'border-b-2 border-teal-primary text-teal-primary' : 'text-ink/50 hover:text-ink'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>Parents Directory ({parents.length})</span>
+          </button>
+        </div>
+      )}
+
+      {/* Filters — admins and teachers */}
+      {(isAdmin || isTeacher) && activeTab === 'students' && (
         <div className="glass-card rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <form onSubmit={(e) => { e.preventDefault(); setPage(1); fetchData(); }} className="flex-1 max-w-md relative">
             <Search className="absolute left-3.5 top-3 w-4 h-4 text-ink/40" />
@@ -210,71 +369,182 @@ const Students = () => {
               <option value="">All Classes</option>
               {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
-              className="bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary">
-              <option value="">All Statuses</option>
-              <option value="enrolled">Enrolled</option>
-              <option value="suspended">Suspended</option>
-              <option value="withdrawn">Withdrawn</option>
-              <option value="graduated">Graduated</option>
-              <option value="transferred">Transferred</option>
-              <option value="dropped_out">Dropped Out</option>
-            </select>
+            {isAdmin && (
+              <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
+                className="bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary">
+                <option value="">All Statuses</option>
+                <option value="enrolled">Enrolled</option>
+                <option value="suspended">Suspended</option>
+                <option value="withdrawn">Withdrawn</option>
+                <option value="graduated">Graduated</option>
+                <option value="transferred">Transferred</option>
+                <option value="dropped_out">Dropped Out</option>
+              </select>
+            )}
           </div>
         </div>
       )}
 
-      {/* Table */}
-      <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-                <th className="py-4 px-6">Admission No.</th>
-                <th className="py-4 px-6">Name</th>
-                <th className="py-4 px-6">Class</th>
-                <th className="py-4 px-6">Gender</th>
-                <th className="py-4 px-6">DOB</th>
-                <th className="py-4 px-6">Status</th>
-                <th className="py-4 px-6 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-              {loading ? (
-                <tr><td colSpan="7" className="py-10 text-center text-ink/40 text-xs">Loading students...</td></tr>
-              ) : students.length === 0 ? (
-                <tr><td colSpan="7" className="py-10 text-center text-ink/40 text-xs">No students match the criteria.</td></tr>
-              ) : students.map(s => (
-                <tr key={s.id} className="hover:bg-sage/5 transition-colors">
-                  <td className="py-4 px-6 font-mono font-semibold numeric-data text-xs">{s.admission_number}</td>
-                  <td className="py-4 px-6 font-bold">{s.first_name} {s.middle_name ? s.middle_name + ' ' : ''}{s.last_name}</td>
-                  <td className="py-4 px-6">{s.class_name || 'Unassigned'}</td>
-                  <td className="py-4 px-6 capitalize">{s.gender}</td>
-                  <td className="py-4 px-6 numeric-data text-xs">{s.date_of_birth}</td>
-                  <td className="py-4 px-6">
-                    <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${STATUS_COLORS[s.status] || 'bg-ink/10 text-ink/60'}`}>
-                      {s.status}
-                    </span>
-                  </td>
-                  <td className="py-4 px-6 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <a href={`/students/${s.id}`}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg transition-colors cursor-pointer">
-                        <Eye className="w-3.5 h-3.5" /><span>View</span>
-                      </a>
-                      {isAdmin && (
-                        <button onClick={() => openEdit(s)}
-                          className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-amber-warning/10 hover:bg-amber-warning/20 text-amber-warning text-xs font-semibold rounded-lg transition-colors cursor-pointer">
-                          <Edit2 className="w-3.5 h-3.5" /><span>Edit</span>
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Bulk Action Bar */}
+      {isAdmin && selectedIds.length > 0 && activeTab === 'students' && (
+        <div className="bg-amber-warning/15 border border-amber-warning/30 rounded-2xl p-4 flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center space-x-3 text-xs font-bold text-ink">
+            <span className="bg-amber-warning/20 text-amber-dark px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
+            <span>Bulk Actions: Permanently remove selected pupil records.</span>
+          </div>
+          <button
+            onClick={handleBulkDelete}
+            className="flex items-center space-x-1.5 px-4 py-2 bg-brick-critical hover:bg-brick-critical/90 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Selected ({selectedIds.length})</span>
+          </button>
         </div>
+      )}
+
+      {/* Students Table */}
+      {activeTab === 'students' ? (
+        <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
+                  {isAdmin && (
+                    <th className="py-4 px-4 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        onChange={handleSelectAll}
+                        checked={students.length > 0 && selectedIds.length === students.length}
+                        className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
+                      />
+                    </th>
+                  )}
+                  <th className="py-4 px-6">Admission No.</th>
+                  <th className="py-4 px-6">Name</th>
+                  <th className="py-4 px-6">Class</th>
+                  <th className="py-4 px-6">Gender</th>
+                  <th className="py-4 px-6">DOB</th>
+                  <th className="py-4 px-6">Status</th>
+                  <th className="py-4 px-6 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
+                {loading ? (
+                  <tr><td colSpan={isAdmin ? "8" : "7"} className="py-10 text-center text-ink/40 text-xs">Loading students...</td></tr>
+                ) : students.length === 0 ? (
+                  <tr><td colSpan={isAdmin ? "8" : "7"} className="py-10 text-center text-ink/40 text-xs">No students match the criteria.</td></tr>
+                ) : students.map(s => (
+                  <tr key={s.id} className="hover:bg-sage/5 transition-colors">
+                    {isAdmin && (
+                      <td className="py-4 px-4 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(s.id)}
+                          onChange={() => handleToggleSelect(s.id)}
+                          className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
+                        />
+                      </td>
+                    )}
+                    <td className="py-4 px-6 font-mono font-semibold numeric-data text-xs">{s.admission_number}</td>
+                    <td className="py-4 px-6">
+                      <div className="font-bold">{s.first_name} {s.middle_name ? s.middle_name + ' ' : ''}{s.last_name}</div>
+                      {s.leadership_position && s.leadership_position !== 'none' && (
+                        <span className="inline-flex items-center space-x-1 mt-0.5 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-700 border border-amber-500/30">
+                          <Crown className="w-2.5 h-2.5 text-amber-600" />
+                          <span>{s.leadership_position.replace('_', ' ')}</span>
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-4 px-6">{s.class_name || 'Unassigned'}</td>
+                    <td className="py-4 px-6 capitalize">{s.gender}</td>
+                    <td className="py-4 px-6 numeric-data text-xs">{s.date_of_birth}</td>
+                    <td className="py-4 px-6">
+                      <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${STATUS_COLORS[s.status] || 'bg-ink/10 text-ink/60'}`}>
+                        {s.status}
+                      </span>
+                    </td>
+                    <td className="py-4 px-6 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <a href={`/students/${s.id}`}
+                          className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg transition-colors cursor-pointer">
+                          <Eye className="w-3.5 h-3.5" /><span>View</span>
+                        </a>
+                        {isAdmin && (
+                          <>
+                            <button onClick={() => openEdit(s)}
+                              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-amber-warning/10 hover:bg-amber-warning/20 text-amber-warning text-xs font-semibold rounded-lg transition-colors cursor-pointer">
+                              <Edit2 className="w-3.5 h-3.5" /><span>Edit</span>
+                            </button>
+                            <button onClick={() => handleToggleSuspend(s)}
+                              title={s.status === 'suspended' ? 'Reinstate Student' : 'Suspend Student'}
+                              className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                                s.status === 'suspended' ? 'bg-teal-primary/10 text-teal-primary hover:bg-teal-primary/20' : 'bg-amber-warning/15 text-amber-dark hover:bg-amber-warning/25'
+                              }`}>
+                              {s.status === 'suspended' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                              <span>{s.status === 'suspended' ? 'Reinstate' : 'Suspend'}</span>
+                            </button>
+                            <button onClick={() => handleDeleteStudent(s.id)}
+                              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-brick-critical/10 hover:bg-brick-critical/20 text-brick-critical text-xs font-semibold rounded-lg transition-colors cursor-pointer">
+                              <Trash2 className="w-3.5 h-3.5" /><span>Delete</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Parent Directory Table */
+        <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
+                  <th className="py-4 px-6">Parent / Guardian Name</th>
+                  <th className="py-4 px-6">Relation</th>
+                  <th className="py-4 px-6">Contact Phone</th>
+                  <th className="py-4 px-6">Email</th>
+                  <th className="py-4 px-6">Linked Children</th>
+                  <th className="py-4 px-6">Status</th>
+                  {isAdmin && <th className="py-4 px-6 text-right">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
+                {parents.length === 0 ? (
+                  <tr><td colSpan={isAdmin ? "7" : "6"} className="py-10 text-center text-ink/40 text-xs">No parent records registered yet.</td></tr>
+                ) : parents.map(p => (
+                  <tr key={p.id} className="hover:bg-sage/5 transition-colors">
+                    <td className="py-4 px-6 font-bold">{p.name}</td>
+                    <td className="py-4 px-6 text-ink/70">{p.relation || 'Parent'}</td>
+                    <td className="py-4 px-6 font-mono text-xs numeric-data">{p.phone || '-'}</td>
+                    <td className="py-4 px-6 font-mono text-xs text-ink/70">{p.email || '-'}</td>
+                    <td className="py-4 px-6 text-teal-dark font-semibold text-xs">{p.children || 'No linked children'}</td>
+                    <td className="py-4 px-6">
+                      <span className="inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-sage/40 text-teal-dark">
+                        Active
+                      </span>
+                    </td>
+                    {isAdmin && (
+                      <td className="py-4 px-6 text-right">
+                        <button
+                          onClick={() => openEditParent(p)}
+                          className="inline-flex items-center space-x-1 px-3 py-1.5 bg-amber-warning/10 hover:bg-amber-warning/20 text-amber-warning text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" /><span>Edit Contact</span>
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
         {totalPages > 1 && (
           <div className="p-4 border-t border-line-border/30 flex justify-between items-center bg-paper/30">
             <button onClick={() => setPage(p => Math.max(p - 1, 1))} disabled={page === 1}
@@ -288,7 +558,6 @@ const Students = () => {
             </button>
           </div>
         )}
-      </div>
 
       {/* ── ADD STUDENT MODAL ─────────────────────────────────────────────────── */}
       {showAddModal && (
@@ -337,12 +606,27 @@ const Students = () => {
                 {/* Section 2 — Enrollment */}
                 {activeSection === 2 && (
                   <div className="space-y-4">
-                    <p className="text-xs text-ink/50 font-sans">School enrollment and class placement.</p>
-                    <div><label className={labelCls}>Class Assignment</label>
-                      <select className={inputCls} value={newStudent.class_id} onChange={e => setNewStudent({...newStudent, class_id: e.target.value})}>
-                        <option value="">Select Class...</option>
-                        {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
+                    <p className="text-xs text-ink/50 font-sans">School enrollment, class placement, and leadership title.</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div><label className={labelCls}>Class Assignment</label>
+                        <select className={inputCls} value={newStudent.class_id} onChange={e => setNewStudent({...newStudent, class_id: e.target.value})}>
+                          <option value="">Select Class...</option>
+                          {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Leadership Position / Role</label>
+                        <select className={inputCls} value={newStudent.leadership_position || 'none'} onChange={e => setNewStudent({...newStudent, leadership_position: e.target.value})}>
+                          <option value="none">None (Regular Student)</option>
+                          <option value="headboy">Head Boy</option>
+                          <option value="headgirl">Head Girl</option>
+                          <option value="prefect">Senior Prefect</option>
+                          <option value="class_monitress">Class Monitress / Captain</option>
+                          <option value="sports_captain">Sports Captain</option>
+                          <option value="chapel_prefect">Chapel Prefect</option>
+                          <option value="hostel_prefect">Hostel Prefect</option>
+                        </select>
+                      </div>
                     </div>
                     <div><label className={labelCls}>Previous School</label><input type="text" className={inputCls} placeholder="Name of previous school attended" value={newStudent.previous_school} onChange={e => setNewStudent({...newStudent, previous_school: e.target.value})} /></div>
                   </div>
@@ -371,10 +655,12 @@ const Students = () => {
                 {/* Section 5 — Guardian */}
                 {activeSection === 5 && (
                   <div className="space-y-4">
-                    <p className="text-xs text-ink/50 font-sans">Guardian information to link this student. Linking is performed automatically by National ID or phone check.</p>
+                    <div className="p-3 rounded-xl bg-amber-warning/10 border border-amber-warning/30 text-xs text-amber-warning font-semibold">
+                      Guardian contact is required. Every student must have a parent or guardian with at least a phone number or email address.
+                    </div>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><label className={labelCls}>Guardian Name *</label><input required={activeSection === 5} type="text" className={inputCls} placeholder="e.g. Mary Mandizera" value={newStudent.guardian_name} onChange={e => setNewStudent({...newStudent, guardian_name: e.target.value})} /></div>
-                      <div><label className={labelCls}>Guardian Relation *</label>
+                      <div><label className={labelCls}>Guardian Name *</label><input required type="text" className={inputCls} placeholder="e.g. Mary Mandizera" value={newStudent.guardian_name} onChange={e => setNewStudent({...newStudent, guardian_name: e.target.value})} /></div>
+                      <div><label className={labelCls}>Guardian Relation</label>
                         <select className={inputCls} value={newStudent.guardian_relation} onChange={e => setNewStudent({...newStudent, guardian_relation: e.target.value})}>
                           <option value="Mother">Mother</option>
                           <option value="Father">Father</option>
@@ -386,8 +672,14 @@ const Students = () => {
                     </div>
                     <div className="grid grid-cols-3 gap-4">
                       <div><label className={labelCls}>National ID Number</label><input type="text" className={inputCls} placeholder="e.g. 63-123456K78" value={newStudent.guardian_national_id} onChange={e => setNewStudent({...newStudent, guardian_national_id: e.target.value})} /></div>
-                      <div><label className={labelCls}>Phone Number</label><input type="text" className={inputCls} placeholder="e.g. +263771234567" value={newStudent.guardian_phone} onChange={e => setNewStudent({...newStudent, guardian_phone: e.target.value})} /></div>
-                      <div><label className={labelCls}>Email Address</label><input type="email" className={inputCls} placeholder="e.g. mary@gmail.com" value={newStudent.guardian_email} onChange={e => setNewStudent({...newStudent, guardian_email: e.target.value})} /></div>
+                      <div>
+                        <label className={`${labelCls} text-teal-primary`}>Phone Number * (required if no email)</label>
+                        <input type="text" className={inputCls} placeholder="e.g. +263771234567" value={newStudent.guardian_phone} onChange={e => setNewStudent({...newStudent, guardian_phone: e.target.value})} />
+                      </div>
+                      <div>
+                        <label className={`${labelCls} text-teal-primary`}>Email Address * (required if no phone)</label>
+                        <input type="email" className={inputCls} placeholder="e.g. mary@gmail.com" value={newStudent.guardian_email} onChange={e => setNewStudent({...newStudent, guardian_email: e.target.value})} />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -436,7 +728,7 @@ const Students = () => {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div><label className={labelCls}>Status</label>
                   <select className={inputCls} value={editForm.status} onChange={e => setEditForm({...editForm, status: e.target.value})}>
                     <option value="enrolled">Enrolled</option>
@@ -445,6 +737,19 @@ const Students = () => {
                     <option value="graduated">Graduated</option>
                     <option value="transferred">Transferred</option>
                     <option value="dropped_out">Dropped Out</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Leadership Role</label>
+                  <select className={inputCls} value={editForm.leadership_position || 'none'} onChange={e => setEditForm({...editForm, leadership_position: e.target.value})}>
+                    <option value="none">Regular Student</option>
+                    <option value="headboy">Head Boy</option>
+                    <option value="headgirl">Head Girl</option>
+                    <option value="prefect">Senior Prefect</option>
+                    <option value="class_monitress">Class Monitress / Captain</option>
+                    <option value="sports_captain">Sports Captain</option>
+                    <option value="chapel_prefect">Chapel Prefect</option>
+                    <option value="hostel_prefect">Hostel Prefect</option>
                   </select>
                 </div>
                 <div><label className={labelCls}>Admission Number</label><input type="text" className={inputCls} value={editForm.admission_number} onChange={e => setEditForm({...editForm, admission_number: e.target.value})} /></div>
@@ -480,6 +785,112 @@ const Students = () => {
           </div>
         </div>
       )}
+
+      {/* Edit Parent Modal */}
+      {showParentModal && (
+        <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-line-border/30 pb-3">
+              <h3 className="text-lg font-display font-bold text-ink">Edit Parent / Guardian Contact</h3>
+              <button onClick={() => setShowParentModal(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleSaveParent} className="space-y-4 font-sans text-xs">
+              <div>
+                <label className={labelCls}>Parent / Guardian Full Name *</label>
+                <input required type="text" className={inputCls} value={parentForm.name} onChange={e => setParentForm({...parentForm, name: e.target.value})} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Relation *</label>
+                  <select className={inputCls} value={parentForm.relation} onChange={e => setParentForm({...parentForm, relation: e.target.value})}>
+                    <option value="Father">Father</option>
+                    <option value="Mother">Mother</option>
+                    <option value="Guardian">Guardian</option>
+                    <option value="Sponsor">Sponsor</option>
+                    <option value="Relative">Relative</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>National ID</label>
+                  <input type="text" className={inputCls} value={parentForm.national_id} onChange={e => setParentForm({...parentForm, national_id: e.target.value})} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Phone Number *</label>
+                  <input required type="text" className={inputCls} value={parentForm.phone} onChange={e => setParentForm({...parentForm, phone: e.target.value})} />
+                </div>
+                <div>
+                  <label className={labelCls}>Email Address</label>
+                  <input type="email" className={inputCls} value={parentForm.email} onChange={e => setParentForm({...parentForm, email: e.target.value})} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-3">
+                <button type="button" onClick={() => setShowParentModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/75 hover:bg-sage/10 cursor-pointer">Cancel</button>
+                <button type="submit" className="px-5 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-xs font-semibold shadow-md cursor-pointer">
+                  Save Guardian Details
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Parent Credentials Modal */}
+      {createdParentCreds && (
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-paper border border-line-border rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center space-x-3 text-teal-primary">
+              <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center font-bold">
+                🔑
+              </div>
+              <div>
+                <h3 className="font-sans font-bold text-base text-ink">Parent Credentials Generated!</h3>
+                <p className="text-xs text-ink/60 font-sans">Login credentials created for {createdParentCreds.studentName}</p>
+              </div>
+            </div>
+
+            <div className="bg-sage/10 p-4 rounded-xl space-y-3 font-sans border border-teal-primary/20">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-ink/50 block">Admission Number</span>
+                <span className="text-xs font-mono font-bold text-ink">{createdParentCreds.admissionNumber}</span>
+              </div>
+              <div className="border-t border-line-border/20 pt-2">
+                <span className="text-[10px] uppercase font-bold text-ink/50 block">Parent Portal Username</span>
+                <span className="text-sm font-mono font-bold text-teal-dark">{createdParentCreds.username}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-ink/50 block">Temporary Password</span>
+                <span className="text-sm font-mono font-bold text-brick-critical bg-brick-critical/10 px-2 py-0.5 rounded">{createdParentCreds.tempPassword}</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-ink/60 italic font-sans">
+              Provide these credentials to the parent/guardian to log in at the Parent Portal.
+            </p>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setCreatedParentCreds(null)}
+                className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl font-sans text-xs font-bold shadow-md cursor-pointer transition-colors"
+              >
+                Got It &amp; Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <PrintReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        title="STUDENT DIRECTORY & ENROLLMENT LEDGER"
+        subtitle={`Official Roster Report • ${classes.length} Classes Active`}
+        schoolName="SchoolBase Academic Portal"
+        summaryCards={reportKpis}
+        columns={reportColumns}
+        data={students}
+        userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
+      />
     </div>
   );
 };

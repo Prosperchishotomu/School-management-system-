@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox } from 'lucide-react';
+import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer } from 'lucide-react';
+import PrintReportModal from '../components/PrintReportModal';
 
 const Staff = () => {
   const { activeSchoolId, user } = useAuth();
@@ -9,10 +10,16 @@ const Staff = () => {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', role_title: '', class_id: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', role_title: '', class_id: '', username: '', password: '' });
   const [formLoading, setFormLoading] = useState(false);
   const [formError, setFormError] = useState('');
+  const [generatedCreds, setGeneratedCreds] = useState(null);
   const [error, setError] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+
+  // Bulk selection & PDF Modal states
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   // Edit Staff state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -27,8 +34,25 @@ const Staff = () => {
   const [msgError, setMsgError] = useState('');
   const [msgSuccess, setMsgSuccess] = useState('');
 
-  const isPrincipal = user?.role === 'school_admin';
+  const isPrincipal = ['school_admin', 'super_admin'].includes(user?.role);
   const isTeacher = user?.role === 'teacher';
+
+  const handleToggleStatus = async (staffMember) => {
+    const nextStatus = staffMember.status === 'deactivated' ? 'active' : 'deactivated';
+    try {
+      await api.patch(`/schools/${activeSchoolId}/staff/${staffMember.id}`, {
+        name: staffMember.name,
+        email: staffMember.email,
+        phone: staffMember.phone,
+        role_title: staffMember.role_title,
+        class_id: staffMember.class_id,
+        status: nextStatus
+      });
+      fetchStaff();
+    } catch (err) {
+      alert(err.message || 'Failed to update staff status.');
+    }
+  };
 
   const fetchStaff = () => {
     if (!activeSchoolId) return;
@@ -63,10 +87,17 @@ const Staff = () => {
     e.preventDefault();
     setFormLoading(true);
     setFormError('');
+    setGeneratedCreds(null);
     try {
-      await api.post(`/schools/${activeSchoolId}/staff`, form);
-      setShowModal(false);
-      setForm({ name: '', email: '', phone: '', role_title: '', class_id: '' });
+      const res = await api.post(`/schools/${activeSchoolId}/staff`, form);
+      const data = res.data;
+      // Show generated credentials if backend auto-generated them
+      if (data?.generated_password) {
+        setGeneratedCreds({ username: data.generated_username, password: data.generated_password });
+      } else {
+        setShowModal(false);
+      }
+      setForm({ name: '', email: '', phone: '', role_title: '', class_id: '', username: '', password: '' });
       fetchStaff();
     } catch (err) {
       setFormError(err.message || 'Failed to add staff member.');
@@ -139,6 +170,23 @@ const Staff = () => {
     setShowMsgModal(true);
   };
 
+  // Role filtering helper
+  const filterByRole = (roleTitle, filterKey) => {
+    if (!roleTitle) return filterKey === 'support';
+    const t = roleTitle.toLowerCase();
+    switch (filterKey) {
+      case 'senior': return t.includes('senior') || t.includes('head of') || t.includes('hod');
+      case 'hod':    return t.includes('head of') || t.includes('hod') || t.includes('department');
+      case 'admin':  return t.includes('principal') || t.includes('headmaster') || t.includes('headmistress') || t.includes('deputy head') || t.includes('vice principal') || t.includes('bursar') || t.includes('librarian');
+      case 'support': return t.includes('support') || t.includes('cleaner') || t.includes('security') || t.includes('driver') || t.includes('cook') || t.includes('catering');
+      default:       return true;
+    }
+  };
+
+  const filteredStaff = roleFilter === 'all'
+    ? staff
+    : staff.filter(s => filterByRole(s.role_title, roleFilter));
+
   if (!activeSchoolId) {
     return (
       <div className="p-8 flex flex-col items-center justify-center min-h-[80vh] text-center font-sans animate-fadeIn">
@@ -151,8 +199,50 @@ const Staff = () => {
     );
   }
 
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedIds(staff.map(s => s.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const handleToggleSelect = (id) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkDeleteStaff = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to permanently remove ${selectedIds.length} staff records and their associated login accounts?`)) return;
+    try {
+      await api.post(`/schools/${activeSchoolId}/staff/bulk-delete`, { staff_ids: selectedIds });
+      setSelectedIds([]);
+      fetchStaff();
+    } catch (err) {
+      alert(err.message || 'Failed to bulk delete staff records.');
+    }
+  };
+
+  const reportColumns = [
+    { header: 'Staff Name', accessor: 'name' },
+    { header: 'Role / Title', accessor: row => row.role_title || 'Teacher' },
+    { header: 'Email Address', accessor: 'email' },
+    { header: 'Phone Number', accessor: 'phone' },
+    { header: 'Assigned Class', accessor: row => row.class_name || 'Unassigned' },
+    { header: 'Account Status', accessor: row => row.status || 'active' },
+  ];
+
+  const reportKpis = [
+    { label: 'Total Faculty', value: staff.length },
+    { label: 'Active Teachers', value: staff.filter(s => !s.status || s.status === 'active').length },
+    { label: 'Deactivated Accounts', value: staff.filter(s => s.status === 'deactivated').length },
+    { label: 'Classes Assigned', value: staff.filter(s => s.class_id).length }
+  ];
+
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="p-8 max-w-7xl mx-auto space-y-8 font-sans animate-fadeIn">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>
@@ -162,6 +252,13 @@ const Staff = () => {
         <div className="flex items-center space-x-3">
           {isPrincipal && (
             <>
+              <button
+                onClick={() => setShowReportModal(true)}
+                className="flex items-center space-x-1.5 px-4 py-2.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Export PDF Report</span>
+              </button>
               <button
                 onClick={() => openMsgModal('')}
                 className="flex items-center space-x-2 px-4 py-2.5 bg-paper hover:bg-sage/10 text-ink border border-line-border/30 font-sans font-semibold text-sm rounded-xl transition-all cursor-pointer shadow-sm"
@@ -181,6 +278,51 @@ const Staff = () => {
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm font-sans">{error}</div>}
 
+      {/* Bulk Action Bar */}
+      {isPrincipal && selectedIds.length > 0 && (
+        <div className="bg-amber-warning/15 border border-amber-warning/30 rounded-2xl p-4 flex items-center justify-between animate-fadeIn">
+          <div className="flex items-center space-x-3 text-xs font-bold text-ink">
+            <span className="bg-amber-warning/20 text-amber-dark px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
+            <span>Bulk Action: Remove selected faculty records and login user accounts.</span>
+          </div>
+          <button
+            onClick={handleBulkDeleteStaff}
+            className="flex items-center space-x-1.5 px-4 py-2 bg-brick-critical hover:bg-brick-critical/90 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Delete Selected ({selectedIds.length})</span>
+          </button>
+        </div>
+      )}
+
+      {/* Role filter tabs */}
+      <div className="flex flex-wrap gap-2 text-xs font-sans">
+        {[
+          { key: 'all',    label: 'All Staff' },
+          { key: 'senior', label: 'Senior Teachers' },
+          { key: 'hod',    label: 'Heads of Dept.' },
+          { key: 'admin',  label: 'Administration' },
+          { key: 'support',label: 'Support Staff' },
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setRoleFilter(tab.key)}
+            className={`px-4 py-2 rounded-xl font-semibold border transition-all cursor-pointer ${
+              roleFilter === tab.key
+                ? 'bg-teal-primary text-paper border-teal-primary'
+                : 'bg-paper text-ink/60 border-line-border hover:border-teal-primary/50'
+            }`}
+          >
+            {tab.label}
+            {tab.key !== 'all' && (
+              <span className="ml-1.5 text-[9px] font-bold opacity-70">
+                ({staff.filter(s => filterByRole(s.role_title, tab.key)).length})
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
         <table className="w-full text-left border-collapse">
           <thead>
@@ -189,31 +331,50 @@ const Staff = () => {
               <th className="py-4 px-6">Role / Title</th>
               <th className="py-4 px-6">Email</th>
               <th className="py-4 px-6">Phone</th>
+              <th className="py-4 px-6">Status</th>
               {isPrincipal && <th className="py-4 px-6 text-right">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
             {loading ? (
-              <tr><td colSpan={isPrincipal ? "5" : "4"} className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
-            ) : staff.map((s) => (
+              <tr><td colSpan={isPrincipal ? "6" : "5"} className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
+            ) : filteredStaff.map((s) => (
               <tr key={s.id} className="hover:bg-sage/5 transition-colors">
                 <td className="py-4 px-6 font-bold">{s.name}</td>
-                <td className="py-4 px-6 text-ink/70">{s.role_title || '—'}</td>
-                <td className="py-4 px-6 font-mono text-xs text-ink/70">{s.email || '—'}</td>
-                <td className="py-4 px-6 font-mono text-xs numeric-data">{s.phone || '—'}</td>
+                <td className="py-4 px-6 text-ink/70">
+                  <span className="font-semibold">{s.role_title || 'Teacher'}</span>
+                  {s.class_name && <span className="block text-[10px] text-teal-primary font-bold">Class: {s.class_name}</span>}
+                </td>
+                <td className="py-4 px-6 font-mono text-xs text-ink/70">{s.email || '-'}</td>
+                <td className="py-4 px-6 font-mono text-xs numeric-data">{s.phone || '-'}</td>
+                <td className="py-4 px-6">
+                  <span className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                    s.status === 'deactivated' ? 'bg-brick-critical/10 text-brick-critical' : 'bg-sage/40 text-teal-dark'
+                  }`}>
+                    {s.status || 'active'}
+                  </span>
+                </td>
                 {isPrincipal && (
                   <td className="py-4 px-6 text-right">
                     <div className="inline-flex items-center space-x-2 justify-end">
-                      {s.role_title?.toLowerCase().includes('teacher') && (
-                        <button
-                          onClick={() => openMsgModal(s.id)}
-                          className="p-1.5 hover:bg-teal-primary/10 text-teal-primary rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
-                          title={`Send message to ${s.name}`}
-                        >
-                          <Mail className="w-4 h-4" />
-                          <span className="text-[10px] font-semibold">Message</span>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => openMsgModal(s.id)}
+                        className="p-1.5 hover:bg-teal-primary/10 text-teal-primary rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
+                        title={`Send message to ${s.name}`}
+                      >
+                        <Mail className="w-4 h-4" />
+                        <span className="text-[10px] font-semibold">Message</span>
+                      </button>
+                      <button
+                        onClick={() => handleToggleStatus(s)}
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1 ${
+                          s.status === 'deactivated' ? 'hover:bg-teal-primary/10 text-teal-primary' : 'hover:bg-amber-warning/10 text-amber-warning'
+                        }`}
+                        title={s.status === 'deactivated' ? 'Activate Staff Member' : 'Deactivate Staff Member'}
+                      >
+                        <UserCheck className="w-4 h-4" />
+                        <span className="text-[10px] font-semibold">{s.status === 'deactivated' ? 'Activate' : 'Deactivate'}</span>
+                      </button>
                       <button
                         onClick={() => openEditModal(s)}
                         className="p-1.5 hover:bg-amber-warning/10 text-amber-warning rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1"
@@ -235,8 +396,8 @@ const Staff = () => {
                 )}
               </tr>
             ))}
-            {staff.length === 0 && !loading && (
-              <tr><td colSpan={isPrincipal ? "5" : "4"} className="py-8 text-center text-ink/50 text-xs">No staff records added yet.</td></tr>
+            {filteredStaff.length === 0 && !loading && (
+              <tr><td colSpan={isPrincipal ? "6" : "5"} className="py-8 text-center text-ink/50 text-xs">No staff records match this filter.</td></tr>
             )}
           </tbody>
         </table>
@@ -283,21 +444,40 @@ const Staff = () => {
 
       {/* Add Staff Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button onClick={() => setShowModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer">
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Add Staff Member</h3>
-            {formError && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{formError}</div>}
-            <form onSubmit={handleAdd} className="space-y-4 text-sm font-sans">
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl border border-line-border/30 relative my-4">
+            <div className="flex items-center justify-between p-6 border-b border-line-border/30">
+              <h3 className="text-xl font-display font-bold text-ink">Add Staff Member</h3>
+              <button onClick={() => setShowModal(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            {formError && <div className="mx-6 mt-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{formError}</div>}
+            <form onSubmit={handleAdd} className="space-y-4 text-sm font-sans p-6">
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">Full Name *</label>
                 <input type="text" required className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Role / Title</label>
-                <input type="text" placeholder="e.g. Grade 1 Class Teacher" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={form.role_title} onChange={e => setForm({...form, role_title: e.target.value})} />
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Role / Designation *</label>
+                <div className="space-y-2">
+                  <select
+                    className="w-full px-3 py-2 border border-line-border rounded-lg bg-paper focus:outline-none focus:border-teal-primary text-xs"
+                    onChange={e => {
+                      if (e.target.value) setForm({...form, role_title: e.target.value});
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Select Administrative Preset...</option>
+                    <option value="Headmaster / Principal">Headmaster / Principal</option>
+                    <option value="Deputy Head / Vice Principal">Deputy Head / Vice Principal</option>
+                    <option value="Form Master / Mistress">Form Master / Mistress</option>
+                    <option value="Class Teacher">Class Teacher</option>
+                    <option value="Subject Teacher">Subject Teacher</option>
+                    <option value="Senior Master / Mistress">Senior Master / Mistress</option>
+                    <option value="Bursar / Accountant">Bursar / Accountant</option>
+                    <option value="School Librarian">School Librarian</option>
+                  </select>
+                  <input type="text" placeholder="Or specify custom role title..." className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={form.role_title} onChange={e => setForm({...form, role_title: e.target.value})} />
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">Class Assignment (If Teacher)</label>
@@ -322,6 +502,27 @@ const Staff = () => {
                   <input type="text" placeholder="+2637..." className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
                 </div>
               </div>
+              <div className="border-t border-line-border/20 pt-3">
+                <p className="text-[10px] text-ink/50 font-sans mb-2">Login Credentials (leave blank to auto-generate)</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-ink/70 mb-1">Username</label>
+                    <input type="text" placeholder="Auto-generated if blank" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-ink/70 mb-1">Password</label>
+                    <input type="password" placeholder="Default: Password123!" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                  </div>
+                </div>
+              </div>
+              {generatedCreds && (
+                <div className="p-3 rounded-lg bg-teal-primary/10 border border-teal-primary/30 text-xs font-sans space-y-1">
+                  <p className="font-bold text-teal-primary">Staff added! Share these login credentials:</p>
+                  <p>Username: <span className="font-mono font-bold">{generatedCreds.username}</span></p>
+                  <p>Password: <span className="font-mono font-bold">{generatedCreds.password}</span></p>
+                  <button type="button" onClick={() => { setShowModal(false); setGeneratedCreds(null); }} className="mt-2 px-3 py-1 bg-teal-primary text-paper rounded-lg text-xs font-semibold cursor-pointer">Done</button>
+                </div>
+              )}
               <div className="pt-4 flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/75 hover:bg-sage/10 cursor-pointer">Cancel</button>
                 <button type="submit" disabled={formLoading} className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-xs font-semibold shadow-md cursor-pointer flex items-center space-x-2">
@@ -336,21 +537,40 @@ const Staff = () => {
 
       {/* Edit Staff Modal */}
       {showEditModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button onClick={() => { setShowEditModal(false); setEditStaff(null); }} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer">
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Edit Staff Profile</h3>
-            {formError && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{formError}</div>}
-            <form onSubmit={handleEdit} className="space-y-4 text-sm font-sans">
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl border border-line-border/30 relative my-4">
+            <div className="flex items-center justify-between p-6 border-b border-line-border/30">
+              <h3 className="text-xl font-display font-bold text-ink">Edit Staff Profile</h3>
+              <button onClick={() => { setShowEditModal(false); setEditStaff(null); }} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            {formError && <div className="mx-6 mt-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{formError}</div>}
+            <form onSubmit={handleEdit} className="space-y-4 text-sm font-sans p-6">
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">Full Name *</label>
                 <input type="text" required className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Role / Title</label>
-                <input type="text" placeholder="e.g. Grade 1 Class Teacher" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={editForm.role_title} onChange={e => setEditForm({...editForm, role_title: e.target.value})} />
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Role / Designation *</label>
+                <div className="space-y-2">
+                  <select
+                    className="w-full px-3 py-2 border border-line-border rounded-lg bg-paper focus:outline-none focus:border-teal-primary text-xs"
+                    onChange={e => {
+                      if (e.target.value) setEditForm({...editForm, role_title: e.target.value});
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>Select Administrative Preset...</option>
+                    <option value="Headmaster / Principal">Headmaster / Principal</option>
+                    <option value="Deputy Head / Vice Principal">Deputy Head / Vice Principal</option>
+                    <option value="Form Master / Mistress">Form Master / Mistress</option>
+                    <option value="Class Teacher">Class Teacher</option>
+                    <option value="Subject Teacher">Subject Teacher</option>
+                    <option value="Senior Master / Mistress">Senior Master / Mistress</option>
+                    <option value="Bursar / Accountant">Bursar / Accountant</option>
+                    <option value="School Librarian">School Librarian</option>
+                  </select>
+                  <input type="text" placeholder="Or specify custom role title..." className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs" value={editForm.role_title} onChange={e => setEditForm({...editForm, role_title: e.target.value})} />
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">Class Assignment</label>
@@ -435,6 +655,19 @@ const Staff = () => {
           </div>
         </div>
       )}
+
+      {/* Print / PDF Report Modal */}
+      <PrintReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        title="FACULTY & STAFF DIRECTORY REPORT"
+        subtitle={`Official School Staff Roster • ${staff.length} Active Members`}
+        schoolName="SchoolBase Academic Portal"
+        summaryCards={reportKpis}
+        columns={reportColumns}
+        data={staff}
+        userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
+      />
     </div>
   );
 };

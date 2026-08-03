@@ -1,0 +1,16 @@
+{
+  "name": "schoolbase-monorepo",
+  "version": "1.0.0",
+  "description": "SchoolBase Enterprise School Management System",
+  "private": true,
+  "scripts": {
+    "start": "concurrently \"npm start --prefix backend-node\" \"npm run dev --prefix web\"",
+    "dev": "concurrently \"npm run dev --prefix backend-node\" \"npm run dev --prefix web\"",
+    "backend": "npm run dev --prefix backend-node",
+    "web": "npm run dev --prefix web",
+    "build": "npm run build --prefix web"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

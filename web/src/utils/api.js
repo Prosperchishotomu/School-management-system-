@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost/backend/api/v1';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1';
 
 // All tokens stored in sessionStorage — dies when tab/browser closes
 const getToken = () => sessionStorage.getItem('schoolbase_token');
@@ -68,9 +68,49 @@ async function request(path, options = {}) {
 }
 
 export const api = {
-  get:    (path, options)       => request(path, { ...options, method: 'GET' }),
-  post:   (path, body, options) => request(path, { ...options, method: 'POST',   body: JSON.stringify(body) }),
-  put:    (path, body, options) => request(path, { ...options, method: 'PUT',    body: JSON.stringify(body) }),
-  patch:  (path, body, options) => request(path, { ...options, method: 'PATCH',  body: JSON.stringify(body) }),
-  delete: (path, options)       => request(path, { ...options, method: 'DELETE' }),
+  get:          (path, options)       => request(path, { ...options, method: 'GET' }),
+  post:         (path, body, options) => request(path, { ...options, method: 'POST',   body: JSON.stringify(body) }),
+  put:          (path, body, options) => request(path, { ...options, method: 'PUT',    body: JSON.stringify(body) }),
+  patch:        (path, body, options) => request(path, { ...options, method: 'PATCH',  body: JSON.stringify(body) }),
+  delete:       (path, options)       => request(path, { ...options, method: 'DELETE' }),
+  downloadFile: async (path, defaultFilename = 'export.csv') => {
+    const token = getToken();
+    const headers = {};
+    const activeSchoolId = sessionStorage.getItem('schoolbase_active_school_id');
+    if (activeSchoolId) {
+      headers['X-Active-School-Id'] = activeSchoolId;
+    }
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}${path}`, { method: 'GET', headers });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          sessionStorage.removeItem('schoolbase_token');
+          sessionStorage.removeItem('schoolbase_user');
+          sessionStorage.removeItem('schoolbase_active_school_id');
+          sessionStorage.removeItem('schoolbase_last_active');
+          window.location.replace('/login?expired=1');
+        }
+        throw new Error('Download failed: ' + response.statusText);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultFilename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      touchLastActive();
+    } catch (error) {
+      console.error(`File Download Error on ${path}:`, error);
+      throw error;
+    }
+  }
 };

@@ -143,8 +143,8 @@ const Exams = () => {
                     </td>
                     <td className="py-4 px-6 font-bold text-teal-dark">{ex.subject}</td>
                     <td className="py-4 px-6 font-semibold">{ex.class_name || `Class #${ex.class_id}`}</td>
-                    <td className="py-4 px-6">{ex.room || '—'}</td>
-                    <td className="py-4 px-6 font-medium">{ex.invigilator || '—'}</td>
+                    <td className="py-4 px-6">{ex.room || '-'}</td>
+                    <td className="py-4 px-6 font-medium">{ex.invigilator || '-'}</td>
                     <td className="py-4 px-6 text-center font-mono numeric-data text-xs">{ex.duration_minutes} mins</td>
                   </tr>
                 ))

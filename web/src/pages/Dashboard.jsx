@@ -88,7 +88,7 @@ const KpiCard = ({ label, value, suffix = '', icon: Icon, sublabel, trend, color
       </div>
       <div>
         <h4 className={`text-3xl font-display font-bold numeric-data ${c.val}`}>
-          {typeof value === 'number' ? <AnimatedCount value={value} /> : (value ?? '—')}{suffix}
+          {typeof value === 'number' ? <AnimatedCount value={value} /> : (value ?? '-')}{suffix}
         </h4>
         {sublabel && <p className="text-[10px] font-sans text-ink/50 mt-1">{sublabel}</p>}
       </div>
@@ -183,7 +183,7 @@ const AttendanceSection = ({ data, schoolId, onCommentPosted }) => {
   return (
     <section className="space-y-4">
       <SectionHeader icon={UserCheck} title="Attendance Command View"
-        subtitle={`Register status for ${today} — click any class to see full pupil list`}
+        subtitle={`Register status for ${today} - click any class to see full pupil list`}
       />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {data.map(cls => (
@@ -253,7 +253,7 @@ const AttendanceSection = ({ data, schoolId, onCommentPosted }) => {
       {/* Drill-down modal */}
       <DrillDownModal
         open={!!drillClass} onClose={() => { setDrillClass(null); setDrillStudents([]); }}
-        title={drillClass?.name} subtitle={`Attendance detail — ${today}`}
+        title={drillClass?.name} subtitle={`Attendance detail - ${today}`}
       >
         {drillLoading ? (
           <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-teal-primary"/></div>
@@ -308,8 +308,8 @@ const GradesSection = ({ data, topStudents, bottomStudents, schoolId, onCommentP
 
   return (
     <section className="space-y-4">
-      <SectionHeader icon={BookOpen} title="Academic Performance"
-        subtitle="Average scores per class per subject — current term"
+      <SectionHeader icon={BookOpen} title="Academic Grade Performance Tracking"
+        subtitle="Average scores per class per subject - current term"
       />
       {Object.keys(byClass).length === 0 && (
         <div className="glass-card rounded-2xl py-10 text-center text-xs text-ink/40 font-sans">No grade data recorded yet.</div>
@@ -615,7 +615,7 @@ const ExamsSection = ({ data, schoolId, onCommentPosted }) => {
                   <span className="text-lg font-display font-bold text-teal-primary numeric-data leading-tight">{new Date(exam.exam_date).getDate()}</span>
                 </div>
                 <div>
-                  <h4 className="font-sans font-bold text-sm text-ink">{exam.subject} — {exam.class_name}</h4>
+                  <h4 className="font-sans font-bold text-sm text-ink">{exam.subject} - {exam.class_name}</h4>
                   <div className="text-[10px] text-ink/50 mt-0.5 space-y-0.5">
                     <p>{exam.start_time} – {exam.end_time} {exam.exam_type && <span className="capitalize ml-1 font-semibold text-ink/60">({exam.exam_type})</span>}</p>
                     {exam.venue && <p>📍 <span className="font-medium">{exam.venue}</span></p>}
@@ -669,8 +669,8 @@ const DisciplineSection = ({ data, schoolId, onCommentPosted, onRefresh }) => {
 
   return (
     <section className="space-y-4">
-      <SectionHeader icon={Shield} title="Discipline Incidents Feed"
-        subtitle="Recent incidents — escalate, close or add a principal note"
+      <SectionHeader icon={Shield} title="Discipline & Conduct Alerts Feed"
+        subtitle="Recent incidents - escalate, close or add a principal note"
       />
       {!data?.length ? (
         <div className="glass-card rounded-2xl py-10 text-center text-xs text-ink/40 font-sans">
@@ -743,7 +743,7 @@ const DisciplineSection = ({ data, schoolId, onCommentPosted, onRefresh }) => {
       )}
 
       <CommentModal open={!!commentFor} onClose={() => setCommentFor(null)}
-        title={`Escalation Note — ${commentFor?.student_name}`}
+        title={`Escalation Note ${commentFor?.student_name}`}
         onSubmit={handleComment} saving={saving}
       />
     </section>
@@ -813,14 +813,41 @@ const StudentPerformanceBreakdown = ({ schoolId, defaultClassId = null }) => {
     setLoading(true);
     api.get(`/schools/${schoolId}/classes/${selectedClass}/grades`)
       .then(res => {
-        setGradesData(res.data || []);
+        const list = Array.isArray(res.data) 
+          ? res.data 
+          : (res.data?.averaged_grades || res.data?.raw_grades || []);
+        
+        const studentMap = {};
+        list.forEach(item => {
+          const stId = item.student_id || item.id;
+          if (!stId) return;
+          if (!studentMap[stId]) {
+            studentMap[stId] = {
+              student_id: stId,
+              id: stId,
+              first_name: item.first_name || '',
+              last_name: item.last_name || '',
+              admission_number: item.admission_number || '',
+              grades: []
+            };
+          }
+          if (Array.isArray(item.scores)) {
+            studentMap[stId].grades.push(...item.scores);
+          } else if (item.subject) {
+            studentMap[stId].grades.push(item);
+          }
+        });
+
+        const uniqueStudents = Object.values(studentMap);
+        setGradesData(uniqueStudents);
       })
-      .catch(() => {})
+      .catch(() => setGradesData([]))
       .finally(() => setLoading(false));
   }, [schoolId, selectedClass]);
 
   // Compute student averages and subject averages
-  const computedStudents = (gradesData || []).map(student => {
+  const listToMap = Array.isArray(gradesData) ? gradesData : [];
+  const computedStudents = listToMap.map(student => {
     const studentGrades = student.grades || [];
     let sum = 0;
     let count = 0;
@@ -974,7 +1001,7 @@ const StudentPerformanceBreakdown = ({ schoolId, defaultClassId = null }) => {
                         {s.average}%
                       </span>
                     ) : (
-                      <span className="text-ink/35 font-mono">—</span>
+                      <span className="text-ink/35 font-mono">-</span>
                     )}
                   </td>
                   <td className="py-3.5 px-5 text-right pr-6">
@@ -1026,7 +1053,7 @@ const StudentPerformanceBreakdown = ({ schoolId, defaultClassId = null }) => {
               <div className="p-3 bg-sage/10 border border-line-border/20 rounded-xl">
                 <span className="text-[10px] font-bold text-ink/40 uppercase block">Overall Average</span>
                 <span className="text-xl font-display font-bold text-teal-primary mt-1 block">
-                  {drillStudent.average !== null ? `${drillStudent.average}%` : '—'}
+                  {drillStudent.average !== null ? `${drillStudent.average}%` : '-'}
                 </span>
               </div>
               <div className="p-3 bg-sage/10 border border-line-border/20 rounded-xl">
@@ -1118,6 +1145,8 @@ const StudentPerformanceBreakdown = ({ schoolId, defaultClassId = null }) => {
 // ─── Teacher Dashboard View ──────────────────────────────────────────────────
 const TeacherDashboardView = ({ schoolId }) => {
   const navigate = useNavigate();
+  const [clsList, setClsList] = useState([]);
+  const [selectedClassId, setSelectedClassId] = useState('');
   const [cls, setCls] = useState(null);
   const [students, setStudents] = useState([]);
   const [timetable, setTimetable] = useState([]);
@@ -1128,56 +1157,100 @@ const TeacherDashboardView = ({ schoolId }) => {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
+  // Lecture Report state
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportForm, setReportForm] = useState({ subject: 'General', topic: '', period: 'Period 1', remarks: '' });
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportSuccess, setReportSuccess] = useState('');
+  const [reportError, setReportError] = useState('');
+
+  // Initial load of classes
   useEffect(() => {
-    const loadTeacherData = async () => {
+    if (!schoolId) return;
+    api.get(`/schools/${schoolId}/classes`)
+      .then(res => {
+        const classesData = res.data || [];
+        setClsList(classesData);
+        if (classesData.length > 0 && !selectedClassId) {
+          setSelectedClassId(String(classesData[0].id));
+        }
+      })
+      .catch(() => {});
+  }, [schoolId]);
+
+  useEffect(() => {
+    if (!schoolId || !selectedClassId) return;
+    const loadClassData = async () => {
       setLoading(true);
       try {
-        const classRes = await api.get(`/schools/${schoolId}/classes`);
-        const assignedClass = classRes.data?.[0];
-        if (assignedClass) {
-          setCls(assignedClass);
-          
-          const todayStr = new Date().toISOString().split('T')[0];
-          const [studentsRes, timetableRes, annRes, incidentsRes, gradesRes, attendanceRes] = await Promise.all([
-            api.get(`/schools/${schoolId}/students?class_id=${assignedClass.id}`).catch(() => ({ data: [] })),
-            api.get(`/schools/${schoolId}/timetable?class_id=${assignedClass.id}`).catch(() => ({ data: [] })),
-            api.get(`/schools/${schoolId}/announcements?class_id=${assignedClass.id}`).catch(() => ({ data: [] })),
-            api.get(`/schools/${schoolId}/discipline`).catch(() => ({ data: [] })),
-            api.get(`/schools/${schoolId}/classes/${assignedClass.id}/grades`).catch(() => ({ data: [] })),
-            api.get(`/schools/${schoolId}/classes/${assignedClass.id}/attendance?date=${todayStr}`).catch(() => ({ data: { records: [] } }))
-          ]);
-          
-          const studentsList = studentsRes.data || [];
-          setStudents(studentsList);
-          setTimetable(timetableRes.data || []);
-          setAnnouncements(annRes.data || []);
-          setIncidents(incidentsRes.data || []);
-          setGrades(gradesRes.data || []);
+        const currentClassObj = clsList.find(c => String(c.id) === String(selectedClassId)) || clsList[0];
+        setCls(currentClassObj);
+        
+        const todayStr = new Date().toISOString().split('T')[0];
+        const [studentsRes, timetableRes, annRes, incidentsRes, gradesRes, attendanceRes] = await Promise.all([
+          api.get(`/schools/${schoolId}/students?class_id=${selectedClassId}&per_page=100`).catch(() => ({ data: [] })),
+          api.get(`/schools/${schoolId}/timetable?class_id=${selectedClassId}`).catch(() => ({ data: [] })),
+          api.get(`/schools/${schoolId}/announcements?class_id=${selectedClassId}`).catch(() => ({ data: [] })),
+          api.get(`/schools/${schoolId}/discipline`).catch(() => ({ data: [] })),
+          api.get(`/schools/${schoolId}/classes/${selectedClassId}/grades`).catch(() => ({ data: [] })),
+          api.get(`/schools/${schoolId}/classes/${selectedClassId}/attendance?date=${todayStr}`).catch(() => ({ data: { records: [] } }))
+        ]);
+        
+        const studentsList = studentsRes.data || [];
+        setStudents(studentsList);
+        setTimetable(timetableRes.data || []);
+        setAnnouncements(annRes.data || []);
+        setIncidents(incidentsRes.data || []);
+        setGrades(gradesRes.data || []);
 
-          const attRecords = attendanceRes.data?.records || [];
-          const totalInClass = studentsList.length;
-          const presentCount = attRecords.filter(r => r.status === 'present').length;
-          const absentCount = attRecords.filter(r => r.status === 'absent').length;
-          const lateCount = attRecords.filter(r => r.status === 'late').length;
-          const unmarkedCount = Math.max(0, totalInClass - (presentCount + absentCount + lateCount));
-          const attendanceRate = totalInClass > 0 ? Math.round(((presentCount + lateCount) / totalInClass) * 100) : 100;
-          
-          setAttendance({
-            present: presentCount,
-            absent: absentCount,
-            late: lateCount,
-            unmarked: unmarkedCount,
-            rate: attendanceRate
-          });
-        }
+        const attRecords = attendanceRes.data?.records || [];
+        const totalInClass = studentsList.length;
+        const presentCount = attRecords.filter(r => r.status === 'present').length;
+        const absentCount = attRecords.filter(r => r.status === 'absent').length;
+        const lateCount = attRecords.filter(r => r.status === 'late').length;
+        const unmarkedCount = Math.max(0, totalInClass - (presentCount + absentCount + lateCount));
+        const attendanceRate = totalInClass > 0 ? Math.round(((presentCount + lateCount) / totalInClass) * 100) : 100;
+        
+        setAttendance({
+          present: presentCount,
+          absent: absentCount,
+          late: lateCount,
+          unmarked: unmarkedCount,
+          rate: attendanceRate
+        });
       } catch (ex) {
         setErr('Error loading teacher dashboard data: ' + ex.message);
       } finally {
         setLoading(false);
       }
     };
-    loadTeacherData();
-  }, [schoolId]);
+    loadClassData();
+  }, [schoolId, selectedClassId, clsList]);
+
+  const handleSendReport = async (e) => {
+    e.preventDefault();
+    setReportLoading(true);
+    setReportSuccess('');
+    setReportError('');
+    try {
+      const title = `[LECTURE_REPORT] Class ${cls?.name || 'Class'} - ${reportForm.subject} (${reportForm.period})`;
+      const body = `Lecture Completion Report:\nClass: ${cls?.name || ''}\nSubject: ${reportForm.subject}\nPeriod: ${reportForm.period}\nTopic Covered: ${reportForm.topic}\nRemarks: ${reportForm.remarks || 'None'}\nDate: ${new Date().toLocaleDateString()}`;
+      await api.post(`/schools/${schoolId}/teacher-messages`, {
+        subject: title,
+        body: body
+      });
+      setReportSuccess('Lecture completion report submitted to School Head / Principal successfully.');
+      setTimeout(() => {
+        setShowReportModal(false);
+        setReportSuccess('');
+        setReportForm({ subject: 'General', topic: '', period: 'Period 1', remarks: '' });
+      }, 1500);
+    } catch (err) {
+      setReportError(err.message || 'Failed to submit lecture report.');
+    } finally {
+      setReportLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -1228,22 +1301,88 @@ const TeacherDashboardView = ({ schoolId }) => {
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      {/* Welcome Banner */}
+      {/* Welcome Banner & Active Class Switcher */}
       <div className="glass-card rounded-3xl p-6 bg-gradient-to-r from-teal-primary/10 to-teal-dark/5 border border-teal-primary/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-display font-bold text-ink">
-            {cls?.teacher_name ? `Welcome ${cls.teacher_name}` : 'Welcome back, Class Teacher'}
+            {cls?.teacher_name ? `Welcome ${cls.teacher_name}` : 'Welcome back, Instructor'}
           </h2>
           <p className="text-sm font-sans text-ink/65 mt-1">
-            {cls ? `You are assigned to ${cls.name} (Grade ${cls.grade_level} Stream ${cls.stream})` : 'No class currently assigned to your profile.'}
+            {cls ? `Active Class: ${cls.name} (${cls.grade_level})` : 'Select an assigned class to view student roster & subjects.'}
           </p>
         </div>
-        {cls && (
-          <div className="bg-teal-primary text-paper px-4 py-2 rounded-xl text-xs font-semibold font-sans tracking-wide uppercase">
-            Class Roster: {totalPupils} Pupils
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {clsList.length > 0 && (
+            <div className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-xl border border-teal-primary/30 shadow-sm">
+              <span className="text-[10px] font-bold text-ink/60 uppercase font-sans">Active Class:</span>
+              <select
+                value={selectedClassId}
+                onChange={e => setSelectedClassId(e.target.value)}
+                className="text-xs font-bold text-teal-dark bg-transparent focus:outline-none cursor-pointer"
+              >
+                {clsList.map(c => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.grade_level})</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="bg-teal-primary hover:bg-teal-dark text-paper px-4 py-2 rounded-xl text-xs font-bold font-sans shadow-md cursor-pointer flex items-center space-x-1.5"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>Report Lecture Taken</span>
+          </button>
+          {cls && (
+            <div className="bg-teal-primary/10 text-teal-dark border border-teal-primary/30 px-3 py-2 rounded-xl text-xs font-semibold font-sans tracking-wide uppercase">
+              Class Roster: {totalPupils} Pupils
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Lecture Completion Reporting Modal */}
+      {showReportModal && (
+        <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-md glass-panel bg-paper rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
+            <button onClick={() => setShowReportModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
+            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Report Lecture / Class Taken</h3>
+            {reportSuccess && <div className="p-3 rounded-xl bg-sage/20 border border-teal-primary/30 text-teal-dark text-xs mb-4">{reportSuccess}</div>}
+            {reportError && <div className="p-3 rounded-xl bg-brick-critical/10 border border-brick-critical/30 text-brick-critical text-xs mb-4">{reportError}</div>}
+            <form onSubmit={handleSendReport} className="space-y-4 text-xs font-sans">
+              <div>
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Class</label>
+                <input type="text" disabled className="w-full px-3 py-2 bg-sage/10 border border-line-border/30 rounded-lg font-bold text-ink" value={cls?.name || 'Active Class'} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-ink/70 mb-1">Subject</label>
+                  <input type="text" required placeholder="e.g. Mathematics" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary" value={reportForm.subject} onChange={e => setReportForm({...reportForm, subject: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink/70 mb-1">Period Slot</label>
+                  <input type="text" required placeholder="e.g. 08:10–08:50" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary" value={reportForm.period} onChange={e => setReportForm({...reportForm, period: e.target.value})} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Topic / Lesson Content Covered</label>
+                <input type="text" required placeholder="e.g. Quadratic Equations Intro" className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary" value={reportForm.topic} onChange={e => setReportForm({...reportForm, topic: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Teacher Remarks / Notes for Head</label>
+                <textarea rows={2} placeholder="Optional notes regarding class participation, student behavior..." className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary" value={reportForm.remarks} onChange={e => setReportForm({...reportForm, remarks: e.target.value})} />
+              </div>
+              <div className="pt-2 flex justify-end space-x-2">
+                <button type="button" onClick={() => setShowReportModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/75 hover:bg-sage/10 cursor-pointer">Cancel</button>
+                <button type="submit" disabled={reportLoading} className="px-5 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-xs font-semibold shadow-md cursor-pointer flex items-center space-x-2">
+                  {reportLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  <span>Submit Lecture Report</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {err && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs font-sans">{err}</div>}
 
@@ -1341,7 +1480,7 @@ const TeacherDashboardView = ({ schoolId }) => {
                           <td className="py-3 px-5 font-mono font-semibold text-ink/65">{s.admission_number}</td>
                           <td className="py-3 px-5 font-bold">{s.first_name} {s.last_name}</td>
                           <td className="py-3 px-5 capitalize text-ink/75">{s.gender}</td>
-                          <td className="py-3 px-5 text-ink/65">{s.nationality || '—'}</td>
+                          <td className="py-3 px-5 text-ink/65">{s.nationality || '-'}</td>
                           <td className="py-3 px-5 text-right">
                             <button
                               onClick={() => navigate(`/students/${s.id}`)}
@@ -1466,9 +1605,10 @@ const ParentDashboardView = ({ schoolId }) => {
     setLoadingKids(true);
     api.get(`/schools/${schoolId}/students`)
       .then(res => {
-        setKids(res.data || []);
-        if (res.data?.length > 0) {
-          setSelectedKidId(res.data[0].id);
+        const list = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+        setKids(list);
+        if (list.length > 0) {
+          setSelectedKidId(list[0].id);
         }
       })
       .catch(() => setErr('Failed to fetch linked children.'))
@@ -1764,7 +1904,7 @@ const ParentDashboardView = ({ schoolId }) => {
                       "{comm.comment}"
                     </blockquote>
                     <div className="text-[9px] font-sans text-ink/40 text-right font-semibold">
-                      — {comm.author_full_name} (Principal / Registrar)
+                      - {comm.author_full_name} (Principal / Registrar)
                     </div>
                   </div>
                 ))}
@@ -1902,17 +2042,23 @@ const Dashboard = () => {
   const kpis  = data?.kpis  || {};
   const today = new Date().toLocaleDateString('en-ZW', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  const rawTitle = (user?.role_title || user?.title || '').toLowerCase();
+  let adminTitle = 'Headmaster / Principal';
+  if (rawTitle.includes('headmaster')) adminTitle = "Headmaster";
+  else if (rawTitle.includes('principal')) adminTitle = "Principal";
+
   const getHeaderTitle = () => {
-    if (user?.role === 'super_admin') return "Super Admin View — Principal Hub";
-    if (user?.role === 'teacher') return "Teacher's Console";
-    if (user?.role === 'parent') return "Parent Portal";
-    return "Principal's Command Hub";
+    if (user?.role === 'super_admin') return "Super Admin Central Command Hub";
+    if (user?.role === 'teacher') return `Teacher's Academic Portal - ${user?.name || user?.username || 'Faculty'}`;
+    if (user?.role === 'parent') return "Parent & Guardian Portal";
+    return `${adminTitle}'s Command Hub`;
   };
 
   const getHeaderSubtitle = () => {
-    if (user?.role === 'teacher') return "Class schedules, grades registers, and student activity overview";
-    if (user?.role === 'parent') return "Access your child's academic progress, attendance ledger, and notices";
-    return "Unified school operations view — drill down to any detail";
+    if (user?.role === 'super_admin') return "Multi-tenant platform overview, system security audit, and license desk";
+    if (user?.role === 'teacher') return "Classroom registers, lesson plans, grades sheets, and student activity overview";
+    if (user?.role === 'parent') return "Access your child's academic progress, attendance ledger, and school notices";
+    return "Unified school operations, staff oversight, and academic governance";
   };
 
   return (

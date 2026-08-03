@@ -315,10 +315,10 @@ const AttendanceReports = ({ schoolId }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-line-border/50 text-xs text-ink">
-              {classesList.map((c) => {
+              {classesList.map((c, idx) => {
                 const volMeta = getVolatilityLabel(c.volatility);
                 return (
-                  <tr key={c.class_id} className="hover:bg-sage/5 transition-colors">
+                  <tr key={c.id || c.class_id || `att-row-${idx}`} className="hover:bg-sage/5 transition-colors">
                     <td className="py-3 px-5 font-bold text-sm">{c.class_name}</td>
                     <td className="py-3 px-5 text-center font-mono font-bold text-ink/70">{c.student_count}</td>
                     <td className="py-3 px-5 text-center">
@@ -799,7 +799,7 @@ const ParentAttendanceView = ({ schoolId }) => {
                           {att.status}
                         </span>
                       </td>
-                      <td className="py-3.5 px-6 text-ink/65 italic font-medium">{att.remarks || '—'}</td>
+                      <td className="py-3.5 px-6 text-ink/65 italic font-medium">{att.remarks || '-'}</td>
                     </tr>
                   ))}
                   {(!profile.attendance_list || profile.attendance_list.length === 0) && (
@@ -820,7 +820,7 @@ const ParentAttendanceView = ({ schoolId }) => {
 // ─── Main Controller Router ───────────────────────────────────────────────────
 const Attendance = () => {
   const { user, activeSchoolId } = useAuth();
-  const isSchoolAdmin = user?.role === 'school_admin';
+  const isSchoolAdmin = user?.role === 'school_admin' || user?.role === 'super_admin';
 
   if (user?.role === 'parent') {
     return <ParentAttendanceView schoolId={activeSchoolId} />;

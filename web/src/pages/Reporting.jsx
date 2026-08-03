@@ -15,6 +15,11 @@ const Reporting = () => {
   const [platformLoading, setPlatformLoading] = useState(false);
   const [platformError, setPlatformError] = useState('');
 
+  // School Audit stats
+  const [schoolStats, setSchoolStats] = useState(null);
+  const [schoolLoading, setSchoolLoading] = useState(false);
+  const [schoolError, setSchoolError] = useState('');
+
   // Predictive Intelligence & Data Science stats
   const [predictiveData, setPredictiveData] = useState(null);
   const [predictiveLoading, setPredictiveLoading] = useState(false);
@@ -553,7 +558,7 @@ const Reporting = () => {
                         <td className="py-2.5 px-4 font-bold">{st.name}</td>
                         <td className="py-2.5 px-4 font-mono">{st.username}</td>
                         <td className="py-2.5 px-4 text-center font-mono font-bold text-teal-primary">{st.registers_today || 0}</td>
-                        <td className="py-2.5 px-4 text-right font-mono text-ink/65">{st.last_login ? new Date(st.last_login).toLocaleString() : '—'}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-ink/65">{st.last_login ? new Date(st.last_login).toLocaleString() : '-'}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -144,7 +144,7 @@ const Enquiries = () => {
                 <td className="py-4 px-6 font-bold">{e.applicant_name}</td>
                 <td className="py-4 px-6 text-ink/70">{e.grade_applying_for}</td>
                 <td className="py-4 px-6 text-ink/70">{e.guardian_name}</td>
-                <td className="py-4 px-6 font-mono text-xs numeric-data">{e.guardian_phone || '—'}</td>
+                <td className="py-4 px-6 font-mono text-xs numeric-data">{e.guardian_phone || '-'}</td>
                 <td className="py-4 px-6 text-center">
                   <select
                     value={e.status}

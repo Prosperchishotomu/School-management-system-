@@ -137,7 +137,7 @@ const LicenseStatus = () => {
               <div>
                 <span className="block text-[10px] uppercase font-semibold text-ink/50">Expiration Date</span>
                 <span className="text-sm font-sans font-semibold text-ink">
-                  {license?.expires_at ? new Date(license.expires_at).toLocaleDateString() : 'N/A'}
+                  {license?.expires_at ? new Date(license.expires_at).toLocaleDateString() : '-'}
                 </span>
               </div>
             </div>
@@ -147,7 +147,7 @@ const LicenseStatus = () => {
               <div>
                 <span className="block text-[10px] uppercase font-semibold text-ink/50">Days Remaining</span>
                 <span className={`text-sm font-sans font-bold ${daysLeft <= 7 ? 'text-brick-critical' : daysLeft <= 30 ? 'text-amber-warning' : 'text-teal-dark'}`}>
-                  {daysLeft !== null && daysLeft !== undefined ? `${daysLeft} Day(s)` : 'N/A'}
+                  {daysLeft !== null && daysLeft !== undefined ? `${daysLeft} Day(s)` : '-'}
                 </span>
               </div>
             </div>

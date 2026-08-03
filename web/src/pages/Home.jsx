@@ -5,7 +5,8 @@ import {
   Shield, BookOpen, Users, DollarSign, Calendar, Activity, 
   ChevronRight, LayoutDashboard, ArrowRight, X, LogIn, Loader2, 
   AlertCircle, GraduationCap, Sparkles, Zap, Wifi, Building2, 
-  TrendingUp, CheckCircle2, Globe, Award, Lock, Smartphone, FileText, Bot
+  TrendingUp, CheckCircle2, Globe, Award, Lock, Smartphone, FileText, Bot,
+  Eye, EyeOff
 } from 'lucide-react';
 
 const Home = ({ preOpenLogin = false }) => {
@@ -16,9 +17,9 @@ const Home = ({ preOpenLogin = false }) => {
   const [showLogin, setShowLogin] = useState(preOpenLogin);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
-  const [selectedDemoRole, setSelectedDemoRole] = useState(null);
   const [activeCurriculumTab, setActiveCurriculumTab] = useState('primary'); // 'primary' | 'secondary'
 
   const sessionExpired = searchParams.get('expired') === '1';
@@ -35,13 +36,6 @@ const Home = ({ preOpenLogin = false }) => {
     } else {
       setShowLogin(true);
     }
-  };
-
-  const handleDemoSelect = (demoUsername, demoPassword, roleLabel) => {
-    setUsername(demoUsername);
-    setPassword(demoPassword);
-    setSelectedDemoRole(roleLabel);
-    setError('');
   };
 
   const handleLoginSubmit = async (e) => {
@@ -122,11 +116,9 @@ const Home = ({ preOpenLogin = false }) => {
 
   return (
     <div className="min-h-screen bg-paper text-ink overflow-hidden font-sans relative">
-      {/* Decorative ambient background lighting */}
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full bg-teal-primary/10 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-10 right-10 w-[500px] h-[500px] rounded-full bg-amber-500/10 blur-[140px] pointer-events-none" />
 
-      {/* Header Bar */}
       <header className="relative z-30 border-b border-line-border/30 backdrop-blur-md bg-white/80 sticky top-0">
         <div className="max-w-7xl mx-auto px-6 md:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -156,7 +148,7 @@ const Home = ({ preOpenLogin = false }) => {
               ) : (
                 <>
                   <LogIn className="w-4 h-4" />
-                  <span>Client Login &amp; Demo</span>
+                  <span>Client Login</span>
                 </>
               )}
             </button>
@@ -164,9 +156,7 @@ const Home = ({ preOpenLogin = false }) => {
         </div>
       </header>
 
-      {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-6 md:px-8 pt-16 pb-24 relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-        {/* Hero Left Column */}
         <div className="lg:col-span-7 space-y-6 text-left animate-fadeIn">
           <div className="inline-flex items-center space-x-2 px-3.5 py-1.5 bg-teal-primary/10 border border-teal-primary/25 text-teal-dark text-[11px] font-bold uppercase tracking-wider rounded-full shadow-sm">
             <Sparkles className="w-3.5 h-3.5 text-teal-primary" />
@@ -186,7 +176,7 @@ const Home = ({ preOpenLogin = false }) => {
               onClick={handleCta}
               className="px-7 py-4 bg-teal-primary hover:bg-teal-dark text-paper font-bold text-sm rounded-2xl shadow-xl hover:shadow-teal-primary/30 transition-all flex items-center space-x-2 cursor-pointer transform hover:-translate-y-0.5"
             >
-              <span>{user ? 'Open School Cockpit' : 'Launch Interactive Demo'}</span>
+              <span>{user ? 'Open School Cockpit' : 'Login to Portal'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
             <a
@@ -196,207 +186,104 @@ const Home = ({ preOpenLogin = false }) => {
               <span>View Academic Rules</span>
             </a>
           </div>
-
-          {/* Key Badges */}
-          <div className="pt-6 flex flex-wrap items-center gap-6 text-xs text-ink/65 font-medium border-t border-line-border/20">
-            <div className="flex items-center space-x-1.5">
-              <CheckCircle2 className="w-4 h-4 text-teal-primary" />
-              <span>ZIMSEC Primary (6–54 Units)</span>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <CheckCircle2 className="w-4 h-4 text-teal-primary" />
-              <span>A-Level (1–15 Points)</span>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <CheckCircle2 className="w-4 h-4 text-teal-primary" />
-              <span>Multi-Tenant Isolated Data</span>
-            </div>
-          </div>
         </div>
 
-        {/* Hero Right Column: High-Fidelity Live System Cockpit Preview Card */}
         <div className="lg:col-span-5 animate-fadeIn">
           <div className="relative group">
-            {/* Ambient Background Glow */}
-            <div className="absolute -inset-2 bg-gradient-to-r from-teal-primary/30 via-emerald-500/20 to-amber-500/20 rounded-3xl blur-2xl opacity-80 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
-            
-            <div className="relative glass-card rounded-3xl border border-line-border/40 overflow-hidden shadow-2xl p-4 bg-white/90 text-left space-y-4">
-              {/* Window Titlebar */}
-              <div className="flex items-center justify-between pb-3 border-b border-line-border/20 text-ink/50 text-[10px] font-mono">
-                <div className="flex items-center space-x-2">
-                  <span className="w-3 h-3 rounded-full bg-brick-critical/60" />
-                  <span className="w-3 h-3 rounded-full bg-amber-warning/60" />
-                  <span className="w-3 h-3 rounded-full bg-teal-primary/60" />
-                  <span className="ml-2 font-bold text-ink/80">schoolbase_platform.node</span>
+            <div className="absolute inset-0 bg-gradient-to-tr from-teal-primary/20 to-amber-warning/20 rounded-3xl blur-2xl group-hover:scale-105 transition-transform duration-500 pointer-events-none" />
+            <div className="relative glass-panel rounded-3xl border border-line-border/30 overflow-hidden shadow-2xl p-6 space-y-6">
+              
+              <div className="flex items-center justify-between border-b border-line-border/15 pb-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center text-teal-primary">
+                    <LayoutDashboard className="w-5.5 h-5.5" />
+                  </div>
+                  <div className="text-left">
+                    <h3 className="font-display font-bold text-ink">Administrative Cockpit</h3>
+                    <p className="text-[10px] text-ink/50 font-sans">Live System Monitor</p>
+                  </div>
                 </div>
-                <span className="px-2.5 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold flex items-center space-x-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-primary animate-pulse" />
-                  <span>ONLINE REALTIME</span>
+                <span className="text-[9px] font-mono font-bold text-teal-dark bg-sage/40 px-2.5 py-1 rounded-full border border-teal-primary/15 uppercase">
+                  Active Connection
                 </span>
               </div>
 
-              {/* Platform Capabilities Header */}
-              <div className="p-3.5 rounded-2xl bg-teal-primary/10 border border-teal-primary/20 flex justify-between items-center">
-                <div>
-                  <span className="text-[9px] font-bold text-teal-primary uppercase tracking-widest">Multi-Tenant School Platform</span>
-                  <h4 className="text-base font-display font-bold text-ink">SchoolBase SaaS Suite</h4>
-                  <p className="text-[10px] text-ink/60 font-mono">Every school gets its own isolated data instance</p>
-                </div>
-                <div className="px-3 py-1 bg-white rounded-xl text-[10px] font-bold text-teal-dark shadow-sm border border-teal-primary/20">
-                  v2.5 Live
-                </div>
+              <div className="grid grid-cols-2 gap-4 text-left">
+                {stats.map((s, idx) => (
+                  <div key={idx} className="glass-card p-4 rounded-2xl flex flex-col justify-between">
+                    <span className="text-[9px] font-bold text-ink/40 uppercase tracking-wider leading-tight pr-2">{s.label}</span>
+                    <h4 className="text-xl font-display font-bold text-teal-primary numeric-data mt-2">
+                      {s.value}
+                    </h4>
+                    <p className="text-[9px] font-sans text-ink/50 mt-1">{s.highlight}</p>
+                  </div>
+                ))}
               </div>
 
-              {/* Platform KPI Cards Grid */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3.5 rounded-2xl bg-sage/10 border border-line-border/30">
-                  <div className="flex items-center justify-between text-ink/50 text-[10px] font-bold uppercase">
-                    <span>Fee Collection</span>
-                    <DollarSign className="w-3.5 h-3.5 text-teal-primary" />
+              <div className="border-t border-line-border/15 pt-4 space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 rounded-full bg-teal-primary animate-pulse" />
+                    <span className="font-semibold text-ink/75">Academic Engine Core</span>
                   </div>
-                  <p className="text-base font-bold text-teal-dark font-mono mt-1">Paynow + EcoCash</p>
-                  <span className="text-[9px] text-teal-primary font-semibold">Instant IPN Webhook</span>
+                  <span className="text-[10px] text-ink/50 font-mono">100% Native Grading</span>
                 </div>
-
-                <div className="p-3.5 rounded-2xl bg-sage/10 border border-line-border/30">
-                  <div className="flex items-center justify-between text-ink/50 text-[10px] font-bold uppercase">
-                    <span>AI Risk Engine</span>
-                    <TrendingUp className="w-3.5 h-3.5 text-teal-primary" />
-                  </div>
-                  <p className="text-base font-bold text-teal-dark font-mono mt-1">Predictive ML Score</p>
-                  <span className="text-[9px] text-teal-primary font-semibold">0–100% At-Risk Index</span>
+                <div className="w-full bg-sage/30 rounded-full h-1.5 overflow-hidden">
+                  <div className="bg-teal-primary h-full rounded-full" style={{ width: '100%' }} />
                 </div>
-              </div>
-
-              {/* Platform Feature List */}
-              <div className="border border-line-border/25 rounded-2xl overflow-hidden bg-white/50">
-                <div className="px-3.5 py-2 bg-sage/20 border-b border-line-border/20 text-[9px] font-bold text-ink/60 uppercase flex justify-between items-center">
-                  <span>Core Platform Capabilities</span>
-                  <span className="font-mono text-teal-primary">All Schools Included</span>
-                </div>
-                <div className="divide-y divide-line-border/15 text-xs">
-                  <div className="px-3.5 py-2.5 flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-ink">ZIMSEC &amp; Cambridge Grading</div>
-                      <span className="text-[9px] text-ink/50">Primary Units • O-Level • A-Level Points</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-primary font-bold text-[10px]">
-                      ✓ Native
-                    </span>
-                  </div>
-
-                  <div className="px-3.5 py-2.5 flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-ink">Hostels, OpEx &amp; Library</div>
-                      <span className="text-[9px] text-ink/50">Housing • Starlink • ZESA • Stationery</span>
-                    </div>
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold text-[10px]">
-                      ✓ Included
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Security Shield Footer */}
-              <div className="flex items-center justify-between text-[10px] text-ink/50 font-medium pt-1">
-                <div className="flex items-center space-x-1 text-teal-primary font-semibold">
-                  <Lock className="w-3 h-3" />
-                  <span>Isolated Tenant Data</span>
-                </div>
-                <span>Zimbabwe Data Protection Act 2021</span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Counter Section */}
-      <section className="bg-white border-y border-line-border/30 py-12 relative z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 md:px-8 grid grid-cols-2 md:grid-cols-4 gap-8">
-          {stats.map((s, idx) => (
-            <div key={idx} className="text-center space-y-1">
-              <span className="text-[10px] font-sans font-bold text-teal-dark uppercase tracking-widest bg-teal-primary/10 px-2.5 py-0.5 rounded-full">{s.highlight}</span>
-              <p className="text-3xl md:text-4xl font-display font-bold text-ink mt-2 numeric-data">{s.value}</p>
-              <p className="text-xs text-ink/60 font-sans font-medium">{s.label}</p>
+      <section id="curriculum-engine" className="bg-white border-y border-line-border/25 py-24 relative z-10 text-left">
+        <div className="max-w-7xl mx-auto px-6 md:px-8 space-y-16">
+          <div className="flex flex-col lg:flex-row items-start lg:items-end justify-between gap-6">
+            <div className="space-y-3 max-w-2xl">
+              <span className="text-[10px] font-mono font-bold text-teal-primary uppercase tracking-widest px-3 py-1 bg-teal-primary/10 rounded-full">Intelligent Core Logic</span>
+              <h2 className="text-3xl md:text-5xl font-display font-bold text-ink leading-tight">
+                Fully Adapts to Zimbabwe &amp; Cambridge Curriculums
+              </h2>
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Curriculum Engine Feature Spotlight */}
-      <section id="curriculum-engine" className="max-w-7xl mx-auto px-6 md:px-8 py-20 relative z-10">
-        <div className="text-center max-w-3xl mx-auto space-y-3 mb-12">
-          <span className="text-[10px] font-sans font-bold text-teal-primary uppercase tracking-widest bg-teal-primary/10 px-3 py-1 rounded-full border border-teal-primary/20">
-            Native Grading Frameworks
-          </span>
-          <h2 className="text-3xl md:text-4xl font-display font-bold text-ink">Built Specifically for Zimbabwean &amp; International Syllabi</h2>
-          <p className="text-sm text-ink/65 leading-relaxed font-sans">
-            Whether your school operates a Primary Grade 1–7 structure, Secondary O-Level, or Advanced Level Form 5–6, SchoolBase calculates exact units and point aggregates automatically.
-          </p>
-        </div>
-
-        {/* Interactive Curriculum Switcher */}
-        <div className="glass-panel p-8 rounded-3xl border border-line-border/30 shadow-xl bg-white max-w-4xl mx-auto space-y-6">
-          <div className="flex justify-center space-x-3 border-b border-line-border/20 pb-4">
-            <button
-              onClick={() => setActiveCurriculumTab('primary')}
-              className={`px-6 py-3 rounded-xl font-sans font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
-                activeCurriculumTab === 'primary' ? 'bg-teal-primary text-paper shadow-md' : 'bg-sage/10 text-ink/60 hover:bg-sage/20'
-              }`}
-            >
-              Primary School Engine (Grade 1 – 7)
-            </button>
-            <button
-              onClick={() => setActiveCurriculumTab('secondary')}
-              className={`px-6 py-3 rounded-xl font-sans font-bold text-xs uppercase tracking-wider transition-all cursor-pointer ${
-                activeCurriculumTab === 'secondary' ? 'bg-teal-primary text-paper shadow-md' : 'bg-sage/10 text-ink/60 hover:bg-sage/20'
-              }`}
-            >
-              Secondary &amp; A-Level Engine (Form 1 – 6)
-            </button>
+            <p className="text-sm text-ink/65 leading-relaxed font-sans max-w-md">
+              No general templates or simple calculations. The academic engine handles points aggregates, grade thresholds, and course weights automatically.
+            </p>
           </div>
 
-          {activeCurriculumTab === 'primary' ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left animate-fadeIn">
-              <div className="p-5 rounded-2xl bg-sage/10 border border-line-border/20 space-y-2">
-                <span className="text-[10px] font-bold text-teal-dark uppercase">Subject Grading</span>
-                <h4 className="font-bold text-ink text-sm">1 to 9 Unit Scale</h4>
-                <p className="text-xs text-ink/60">Marks map directly to ZIMSEC primary unit bands (1 = Distinction, 9 = Ungraded).</p>
-              </div>
-              <div className="p-5 rounded-2xl bg-sage/10 border border-line-border/20 space-y-2">
-                <span className="text-[10px] font-bold text-teal-dark uppercase">Aggregate Range</span>
-                <h4 className="font-bold text-ink text-sm">6 to 54 Total Units</h4>
-                <p className="text-xs text-ink/60">Calculates top 6 core subjects automatically for report cards and national rankings.</p>
-              </div>
-              <div className="p-5 rounded-2xl bg-sage/10 border border-line-border/20 space-y-2">
-                <span className="text-[10px] font-bold text-teal-dark uppercase">Terminal Year</span>
-                <h4 className="font-bold text-ink text-sm">Grade 7 Completion</h4>
-                <p className="text-xs text-ink/60">Automated end-of-year promotion or terminal completion status management.</p>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="glass-panel p-6 rounded-2xl border border-line-border/30 bg-paper">
+              <span className="text-[10px] font-mono font-bold text-teal-primary uppercase block mb-2">Primary Module</span>
+              <h3 className="font-display font-bold text-lg text-ink">Grade 1–7 Units</h3>
+              <p className="text-xs text-ink/65 leading-relaxed mt-2 font-sans">
+                Best 4 subjects units summation mapping. Logic converts percentage grades to aggregate units (1 as best, 9 as worst) and flags at-risk students automatically.
+              </p>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left animate-fadeIn">
-              <div className="p-5 rounded-2xl bg-sage/10 border border-line-border/20 space-y-2">
-                <span className="text-[10px] font-bold text-teal-dark uppercase">O-Level Rules</span>
-                <h4 className="font-bold text-ink text-sm">Form 1 – 4 (Best 5 Passes)</h4>
-                <p className="text-xs text-ink/60">Evaluates A–E letter grades and enforces 5 O-Level passes (Math &amp; English mandatory).</p>
-              </div>
-              <div className="p-5 rounded-2xl bg-sage/10 border border-line-border/20 space-y-2">
-                <span className="text-[10px] font-bold text-teal-dark uppercase">A-Level Points</span>
-                <h4 className="font-bold text-ink text-sm">Form 5 – 6 (1 to 15 Points)</h4>
-                <p className="text-xs text-ink/60">Sum of top 3 principal subjects (Grade A=5pts, B=4pts, C=3pts, D=2pts, E=1pt).</p>
-              </div>
-              <div className="p-5 rounded-2xl bg-sage/10 border border-line-border/20 space-y-2">
-                <span className="text-[10px] font-bold text-teal-dark uppercase">Stream Promotion</span>
-                <h4 className="font-bold text-ink text-sm">Automatic Stream Matching</h4>
-                <p className="text-xs text-ink/60">Promotes Grade 2 Yellow $\rightarrow$ Grade 3 Yellow, Form 1 B $\rightarrow$ Form 2 B automatically.</p>
-              </div>
+            <div className="glass-panel p-6 rounded-2xl border border-line-border/30 bg-paper">
+              <span className="text-[10px] font-mono font-bold text-amber-warning uppercase block mb-2">Secondary Module</span>
+              <h3 className="font-display font-bold text-lg text-ink">O-Level Aggregates</h3>
+              <p className="text-xs text-ink/65 leading-relaxed mt-2 font-sans">
+                Best 5 passed subjects with letters-to-numbers conversion to calculate aggregate values for advanced level entry requirements.
+              </p>
             </div>
-          )}
+            <div className="glass-panel p-6 rounded-2xl border border-line-border/30 bg-paper">
+              <span className="text-[10px] font-mono font-bold text-brick-critical uppercase block mb-2">Advanced Module</span>
+              <h3 className="font-display font-bold text-lg text-ink">A-Level Points</h3>
+              <p className="text-xs text-ink/65 leading-relaxed mt-2 font-sans">
+                15 Points engine across 3 registered subjects. Correctly handles subjects like Divinity or Literature with specific weighting rules.
+              </p>
+            </div>
+            <div className="glass-panel p-6 rounded-2xl border border-line-border/30 bg-paper">
+              <span className="text-[10px] font-mono font-bold text-teal-primary uppercase block mb-2">Automation Core</span>
+              <h3 className="font-display font-bold text-lg text-ink">AI-Based Analysis</h3>
+              <p className="text-xs text-ink/65 leading-relaxed mt-2 font-sans">
+                Live calculated Pearson Correlation coefficients and Multi-variable regression predicting student at-risk indexes using class attendance and financial health.
+              </p>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Main Enterprise Feature Cards Grid */}
       <section className="max-w-7xl mx-auto px-6 md:px-8 py-20 relative z-10 border-t border-line-border/25">
         <div className="text-center max-w-3xl mx-auto mb-16 space-y-3">
           <h2 className="text-3xl md:text-4xl font-display font-bold text-ink">
@@ -434,15 +321,14 @@ const Home = ({ preOpenLogin = false }) => {
         </div>
       </section>
 
-      {/* Call To Action Banner */}
       <section className="max-w-7xl mx-auto px-6 md:px-8 py-16 relative z-10">
         <div className="glass-panel rounded-3xl p-10 md:p-14 bg-gradient-to-r from-teal-primary to-teal-dark text-paper border border-teal-primary/30 shadow-2xl relative overflow-hidden flex flex-col lg:flex-row items-center justify-between gap-8">
           <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-3xl pointer-events-none" />
           <div className="space-y-3 text-left max-w-2xl relative z-10">
             <span className="text-[10px] font-mono font-bold uppercase tracking-widest px-3 py-1 bg-white/15 rounded-full text-paper">Ready For Live Deployment</span>
-            <h2 className="text-3xl sm:text-4xl font-display font-bold leading-tight">Test-Drive SchoolBase Live for Your School</h2>
+            <h2 className="text-3xl sm:text-4xl font-display font-bold leading-tight">Access the SchoolBase Portal</h2>
             <p className="text-xs sm:text-sm text-paper/85 font-sans leading-relaxed">
-              Experience pre-configured primary and secondary demo tenants with ZIMSEC grading, Paynow fees, and AI risk scoring in 1 click.
+              Enter your administrative credentials to securely access your school's cockpit.
             </p>
           </div>
           <button
@@ -450,12 +336,11 @@ const Home = ({ preOpenLogin = false }) => {
             className="px-8 py-4 bg-paper hover:bg-white text-teal-dark font-bold text-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all cursor-pointer relative z-10 shrink-0 flex items-center space-x-2"
           >
             <LogIn className="w-4 h-4 text-teal-primary" />
-            <span>Launch Live Client Demo</span>
+            <span>Sign In to Portal</span>
           </button>
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="border-t border-line-border/30 bg-white py-10 text-xs font-sans text-ink/50 relative z-10">
         <div className="max-w-7xl mx-auto px-6 md:px-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center space-x-2">
@@ -471,7 +356,6 @@ const Home = ({ preOpenLogin = false }) => {
         </div>
       </footer>
 
-      {/* Quick Demo Login Modal */}
       {showLogin && (
         <div className="fixed inset-0 bg-ink/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn">
           <div className="w-full max-w-md glass-panel rounded-3xl shadow-2xl p-8 border border-line-border/40 bg-white relative">
@@ -485,7 +369,7 @@ const Home = ({ preOpenLogin = false }) => {
             <div className="text-left space-y-1 border-b border-line-border/20 pb-4 mb-5">
               <span className="text-[10px] font-mono font-bold text-teal-primary uppercase tracking-wider">Client Sign In</span>
               <h3 className="text-2xl font-display font-bold text-ink">Access School Cockpit</h3>
-              <p className="text-xs text-ink/60 font-sans">Select a pre-seeded demo account below or enter your login details.</p>
+              <p className="text-xs text-ink/60 font-sans">Enter your login details to access the system.</p>
             </div>
 
             {sessionExpired && (
@@ -502,66 +386,13 @@ const Home = ({ preOpenLogin = false }) => {
               </div>
             )}
 
-            {/* Quick Demo Selector Buttons */}
-            <div className="mb-6 space-y-2">
-              <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider text-left">
-                Try a demo role — or enter your school credentials below:
-              </label>
-              <div className="grid grid-cols-2 gap-2 text-left">
-                <button
-                  type="button"
-                  onClick={() => handleDemoSelect('schooladmin', 'SchoolAdmin123', 'School Admin')}
-                  className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'School Admin' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
-                  }`}
-                >
-                  <div className="font-bold text-[11px]">🏫 School Administrator</div>
-                  <div className="text-[9px] text-ink/50">Full school management access</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleDemoSelect('superadmin', 'SuperSecurePass123', 'Platform Admin')}
-                  className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Platform Admin' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
-                  }`}
-                >
-                  <div className="font-bold text-[11px]">👑 Platform Admin</div>
-                  <div className="text-[9px] text-ink/50">All schools &amp; system config</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleDemoSelect('teacher', 'Teacher123', 'Educator')}
-                  className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Educator' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
-                  }`}
-                >
-                  <div className="font-bold text-[11px]">👨‍🏫 Educator / Teacher</div>
-                  <div className="text-[9px] text-ink/50">Classes, grades &amp; attendance</div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleDemoSelect('parent', 'Parent123', 'Guardian')}
-                  className={`p-2.5 rounded-xl border text-xs text-left transition-all cursor-pointer ${
-                    selectedDemoRole === 'Guardian' ? 'bg-teal-primary/10 border-teal-primary text-teal-dark font-bold' : 'bg-sage/5 border-line-border/30 hover:bg-sage/10 text-ink'
-                  }`}
-                >
-                  <div className="font-bold text-[11px]">👨‍👩‍👧 Parent / Guardian</div>
-                  <div className="text-[9px] text-ink/50">Child results, fees &amp; alerts</div>
-                </button>
-              </div>
-            </div>
-
-            {/* Login Form */}
             <form onSubmit={handleLoginSubmit} className="space-y-4 text-left font-sans">
               <div>
                 <label className="block text-xs font-bold text-ink/75 mb-1">Username / Account Email *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. schooladmin"
+                  placeholder="Enter username"
                   className="w-full glass-input rounded-xl text-xs"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
@@ -570,14 +401,23 @@ const Home = ({ preOpenLogin = false }) => {
 
               <div>
                 <label className="block text-xs font-bold text-ink/75 mb-1">Password *</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  className="w-full glass-input rounded-xl text-xs"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    placeholder="••••••••"
+                    className="w-full glass-input rounded-xl text-xs pr-10"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <button

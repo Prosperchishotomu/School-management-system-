@@ -27,8 +27,9 @@ const Expenses = () => {
     setLoading(true);
     setMessage({ type: '', text: '' });
     try {
-      const res = await api.get('/expenses');
-      setExpenseData(res.data);
+      const res = await api.get(`/schools/${activeSchoolId}/expenses`);
+      // Backend now returns { expenses, category_breakdown, summary }
+      setExpenseData(res.data || res);
     } catch (err) {
       console.error(err);
       setMessage({ type: 'error', text: 'Failed to retrieve operational expenditure records.' });
@@ -46,7 +47,7 @@ const Expenses = () => {
     setSubmitting(true);
     setMessage({ type: '', text: '' });
     try {
-      await api.post('/expenses', form);
+      await api.post(`/schools/${activeSchoolId}/expenses`, form);
       setMessage({ type: 'success', text: `Operational expense '${form.title}' recorded successfully.` });
       setForm({
         title: '',
@@ -269,7 +270,7 @@ const Expenses = () => {
                         </div>
                       </td>
                       <td className="py-3.5 px-5">
-                        <div className="text-ink/80 font-medium">{e.vendor_name || 'N/A'}</div>
+                        <div className="text-ink/80 font-medium">{e.vendor_name || '-'}</div>
                         {e.receipt_ref && <span className="text-[10px] font-mono text-ink/50">{e.receipt_ref}</span>}
                       </td>
                       <td className="py-3.5 px-5 text-right pr-6 font-mono font-bold text-brick-critical">

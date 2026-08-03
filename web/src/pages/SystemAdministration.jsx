@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { 
   ShieldAlert, Settings, Mail, MessageSquare, CreditCard, 
   Trash2, Edit, Save, AlertTriangle, CheckCircle, Loader2,
-  Database, RefreshCw
+  Database, RefreshCw, Eye, EyeOff
 } from 'lucide-react';
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 
@@ -55,6 +55,11 @@ const SystemAdministration = () => {
   const [overrideSuccess, setOverrideSuccess] = useState('');
   const [overrideError, setOverrideError] = useState('');
   const [submittingOverride, setSubmittingOverride] = useState(false);
+
+  // Password visibility states
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [showSmsKey, setShowSmsKey] = useState(false);
+  const [showPayKey, setShowPayKey] = useState(false);
 
   // Fetch schools
   useEffect(() => {
@@ -176,8 +181,17 @@ const SystemAdministration = () => {
       try {
         fields = JSON.parse(overrideFieldsJson);
       } catch (err) {
-        setOverrideError('Invalid JSON format in target override fields.');
-        return;
+        try {
+          const repaired = overrideFieldsJson.replace(/(:\s*)([a-zA-Z_][a-zA-Z0-9_\-]*)\s*([,\}\n\r])/g, (match, p1, p2, p3) => {
+            if (['true', 'false', 'null'].includes(p2)) return match;
+            return `${p1}"${p2}"${p3}`;
+          });
+          fields = JSON.parse(repaired);
+          setOverrideFieldsJson(JSON.stringify(fields, null, 2));
+        } catch (repairErr) {
+          setOverrideError('Invalid JSON format in target override fields. Ensure string values are quoted e.g. "middle_name": "Testing".');
+          return;
+        }
       }
     }
 
@@ -200,6 +214,20 @@ const SystemAdministration = () => {
         setOverrideError(err.message || `Failed to execute override operation.`);
       })
       .finally(() => setSubmittingOverride(false));
+  };
+
+  const handleFormatJson = () => {
+    try {
+      const repaired = overrideFieldsJson.replace(/(:\s*)([a-zA-Z_][a-zA-Z0-9_\-]*)\s*([,\}\n\r])/g, (match, p1, p2, p3) => {
+        if (['true', 'false', 'null'].includes(p2)) return match;
+        return `${p1}"${p2}"${p3}`;
+      });
+      const parsed = JSON.parse(repaired);
+      setOverrideFieldsJson(JSON.stringify(parsed, null, 2));
+      setOverrideError('');
+    } catch (err) {
+      setOverrideError('Could not auto-repair JSON: ' + err.message);
+    }
   };
 
   // Helper to format record labels in selection
@@ -348,13 +376,22 @@ const SystemAdministration = () => {
                 </div>
                 <div>
                   <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Password</label>
-                  <input
-                    type="password"
-                    className="w-full glass-input rounded-xl text-xs"
-                    placeholder="••••••••"
-                    value={gatewaysForm.email_smtp_pass}
-                    onChange={e => setGatewaysForm({ ...gatewaysForm, email_smtp_pass: e.target.value })}
-                  />
+                  <div className="relative">
+                    <input
+                      type={showSmtpPass ? 'text' : 'password'}
+                      className="w-full glass-input rounded-xl text-xs pr-10"
+                      placeholder="••••••••"
+                      value={gatewaysForm.email_smtp_pass}
+                      onChange={e => setGatewaysForm({ ...gatewaysForm, email_smtp_pass: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSmtpPass(!showSmtpPass)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                    >
+                      {showSmtpPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -403,13 +440,22 @@ const SystemAdministration = () => {
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
                   <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">SMS Token / API Key</label>
-                  <input
-                    type="password"
-                    className="w-full glass-input rounded-xl text-xs"
-                    placeholder="sms-secret-key"
-                    value={gatewaysForm.sms_api_key}
-                    onChange={e => setGatewaysForm({ ...gatewaysForm, sms_api_key: e.target.value })}
-                  />
+                  <div className="relative">
+                    <input
+                      type={showSmsKey ? 'text' : 'password'}
+                      className="w-full glass-input rounded-xl text-xs pr-10"
+                      placeholder="sms-secret-key"
+                      value={gatewaysForm.sms_api_key}
+                      onChange={e => setGatewaysForm({ ...gatewaysForm, sms_api_key: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSmsKey(!showSmsKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                    >
+                      {showSmsKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Sender Mask ID</label>
@@ -459,13 +505,22 @@ const SystemAdministration = () => {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Integration Secret Key</label>
-                  <input
-                    type="password"
-                    className="w-full glass-input rounded-xl text-xs"
-                    placeholder="merchant-secret-key-12345"
-                    value={gatewaysForm.payment_merchant_key}
-                    onChange={e => setGatewaysForm({ ...gatewaysForm, payment_merchant_key: e.target.value })}
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPayKey ? 'text' : 'password'}
+                      className="w-full glass-input rounded-xl text-xs pr-10"
+                      placeholder="merchant-secret-key-12345"
+                      value={gatewaysForm.payment_merchant_key}
+                      onChange={e => setGatewaysForm({ ...gatewaysForm, payment_merchant_key: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPayKey(!showPayKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                    >
+                      {showPayKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -596,7 +651,10 @@ const SystemAdministration = () => {
 
               {overrideAction === 'update' && (
                 <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">JSON Fields to Override</label>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">JSON Fields to Override</label>
+                    <button type="button" onClick={handleFormatJson} className="text-[10px] text-teal-primary font-bold hover:underline cursor-pointer">Auto-Format / Repair JSON</button>
+                  </div>
                   <textarea
                     rows={6}
                     required

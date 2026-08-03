@@ -180,7 +180,7 @@ const Tasks = () => {
             <RefreshCw className="w-4 h-4 text-teal-primary" />
           </button>
           
-          {(user?.role === 'teacher' || user?.role === 'super_admin') && (
+          {user?.role === 'teacher' ? (
             <button
               onClick={() => setShowAddForm(!showAddForm)}
               className="px-4 py-2.5 bg-teal-primary hover:bg-teal-dark text-white rounded-xl text-xs font-semibold cursor-pointer shadow flex items-center space-x-1.5"
@@ -188,6 +188,11 @@ const Tasks = () => {
               <Plus className="w-4 h-4" />
               <span>Create Task</span>
             </button>
+          ) : (
+            <div className="px-3.5 py-2 bg-sage/15 border border-teal-primary/20 text-teal-dark rounded-xl text-xs font-semibold font-sans flex items-center space-x-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-teal-primary" />
+              <span>Principal Overview (Read-Only)</span>
+            </div>
           )}
         </div>
       </div>
@@ -381,17 +386,23 @@ const Tasks = () => {
                   </div>
 
                   <div className="flex items-start space-x-2">
-                    <button
-                      onClick={() => handleToggleStatus(task.id, task.status)}
-                      className="mt-1 cursor-pointer focus:outline-none flex-shrink-0"
-                      title={isDone ? 'Mark as incomplete' : 'Mark as completed'}
-                    >
-                      {isDone ? (
-                        <CheckCircle2 className="w-4 h-4 text-teal-primary" />
-                      ) : (
-                        <Circle className="w-4 h-4 text-ink/35 hover:text-teal-primary transition-colors" />
-                      )}
-                    </button>
+                    {user?.role === 'teacher' ? (
+                      <button
+                        onClick={() => handleToggleStatus(task.id, task.status)}
+                        className="mt-1 cursor-pointer focus:outline-none flex-shrink-0"
+                        title={isDone ? 'Mark as incomplete' : 'Mark as completed'}
+                      >
+                        {isDone ? (
+                          <CheckCircle2 className="w-4 h-4 text-teal-primary" />
+                        ) : (
+                          <Circle className="w-4 h-4 text-ink/35 hover:text-teal-primary transition-colors" />
+                        )}
+                      </button>
+                    ) : (
+                      <div className="mt-1 flex-shrink-0">
+                        {isDone ? <CheckCircle2 className="w-4 h-4 text-teal-primary" /> : <Circle className="w-4 h-4 text-ink/25" />}
+                      </div>
+                    )}
                     <div>
                       <h4 className={`text-sm font-bold font-sans text-ink leading-snug ${isDone ? 'line-through text-ink/45' : ''}`}>
                         {task.title}
@@ -413,7 +424,7 @@ const Tasks = () => {
 
                   {/* Actions */}
                   <div className="flex items-center space-x-2">
-                    {user?.role !== 'parent' && (
+                    {user?.role === 'teacher' && (
                       <button
                         onClick={() => handleDeleteTask(task.id)}
                         className="p-1.5 rounded-lg hover:bg-brick-critical/10 text-brick-critical hover:text-brick-critical cursor-pointer transition-colors"

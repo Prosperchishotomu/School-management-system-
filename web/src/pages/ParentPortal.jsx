@@ -26,6 +26,30 @@ const ParentPortal = () => {
   });
   const [paying, setPaying] = useState(false);
 
+  // Residence application state
+  const [residenceNotes, setResidenceNotes] = useState('');
+  const [applyingResidence, setApplyingResidence] = useState(false);
+  const [residenceSuccess, setResidenceSuccess] = useState('');
+
+  const handleApplyResidence = async (e) => {
+    e.preventDefault();
+    if (!selectedChildId) return;
+    setApplyingResidence(true);
+    setResidenceSuccess('');
+    try {
+      await api.post('/hostels/applications', {
+        student_id: selectedChildId,
+        notes: residenceNotes || 'Parent application for boarding residence'
+      });
+      setResidenceSuccess('Residence accommodation application submitted to school administration successfully.');
+      setResidenceNotes('');
+    } catch (err) {
+      setMessage({ type: 'error', text: err.response?.data?.error?.message || err.message || 'Failed to submit residence application.' });
+    } finally {
+      setApplyingResidence(false);
+    }
+  };
+
   const getExchangeRate = (curr) => {
     if (curr === 'ZiG') return 25.0000;
     if (curr === 'ZAR') return 18.0000;
@@ -297,7 +321,7 @@ const ParentPortal = () => {
                         <span className="text-teal-dark">${pay.amount_paid} USD</span>
                       </div>
                       <div className="flex justify-between text-ink/50 font-mono text-[9px]">
-                        <span>Ref: {pay.reference || 'N/A'}</span>
+                        <span>Ref: {pay.reference || '-'}</span>
                         <span>{pay.payment_date.substring(0, 10)}</span>
                       </div>
                       {pay.payment_currency && pay.payment_currency !== 'USD' && (
@@ -313,9 +337,43 @@ const ParentPortal = () => {
                 </div>
               </div>
 
-            </div>
+              {/* Residence Accommodation Application */}
+              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
+                <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
+                  <span className="text-base">🛏️</span>
+                  <h3 className="text-sm font-sans font-bold text-ink">Boarding Residence Application</h3>
+                </div>
 
-            {/* Right Col: Coursework Raw Grades */}
+                <form onSubmit={handleApplyResidence} className="space-y-3">
+                  <p className="text-[11px] text-ink/60 font-sans">
+                    Apply for boarding house / hostel residence accommodation for {childProfile?.student?.first_name || 'your child'}.
+                  </p>
+                  <div>
+                    <label className="block text-[9px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Special Requirements / Notes</label>
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Dietary preferences, medical notes, or room preference..."
+                      className="w-full glass-input rounded-xl text-xs"
+                      value={residenceNotes}
+                      onChange={e => setResidenceNotes(e.target.value)}
+                    />
+                  </div>
+                  {residenceSuccess && (
+                    <p className="text-xs font-semibold text-teal-dark bg-sage/20 p-2 rounded-lg border border-teal-primary/20">
+                      {residenceSuccess}
+                    </p>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={applyingResidence}
+                    className="w-full py-2 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-bold shadow transition-colors cursor-pointer flex items-center justify-center space-x-2"
+                  >
+                    {applyingResidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Submit Residence Application</span>}
+                  </button>
+                </form>
+              </div>
+
+            </div>
             <div className="lg:col-span-2 glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
               <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
                 <GraduationCap className="w-5 h-5" />

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { Users, Plus, X, Loader2, Shield, Trash2, KeyRound, AlertTriangle } from 'lucide-react';
+import { Users, Plus, X, Loader2, Shield, Trash2, KeyRound, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 
 const ROLE_STYLES = {
   school_admin: 'bg-purple-100 text-purple-700',
@@ -34,6 +34,8 @@ const UserManagement = () => {
   const [resetLoading, setResetLoading]     = useState(false);
   const [resetError, setResetError]         = useState('');
   const [resetSuccess, setResetSuccess]     = useState('');
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showResetPasswordVal, setShowResetPasswordVal] = useState(false);
 
   const fetchUsers = () => {
     if (!activeSchoolId) return;
@@ -168,8 +170,8 @@ const UserManagement = () => {
                 <td className="py-4 px-6 font-mono text-xs text-ink/70">{u.username}</td>
                 <td className="py-4 px-6">
                   <div className="flex flex-col text-xs font-mono">
-                    <span className="text-ink/80">{u.email || '—'}</span>
-                    <span className="text-ink/40">{u.phone || '—'}</span>
+                    <span className="text-ink/80">{u.email || '-'}</span>
+                    <span className="text-ink/40">{u.phone || '-'}</span>
                   </div>
                 </td>
                 <td className="py-4 px-6 text-center">
@@ -286,7 +288,16 @@ const UserManagement = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">Initial Password *</label>
-                <input required type="password" minLength={8} className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                <div className="relative">
+                  <input required type={showCreatePassword ? 'text' : 'password'} minLength={8} className="w-full px-3 py-2 pr-10 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
+                  <button
+                    type="button"
+                    onClick={() => setShowCreatePassword(!showCreatePassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                  >
+                    {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
                 <p className="text-[10px] text-ink/40 mt-1">Min 8 characters. User should change this on first login.</p>
               </div>
 
@@ -319,7 +330,16 @@ const UserManagement = () => {
             <form onSubmit={handleResetPassword} className="space-y-4 text-xs font-sans">
               <div>
                 <label className="block text-xs font-semibold text-ink/70 mb-1">New Password *</label>
-                <input required type="password" minLength={8} placeholder="Minimum 8 characters" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={resetPassword} onChange={e => setResetPassword(e.target.value)} />
+                <div className="relative">
+                  <input required type={showResetPasswordVal ? 'text' : 'password'} minLength={8} placeholder="Minimum 8 characters" className="w-full px-3 py-2 pr-10 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={resetPassword} onChange={e => setResetPassword(e.target.value)} />
+                  <button
+                    type="button"
+                    onClick={() => setShowResetPasswordVal(!showResetPasswordVal)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                  >
+                    {showResetPasswordVal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               <div className="pt-2 flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowResetModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>

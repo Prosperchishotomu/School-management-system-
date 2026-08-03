@@ -1,3 +1,11 @@
+/**
+ * tailwind.config.js
+ *
+ * NOTE: This project uses TailwindCSS v4 (@tailwindcss/vite).
+ * In v4, design tokens are primarily defined in index.css via @theme {}.
+ * This file is kept for tooling compatibility (IDE autocomplete, etc.)
+ * and referenced with @config in index.css if needed.
+ */
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -7,41 +15,51 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#1C2530",
-        paper: "#FAF8F4",
-        sage: "#E4EBE6",
-        "teal-primary": "#2F6B5E",
-        "teal-dark": "#1E4A41",
+        ink:             "#1C2530",
+        paper:           "#FAF8F4",
+        sage:            "#E4EBE6",
+        "teal-primary":  "#2F6B5E",
+        "teal-dark":     "#1E4A41",
+        "teal-light":    "#4A9B8A",
         "amber-warning": "#C98A2C",
-        "brick-critical": "#B3492F",
-        "line-border": "#DAD4C8"
+        "brick-critical":"#B3492F",
+        "line-border":   "#DAD4C8",
       },
       fontFamily: {
         display: ["Fraunces", "Georgia", "serif"],
-        sans: ["Inter", "system-ui", "sans-serif"],
-        mono: ["IBM Plex Mono", "Courier New", "monospace"]
+        sans:    ["Inter", "system-ui", "sans-serif"],
+        mono:    ["IBM Plex Mono", "Courier New", "monospace"],
       },
       animation: {
-        fadeIn: "fadeIn 0.4s ease-out both",
+        fadeIn:  "fadeIn  0.4s ease-out both",
         slideUp: "slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both",
-        shake: "shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both"
+        shake:   "shake   0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both",
+        shimmer: "shimmer 1.4s linear infinite",
       },
       keyframes: {
         fadeIn: {
-          "0%": { opacity: "0", transform: "translateY(6px)" },
-          "100%": { opacity: "1", transform: "translateY(0)" }
+          "0%":   { opacity: "0", transform: "translateY(6px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
         slideUp: {
-          "0%": { opacity: "0", transform: "translateY(16px)" },
-          "100%": { opacity: "1", transform: "translateY(0)" }
+          "0%":   { opacity: "0", transform: "translateY(16px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
         shake: {
-          "0%, 100%": { transform: "translateX(0)" },
+          "0%, 100%":    { transform: "translateX(0)" },
           "10%, 50%, 90%": { transform: "translateX(-4px)" },
-          "30%, 70%": { transform: "translateX(4px)" }
-        }
-      }
+          "30%, 70%":    { transform: "translateX(4px)" },
+        },
+        shimmer: {
+          "0%":   { backgroundPosition: "-200% center" },
+          "100%": { backgroundPosition:  "200% center" },
+        },
+      },
+      borderRadius: {
+        "2xl": "1rem",
+        "3xl": "1.5rem",
+      },
     },
   },
   plugins: [],
-}
+};

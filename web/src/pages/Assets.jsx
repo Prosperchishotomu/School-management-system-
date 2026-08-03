@@ -4,8 +4,9 @@ import { api } from '../utils/api';
 import { 
   Package, Search, Filter, Plus, Edit2, Trash2, ArrowRightLeft, 
   RotateCcw, CheckCircle, AlertTriangle, AlertCircle, X, Loader2, 
-  Coins, Info, UserCheck, ShieldAlert, Truck, Tag, Calendar, Layers, Eye
+  Coins, Info, UserCheck, ShieldAlert, Truck, Tag, Calendar, Layers, Eye, Printer
 } from 'lucide-react';
+import PrintReportModal from '../components/PrintReportModal';
 
 const CATEGORY_COLORS = {
   equipment: 'text-purple-500 bg-purple-50',
@@ -55,6 +56,7 @@ const Assets = () => {
   const [showIssueModal, setShowIssueModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   // Modal forms
   const [form, setForm] = useState({ 
@@ -86,15 +88,34 @@ const Assets = () => {
   const [categoryError, setCategoryError] = useState('');
   const [selectedAsset, setSelectedAsset] = useState(null);
 
+  const DEFAULT_CATEGORIES = [
+    { id: 'vehicles',       name: 'Vehicles & Transport',    code: 'VEH' },
+    { id: 'ict',            name: 'ICT Equipment',           code: 'ICT' },
+    { id: 'furniture',      name: 'Furniture & Fixtures',    code: 'FRN' },
+    { id: 'sports',         name: 'Sports Equipment',        code: 'SPT' },
+    { id: 'library',        name: 'Library Books & Media',   code: 'LIB' },
+    { id: 'science',        name: 'Science Lab Equipment',   code: 'SCI' },
+    { id: 'tools',          name: 'Tools & Maintenance',     code: 'TLS' },
+    { id: 'musical',        name: 'Musical Instruments',     code: 'MUS' },
+    { id: 'kitchen',        name: 'Kitchen & Catering',      code: 'KIT' },
+    { id: 'office',         name: 'Office Supplies',         code: 'OFF' },
+    { id: 'medical',        name: 'Medical Supplies',        code: 'MED' },
+    { id: 'other',          name: 'Other / Miscellaneous',   code: 'OTH' },
+  ];
+
   const fetchCategories = useCallback(() => {
     if (!activeSchoolId) return;
     setCategoriesLoading(true);
     api.get(`/schools/${activeSchoolId}/asset-categories`)
       .then(res => {
-        setCategories(res.data || []);
+        const fetched = res.data || [];
+        // If API returned empty list, use built-in defaults
+        setCategories(fetched.length > 0 ? fetched : DEFAULT_CATEGORIES);
       })
       .catch(err => {
         console.error('Error loading asset categories:', err);
+        // Fall back to defaults on error
+        setCategories(DEFAULT_CATEGORIES);
       })
       .finally(() => setCategoriesLoading(false));
   }, [activeSchoolId]);
@@ -303,6 +324,13 @@ const Assets = () => {
           <p className="text-sm text-ink/55 mt-1">Record physical assets, track financial value, and manage lending to staff and students.</p>
         </div>
         <div className="flex items-center space-x-3 self-start">
+          <button
+            onClick={() => setShowReportModal(true)}
+            className="flex items-center space-x-1.5 px-4 py-3 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+          >
+            <Printer className="w-4 h-4" />
+            <span>Export PDF Report</span>
+          </button>
           {isSuperAdmin && (
             <button
               onClick={() => { setShowCategoryModal(true); setCategoryError(''); }}
@@ -783,15 +811,15 @@ const Assets = () => {
               </div>
               <div className="flex justify-between items-center py-2 border-b border-line-border/20">
                 <span className="font-bold text-ink/50">Registration Plate</span>
-                <span className="font-bold px-2 py-0.5 bg-sage/20 text-teal-dark rounded font-mono">{selectedAsset.metadata?.reg_number || 'N/A'}</span>
+                <span className="font-bold px-2 py-0.5 bg-sage/20 text-teal-dark rounded font-mono">{selectedAsset.metadata?.reg_number || '-'}</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-line-border/20">
                 <span className="font-bold text-ink/50">Make / Model</span>
-                <span className="font-bold">{selectedAsset.metadata?.make_model || 'N/A'}</span>
+                <span className="font-bold">{selectedAsset.metadata?.make_model || '-'}</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-line-border/20">
                 <span className="font-bold text-ink/50">Current Mileage</span>
-                <span className="font-bold numeric-data">{selectedAsset.metadata?.mileage ? `${selectedAsset.metadata.mileage} km` : 'N/A'}</span>
+                <span className="font-bold numeric-data">{selectedAsset.metadata?.mileage ? `${selectedAsset.metadata.mileage} km` : '-'}</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-line-border/20">
                 <span className="font-bold text-ink/50">Insurance Expiry</span>
@@ -959,6 +987,31 @@ const Assets = () => {
           </div>
         </div>
       )}
+
+      {/* Print / PDF Report Modal */}
+      <PrintReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        title="SCHOOL INVENTORY & ASSET LEDGER REPORT"
+        subtitle={`Official Property Audit • ${metrics.total_count} Assets Registered`}
+        schoolName="SchoolBase Asset Management Desk"
+        summaryCards={[
+          { label: 'Total Valuation', value: `$${metrics.total_value.toLocaleString()}` },
+          { label: 'Total Assets', value: metrics.total_count },
+          { label: 'Available Units', value: metrics.available_count },
+          { label: 'Issued / In Use', value: metrics.issued_count }
+        ]}
+        columns={[
+          { header: 'Asset Code', accessor: 'code' },
+          { header: 'Asset Name', accessor: 'name' },
+          { header: 'Category', accessor: 'category' },
+          { header: 'Valuation (USD)', accessor: row => `$${parseFloat(row.value || 0).toFixed(2)}` },
+          { header: 'Condition Status', accessor: 'status' },
+          { header: 'Current Holder', accessor: row => row.holder_name || 'In Stock' }
+        ]}
+        data={assets}
+        userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
+      />
     </div>
   );
 };

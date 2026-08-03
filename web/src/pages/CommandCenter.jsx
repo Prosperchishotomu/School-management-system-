@@ -77,7 +77,7 @@ const StatCard = ({ label, value, icon: Icon, color = 'teal', suffix = '', warni
       <div>
         <span className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">{label}</span>
         <h4 className={`text-3xl font-display font-bold mt-1.5 numeric-data ${c.val}`}>
-          {typeof value === 'number' ? <AnimatedCount value={value} /> : (value ?? '—')}{suffix}
+          {typeof value === 'number' ? <AnimatedCount value={value} /> : (value ?? '-')}{suffix}
         </h4>
       </div>
       <div className={`w-11 h-11 rounded-xl ${c.bg} flex items-center justify-center flex-shrink-0`}>
@@ -449,6 +449,9 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
   const [showSmtpPass, setShowSmtpPass] = useState(false);
   const [showSmsKey, setShowSmsKey] = useState(false);
   const [showPayKey, setShowPayKey] = useState(false);
+  const [showAddUserPass, setShowAddUserPass] = useState(false);
+  const [showResetPass, setShowResetPass] = useState(false);
+  const [showStaffPass, setShowStaffPass] = useState(false);
 
   // Load nested sub-tab data dynamically
   useEffect(() => {
@@ -968,7 +971,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 selectedManageSchool.status === 'active' ? 'bg-sage/40 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'
               }`}>{selectedManageSchool.status}</span>
             </div>
-            <p className="text-[10px] text-ink/50 font-mono">School Code: <span className="font-bold">{selectedManageSchool.code}</span> | Plan: <span className="font-bold">{activeLic?.plan || 'N/A'}</span></p>
+            <p className="text-[10px] text-ink/50 font-mono">School Code: <span className="font-bold">{selectedManageSchool.code}</span> | Plan: <span className="font-bold">{activeLic?.plan || '-'}</span></p>
           </div>
           
           <button
@@ -1139,8 +1142,8 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                         <tr key={st.id} className="hover:bg-sage/5 transition-colors">
                           <td className="px-5 py-3.5 font-semibold">{st.name}</td>
                           <td className="px-5 py-3.5 font-bold text-teal-dark">{st.role_title}</td>
-                          <td className="px-5 py-3.5 text-ink/65">{st.email || '—'}</td>
-                          <td className="px-5 py-3.5 text-ink/65 font-mono">{st.phone || '—'}</td>
+                          <td className="px-5 py-3.5 text-ink/65">{st.email || '-'}</td>
+                          <td className="px-5 py-3.5 text-ink/65 font-mono">{st.phone || '-'}</td>
                         </tr>
                       ))}
                       {schoolStaff.length === 0 && (
@@ -1534,7 +1537,23 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-ink/70 mb-1">User Password *</label>
-                    <input required type="password" placeholder="••••••••" className="w-full glass-input rounded-xl text-xs" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} />
+                    <div className="relative">
+                      <input 
+                        required 
+                        type={showAddUserPass ? "text" : "password"} 
+                        placeholder="••••••••" 
+                        className="w-full glass-input rounded-xl text-xs pr-10" 
+                        value={userForm.password} 
+                        onChange={e => setUserForm({...userForm, password: e.target.value})} 
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAddUserPass(!showAddUserPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer focus:outline-none"
+                      >
+                        {showAddUserPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -1615,7 +1634,23 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
               <form onSubmit={handleResetPassSubmit} className="space-y-4 text-xs font-sans">
                 <div>
                   <label className="block text-[11px] font-bold text-ink/70 mb-1">New Account Password *</label>
-                  <input required type="password" placeholder="Min. 8 characters" className="w-full glass-input rounded-xl text-xs" value={resetPassValue} onChange={e => setResetPassValue(e.target.value)} />
+                  <div className="relative">
+                    <input 
+                      required 
+                      type={showResetPass ? "text" : "password"} 
+                      placeholder="Min. 8 characters" 
+                      className="w-full glass-input rounded-xl text-xs pr-10" 
+                      value={resetPassValue} 
+                      onChange={e => setResetPassValue(e.target.value)} 
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowResetPass(!showResetPass)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer focus:outline-none"
+                    >
+                      {showResetPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
                 <div className="flex justify-end space-x-2 pt-2 border-t border-line-border/30">
                   <button type="button" onClick={() => { setShowResetPassModal(false); setSelectedUserForReset(null); }} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
@@ -1663,7 +1698,22 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold text-ink/70 mb-1">Account Password</label>
-                      <input type="password" placeholder="Min. 8 characters" className="w-full glass-input rounded-xl text-xs" value={staffForm.password} onChange={e => setStaffForm({...staffForm, password: e.target.value})} />
+                      <div className="relative">
+                        <input 
+                          type={showStaffPass ? "text" : "password"} 
+                          placeholder="Min. 8 characters" 
+                          className="w-full glass-input rounded-xl text-xs pr-10" 
+                          value={staffForm.password} 
+                          onChange={e => setStaffForm({...staffForm, password: e.target.value})} 
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowStaffPass(!showStaffPass)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer focus:outline-none"
+                        >
+                          {showStaffPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div>
@@ -2889,7 +2939,7 @@ const HealthTab = ({ alerts, auditLogs = [], onRefresh }) => {
                   <td className="px-4 py-2.5 text-ink/65 max-w-[120px] truncate" title={log.school_name || 'System-wide'}>{log.school_name || 'System-wide'}</td>
                   <td className="px-4 py-2.5"><span className="px-1.5 py-0.5 rounded bg-ink/5 text-ink/75 font-mono text-[9px] font-semibold">{log.action}</span></td>
                   <td className="px-4 py-2.5 text-ink/80 max-w-[280px] truncate" title={log.description}>{log.description}</td>
-                  <td className="px-4 py-2.5 font-mono text-[9px] text-ink/55">{log.ip_address || '—'}</td>
+                  <td className="px-4 py-2.5 font-mono text-[9px] text-ink/55">{log.ip_address || '-'}</td>
                 </tr>
               ))}
               {!slicedLogs.length && (
@@ -2946,7 +2996,7 @@ const CommandCenter = ({ defaultTab = 'overview' }) => {
       <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line-border/30 pb-5">
         <div>
           <h1 className="text-3xl font-display font-bold text-ink">Super Admin Command Center</h1>
-          <p className="text-sm font-sans text-ink/55 mt-1">Full platform control — tenants, licenses, curriculum &amp; system health.</p>
+          <p className="text-sm font-sans text-ink/55 mt-1">Full platform control - tenants, licenses, curriculum &amp; system health.</p>
         </div>
         <button onClick={fetchAll} className="flex items-center space-x-1.5 px-3.5 py-2 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 transition-colors cursor-pointer">
           <RefreshCw className="w-3.5 h-3.5 text-teal-primary"/>

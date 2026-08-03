@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
 import { ShieldCheck, Filter, Search, ChevronDown, ChevronUp, Printer, Loader2 } from 'lucide-react';
+import PrintReportModal from '../components/PrintReportModal';
 
 const AuditLog = () => {
   const { activeSchoolId } = useAuth();
@@ -17,6 +18,7 @@ const AuditLog = () => {
   const [expandedRowId, setExpandedRowId] = useState(null);
 
   // Printing generation states
+  const [showReportModal, setShowReportModal] = useState(false);
   const [isFetchingPrint, setIsFetchingPrint] = useState(false);
 
   const fetchLogs = () => {
@@ -116,6 +118,7 @@ const AuditLog = () => {
           {/* Print/Export Options Dropdown */}
           <div className="relative group">
             <button
+              onClick={() => setShowReportModal(true)}
               disabled={isFetchingPrint}
               className="flex items-center space-x-1.5 px-4 py-2 bg-teal-primary hover:bg-teal-dark disabled:opacity-50 text-paper font-sans font-semibold text-sm rounded-xl shadow-md transition-all cursor-pointer"
             >
@@ -124,7 +127,7 @@ const AuditLog = () => {
               ) : (
                 <Printer className="w-4 h-4" />
               )}
-              <span>Generate Report</span>
+              <span>Generate PDF Report</span>
             </button>
             
             {/* Options Hover Panel */}
@@ -263,7 +266,7 @@ const AuditLog = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
                           <p className="text-ink/50 uppercase font-bold text-[8px] tracking-wider print:hidden">Event details</p>
-                          <p className="text-ink font-semibold">Target Entity: <span className="font-mono">{log.entity_type || '—'} {log.entity_id ? `#${log.entity_id}` : ''}</span></p>
+                          <p className="text-ink font-semibold">Target Entity: <span className="font-mono">{log.entity_type || '-'} {log.entity_id ? `#${log.entity_id}` : ''}</span></p>
                           <p className="text-ink font-semibold">Origin IP: <span className="font-mono text-ink/75">{log.ip_address || 'Internal (Localhost)'}</span></p>
                         </div>
                         <div className="space-y-1">
@@ -309,6 +312,31 @@ const AuditLog = () => {
           </div>
         )}
       </div>
+
+      {/* Print / PDF Report Modal */}
+      <PrintReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        title="SYSTEM SECURITY & AUDIT TRAIL LEDGER"
+        subtitle={`Compliance Record • ${activeSchoolId ? 'School Tenant ID: ' + activeSchoolId : 'Global Platform Scope'}`}
+        schoolName="SchoolBase Security Operations Center"
+        summaryCards={[
+          { label: 'Total Events Logged', value: logs.length },
+          { label: 'Entity Scope', value: entityFilter ? entityFilter.toUpperCase() : 'ALL ENTITIES' },
+          { label: 'Search Query', value: searchQuery ? `"${searchQuery}"` : 'NONE' },
+          { label: 'Platform Status', value: 'SECURE' }
+        ]}
+        columns={[
+          { header: 'Timestamp', accessor: 'created_at' },
+          { header: 'Action', accessor: 'action' },
+          { header: 'User', accessor: row => row.username || 'System' },
+          { header: 'School Tenant', accessor: row => row.school_name || 'Global' },
+          { header: 'Target Entity', accessor: row => `${row.entity_type || '-'} ${row.entity_id ? '#' + row.entity_id : ''}` },
+          { header: 'Description', accessor: 'description' }
+        ]}
+        data={logs}
+        userRole="Super Admin"
+      />
     </div>
   );
 };

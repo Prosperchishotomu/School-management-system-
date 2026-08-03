@@ -12,6 +12,7 @@ import {
   X,
   DollarSign,
   ChevronLeft,
+  Crown,
   FileText
 } from 'lucide-react';
 
@@ -31,6 +32,7 @@ const StudentProfile = () => {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentError, setPaymentError] = useState('');
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   const fetchProfile = () => {
     if (!activeSchoolId || !id) return;
@@ -116,7 +118,29 @@ const StudentProfile = () => {
     );
   }
 
-  const { student, attendance_summary, grades_summary, fee_summary, fee_history, discipline_history, health_history } = profile;
+  const student = profile?.student || {};
+  const attendance_summary = profile?.attendance_summary || {};
+  const grades_summary = Array.isArray(profile?.grades_summary) ? profile.grades_summary : [];
+  const fee_summary = profile?.fee_summary || null;
+  const fee_history = Array.isArray(profile?.fee_history) ? profile.fee_history : [];
+  const discipline_history = Array.isArray(profile?.discipline_history) ? profile.discipline_history : [];
+  const health_history = Array.isArray(profile?.health_history) ? profile.health_history : [];
+
+  const handleStatusChange = async (e) => {
+    const newStatus = e.target.value;
+    if (!newStatus || newStatus === student.status) return;
+    setUpdatingStatus(true);
+    try {
+      await api.patch(`/schools/${activeSchoolId}/students/${student.id}`, { status: newStatus });
+      fetchProfile();
+    } catch (err) {
+      alert(err.message || 'Failed to update student status.');
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const isAdmin = user?.role === 'school_admin' || user?.role === 'super_admin';
 
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
@@ -139,11 +163,63 @@ const StudentProfile = () => {
               Admission: <span className="font-mono font-bold text-ink/80 numeric-data">{student.admission_number}</span> | Class: <span className="font-bold text-ink/80">{student.class_name || 'Unassigned'}</span>
             </p>
           </div>
-          <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-            student.status === 'enrolled' ? 'bg-sage/40 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'
-          }`}>
-            {student.status}
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            {student.leadership_position && student.leadership_position !== 'none' && (
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-700 border border-amber-500/30 shadow-sm">
+                <Crown className="w-3.5 h-3.5 text-amber-600" />
+                <span>{student.leadership_position.replace('_', ' ')}</span>
+              </div>
+            )}
+            {isAdmin && (
+              <div className="flex items-center space-x-2">
+                <span className="text-xs font-bold text-ink/50 uppercase font-sans">Role:</span>
+                <select
+                  disabled={updatingStatus}
+                  value={student.leadership_position || 'none'}
+                  onChange={async (e) => {
+                    setUpdatingStatus(true);
+                    try {
+                      await api.patch(`/schools/${activeSchoolId}/students/${student.id}`, { leadership_position: e.target.value });
+                      fetchProfile();
+                    } catch (err) { alert(err.message); }
+                    finally { setUpdatingStatus(false); }
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-white border border-line-border/50 text-ink focus:outline-none cursor-pointer"
+                >
+                  <option value="none">Regular Student</option>
+                  <option value="headboy">Head Boy</option>
+                  <option value="headgirl">Head Girl</option>
+                  <option value="prefect">Senior Prefect</option>
+                  <option value="class_monitress">Class Monitress / Captain</option>
+                  <option value="sports_captain">Sports Captain</option>
+                  <option value="chapel_prefect">Chapel Prefect</option>
+                  <option value="hostel_prefect">Hostel Prefect</option>
+                </select>
+              </div>
+            )}
+            <span className="text-xs font-bold text-ink/50 uppercase font-sans">Status:</span>
+            {isAdmin ? (
+              <select
+                disabled={updatingStatus}
+                value={student.status}
+                onChange={handleStatusChange}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-white border border-line-border/50 text-ink focus:outline-none cursor-pointer"
+              >
+                <option value="enrolled">Enrolled</option>
+                <option value="suspended">Suspended</option>
+                <option value="withdrawn">Withdrawn</option>
+                <option value="graduated">Graduated</option>
+                <option value="transferred">Transferred</option>
+                <option value="dropped_out">Dropped Out</option>
+              </select>
+            ) : (
+              <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
+                student.status === 'enrolled' ? 'bg-sage/40 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'
+              }`}>
+                {student.status}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -255,7 +331,7 @@ const StudentProfile = () => {
                   <div key={idx} className="flex justify-between items-center p-3 bg-white/40 border border-line-border/20 rounded-xl text-xs">
                     <div>
                       <div className="flex items-center space-x-1.5">
-                        <span className="font-mono font-bold text-ink/80 numeric-data">{pay.reference || 'N/A'}</span>
+                        <span className="font-mono font-bold text-ink/80 numeric-data">{pay.reference || '-'}</span>
                         <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
                           pay.payment_method === 'cash' ? 'bg-sage/40 text-teal-dark border border-teal-dark/10' :
                           pay.payment_method === 'bank_transfer' ? 'bg-teal-primary/10 text-teal-primary border border-teal-primary/20' :
@@ -350,8 +426,8 @@ const StudentProfile = () => {
                   <div className="bg-sage/10 border border-line-border/30 p-3 rounded-xl">
                     <span className="text-[10px] font-bold uppercase text-teal-dark tracking-wider">Emergency Contact</span>
                     <div className="mt-1 flex justify-between font-medium">
-                      <span>{health_history.emergency_contact_name || 'N/A'}</span>
-                      <span className="font-mono">{health_history.emergency_contact_phone || 'N/A'}</span>
+                      <span>{health_history.emergency_contact_name || '-'}</span>
+                      <span className="font-mono">{health_history.emergency_contact_phone || '-'}</span>
                     </div>
                   </div>
                 </div>
