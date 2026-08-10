@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
-  Search, Filter, Plus, User, X, Eye, Edit2, ArrowRightLeft, ChevronLeft, ChevronRight, FileText,
-  Crown, Trash2, Users, Award, Printer, Ban, CheckCircle2, ShieldAlert
+  Search, Filter, Plus, User, X, Eye, Edit2, ChevronLeft, ChevronRight, FileText,
+  Crown, Trash2, Users, Award, Printer, Ban, CheckCircle2, ShieldAlert, ArrowUpRight
 } from 'lucide-react';
 import PrintReportModal from '../components/PrintReportModal';
 
@@ -27,6 +28,7 @@ const EMPTY_FORM = {
 
 const Students = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
 
   const isAdmin      = user?.role === 'school_admin' || user?.role === 'super_admin';
   const isTeacher    = user?.role === 'teacher';
@@ -48,13 +50,16 @@ const Students = () => {
   const [selectedIds, setSelectedIds] = useState([]);
   const [showReportModal, setShowReportModal] = useState(false);
 
-  // Parent Edit & Autocomplete Modal states
+  // Parent Edit Modal states
   const [showParentModal, setShowParentModal] = useState(false);
   const [editingParent, setEditingParent] = useState(null);
   const [parentForm, setParentForm] = useState({ name: '', phone: '', email: '', relation: '', national_id: '' });
   const [parentSearch, setParentSearch] = useState('');
   const [showParentDropdown, setShowParentDropdown] = useState(false);
+  const [createdCreds, setCreatedCreds] = useState(null);
   const [selectedExistingParent, setSelectedExistingParent] = useState(null);
+
+
 
 
 
@@ -64,7 +69,6 @@ const Students = () => {
   const [addError,      setAddError]      = useState('');
   const [addLoading,    setAddLoading]    = useState(false);
   const [activeSection, setActiveSection] = useState(1);
-  const [createdParentCreds, setCreatedParentCreds] = useState(null);
 
   // Edit / Transfer modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -115,15 +119,25 @@ const Students = () => {
     if (!window.confirm('Are you sure you want to delete or withdraw this student?')) return;
     try {
       await api.delete(`/schools/${activeSchoolId}/students/${studentId}?force=true`);
+      toast.success('Student record removed successfully.');
       fetchData();
     } catch (err) {
-      alert(err.message || 'Failed to delete student.');
+      toast.error(err.message || 'Failed to delete student.');
     }
   };
 
   // ── Add Student ─────────────────────────────────────────────────────────────
   const handleAddStudent = async (e) => {
     e.preventDefault();
+    if (newStudent.date_of_birth) {
+      const dobDate = new Date(newStudent.date_of_birth);
+      const today = new Date();
+      if (dobDate > today) {
+        setAddError('Date of birth cannot be in the future.');
+        setActiveSection(1);
+        return;
+      }
+    }
     // Client-side guardian contact validation
     if (!newStudent.guardian_name || !newStudent.guardian_name.trim()) {
       setAddError('Guardian name is required. Please go to Section 5 and fill in the Guardian details.');
@@ -140,22 +154,20 @@ const Students = () => {
       const res = await api.post(`/schools/${activeSchoolId}/students`, newStudent);
       if (res.data) {
         setShowAddModal(false);
-        if (res.data.parent_credentials) {
-          setCreatedParentCreds({
-            studentName: `${res.data.first_name} ${res.data.last_name}`,
-            admissionNumber: res.data.admission_number,
-            username: res.data.parent_credentials.username,
-            tempPassword: res.data.parent_credentials.temp_password
-          });
-        }
         setNewStudent(EMPTY_FORM);
         setActiveSection(1);
         fetchData();
+        if (res.data.credentials) {
+          setCreatedCreds(res.data.credentials);
+        } else {
+          toast.success('Student registered successfully.');
+        }
       }
     } catch (err) {
       setAddError(err.message || 'Failed to register student.');
     } finally { setAddLoading(false); }
   };
+
 
   // ── Edit / Transfer ──────────────────────────────────────────────────────────
   const openEdit = (s) => {
@@ -174,6 +186,14 @@ const Students = () => {
 
   const handleEditStudent = async (e) => {
     e.preventDefault();
+    if (editForm.date_of_birth) {
+      const dobDate = new Date(editForm.date_of_birth);
+      const today = new Date();
+      if (dobDate > today) {
+        setEditError('Date of birth cannot be in the future.');
+        return;
+      }
+    }
     setEditLoading(true); setEditError('');
     try {
       await api.patch(`/schools/${activeSchoolId}/students/${editStudent.id}`, editForm);
@@ -186,17 +206,19 @@ const Students = () => {
     }
   };
 
+
   const handleToggleSuspend = async (s) => {
     const nextStatus = s.status === 'suspended' ? 'enrolled' : 'suspended';
     const confirmMsg = s.status === 'suspended'
-      ? `Reinstate student '${s.first_name} ${s.last_name}' to enrolled status?`
-      : `Suspend student '${s.first_name} ${s.last_name}'?`;
+      ? `Reinstate '${s.first_name} ${s.last_name}' to enrolled status?`
+      : `Suspend '${s.first_name} ${s.last_name}'?`;
     if (!window.confirm(confirmMsg)) return;
     try {
       await api.patch(`/schools/${activeSchoolId}/students/${s.id}`, { status: nextStatus });
+      toast.success(nextStatus === 'enrolled' ? 'Student reinstated successfully.' : 'Student suspended.');
       fetchData();
     } catch (err) {
-      alert(err.message || 'Failed to update student status.');
+      toast.error(err.message || 'Failed to update student status.');
     }
   };
 
@@ -216,13 +238,14 @@ const Students = () => {
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Are you sure you want to permanently delete ${selectedIds.length} selected student records? This action cannot be undone.`)) return;
+    if (!window.confirm(`Permanently delete ${selectedIds.length} selected student records? This cannot be undone.`)) return;
     try {
       await api.post(`/schools/${activeSchoolId}/students/bulk-delete`, { student_ids: selectedIds });
+      toast.success(`${selectedIds.length} student record(s) deleted.`);
       setSelectedIds([]);
       fetchData();
     } catch (err) {
-      alert(err.message || 'Failed to bulk delete student records.');
+      toast.error(err.message || 'Failed to bulk delete student records.');
     }
   };
 
@@ -243,10 +266,11 @@ const Students = () => {
     if (!editingParent) return;
     try {
       await api.patch(`/schools/${activeSchoolId}/students/guardians/${editingParent.id}`, parentForm);
+      toast.success('Guardian details updated successfully.');
       setShowParentModal(false);
       fetchData();
     } catch (err) {
-      alert(err.message || 'Failed to update parent details.');
+      toast.error(err.message || 'Failed to update parent details.');
     }
   };
 
@@ -393,57 +417,77 @@ const Students = () => {
         </div>
       )}
 
-      {/* Selection Action Bar (Appears when items are selected) */}
+      {/* ── FLOATING SELECTION ACTION BAR ───────────────────────────────────── */}
       {selectedIds.length > 0 && activeTab === 'students' && (
-        <div className="bg-sage/15 border border-teal-primary/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 animate-fadeIn shadow-sm">
-          <div className="flex items-center space-x-3 text-xs font-bold text-ink">
-            <span className="bg-teal-primary text-paper px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
-            <span>Batch Actions: Manage selected student records.</span>
+        <div className="bg-ink/95 backdrop-blur-md rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-3 animate-fadeIn shadow-2xl border border-white/10">
+          <div className="flex items-center gap-3">
+            <span className="bg-teal-primary text-paper text-[11px] font-bold px-3 py-1 rounded-full font-mono">
+              {selectedIds.length} selected
+            </span>
+            <span className="text-paper/70 text-xs font-sans">
+              {selectedIds.length === 1
+                ? students.find(s => s.id === selectedIds[0])?.first_name + ' ' + students.find(s => s.id === selectedIds[0])?.last_name
+                : `${selectedIds.length} students`
+              }
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {selectedIds.length === 1 && (
-              <button
-                onClick={() => window.location.href = `/students/${selectedIds[0]}`}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer border border-teal-primary/20 shadow-2xs"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>View</span>
-              </button>
+              <>
+                <button
+                  onClick={() => window.location.href = `/students/${selectedIds[0]}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-paper text-xs font-semibold rounded-xl transition-all cursor-pointer border border-white/15"
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5" /><span>View Profile</span>
+                </button>
+                <button
+                  onClick={() => { const s = students.find(i => i.id === selectedIds[0]); if (s) openEdit(s); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-amber-400/20"
+                >
+                  <Edit2 className="w-3.5 h-3.5" /><span>Edit</span>
+                </button>
+                {(() => { const s = students.find(i => i.id === selectedIds[0]); return s && (
+                  <button
+                    onClick={() => handleToggleSuspend(s)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border ${
+                      s.status === 'suspended'
+                        ? 'bg-teal-primary/30 hover:bg-teal-primary/50 text-teal-300 border-teal-400/30'
+                        : 'bg-orange-400/20 hover:bg-orange-400/30 text-orange-300 border-orange-400/20'
+                    }`}
+                  >
+                    {s.status === 'suspended' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                    <span>{s.status === 'suspended' ? 'Reinstate' : 'Suspend'}</span>
+                  </button>
+                ); })()}
+              </>
             )}
-
-            {selectedIds.length === 1 && (
+            {selectedIds.length > 1 && (
               <button
-                onClick={() => {
-                  const s = students.find(item => item.id === selectedIds[0]);
-                  if (s) openEdit(s);
+                onClick={async () => {
+                  if (!window.confirm(`Suspend ${selectedIds.length} students?`)) return;
+                  await Promise.all(selectedIds.map(id => api.patch(`/schools/${activeSchoolId}/students/${id}`, { status: 'suspended' }).catch(() => {})));
+                  toast.success(`${selectedIds.length} students suspended.`);
+                  setSelectedIds([]);
+                  fetchData();
                 }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer border border-amber-warning/30 shadow-2xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-400/20 hover:bg-orange-400/30 text-orange-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-orange-400/20"
               >
-                <Edit2 className="w-3.5 h-3.5" />
-                <span>Edit</span>
+                <Ban className="w-3.5 h-3.5" /><span>Suspend All ({selectedIds.length})</span>
               </button>
             )}
-
-            <button
-              onClick={async () => {
-                if (!window.confirm(`Suspend ${selectedIds.length} selected student(s)?`)) return;
-                await Promise.all(selectedIds.map(id => api.put(`/schools/${activeSchoolId}/students/${id}`, { status: 'suspended' }).catch(() => {})));
-                setSelectedIds([]);
-                fetchStudents();
-              }}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf0e6] hover:bg-orange-500/25 text-[#a84b00] text-xs font-bold rounded-xl transition-all cursor-pointer border border-orange-500/30 shadow-2xs"
-            >
-              <Ban className="w-3.5 h-3.5" />
-              <span>Suspend ({selectedIds.length})</span>
-            </button>
-
             <button
               onClick={handleBulkDelete}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fbeae8] hover:bg-brick-critical/25 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer border border-brick-critical/30 shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-red-500/20"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete ({selectedIds.length})</span>
+              <span>Delete {selectedIds.length > 1 ? `(${selectedIds.length})` : ''}</span>
+            </button>
+            <button
+              onClick={() => setSelectedIds([])}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-paper/50 hover:text-paper text-xs font-semibold rounded-xl transition-all cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" /><span>Clear</span>
             </button>
           </div>
         </div>
@@ -481,13 +525,23 @@ const Students = () => {
                   <tr><td colSpan={isAdmin ? "8" : "7"} className="py-10 text-center text-ink/40 text-xs">Loading students...</td></tr>
                 ) : students.length === 0 ? (
                   <tr><td colSpan={isAdmin ? "8" : "7"} className="py-10 text-center text-ink/40 text-xs">No students match the criteria.</td></tr>
-                ) : students.map(s => (
-                  <tr key={s.id} className="hover:bg-sage/5 transition-colors">
+                ) : students.map(s => {
+                  const isSelected = selectedIds.includes(s.id);
+                  return (
+                  <tr
+                    key={s.id}
+                    onClick={() => isAdmin && handleToggleSelect(s.id)}
+                    className={`transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-teal-primary/8 border-l-2 border-l-teal-primary'
+                        : 'hover:bg-sage/5 border-l-2 border-l-transparent'
+                    }`}
+                  >
                     {isAdmin && (
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-4 px-4 text-center" onClick={e => e.stopPropagation()}>
                         <input
                           type="checkbox"
-                          checked={selectedIds.includes(s.id)}
+                          checked={isSelected}
                           onChange={() => handleToggleSelect(s.id)}
                           className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
                         />
@@ -511,51 +565,16 @@ const Students = () => {
                         {s.status}
                       </span>
                     </td>
-                    <td className="py-4 px-6 text-right whitespace-nowrap">
-                      {selectedIds.includes(s.id) ? (
-                        <div className="flex items-center justify-end gap-1.5 animate-fadeIn">
-                          <button
-                            onClick={() => window.location.href = `/students/${s.id}`}
-                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>View</span>
-                          </button>
-                          <button
-                            onClick={() => openEdit(s)}
-                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            <span>Edit</span>
-                          </button>
-                          <button
-                            onClick={() => handleToggleSuspend(s)}
-                            title={s.status === 'suspended' ? 'Reinstate Student' : 'Suspend Student'}
-                            className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
-                              s.status === 'suspended'
-                                ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
-                                : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
-                            }`}
-                          >
-                            {s.status === 'suspended' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                            <span>{s.status === 'suspended' ? 'Reinstate' : 'Suspend'}</span>
-                          </button>
-                          <button
-                            onClick={() => handleDeleteStudent(s.id)}
-                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-[11px] font-sans text-ink/30 italic select-none">Select row to action</span>
-                      )}
+                    {/* No per-row action buttons — use the floating selection bar */}
+                    <td className="py-4 px-6 text-right">
+                      {isSelected
+                        ? <span className="text-[10px] font-semibold text-teal-primary">✓ Selected</span>
+                        : <span className="text-[11px] text-ink/25 font-sans">click row</span>
+                      }
                     </td>
-
-
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -595,7 +614,7 @@ const Students = () => {
                       <td className="py-4 px-6 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => alert(`Parent Profile:\nName: ${p.name}\nPhone: ${p.phone || 'N/A'}\nEmail: ${p.email || 'N/A'}\nLinked Children: ${p.linked_children || p.children || 'None'}`)}
+                            onClick={() => toast.info(`Parent Profile: ${p.name} · Phone: ${p.phone || 'N/A'} · Email: ${p.email || 'N/A'} · Children: ${p.linked_children || p.children || 'None'}`)}
                             className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer border border-teal-primary/20 shadow-2xs"
                           >
                             <Eye className="w-3.5 h-3.5" />
@@ -609,7 +628,7 @@ const Students = () => {
                             <span>Edit</span>
                           </button>
                           <button
-                            onClick={() => alert('Parent account status active.')}
+                            onClick={() => toast.info('Parent account is active.')}
                             className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 text-xs font-bold rounded-xl transition-all cursor-pointer border border-orange-500/30 shadow-2xs"
                           >
                             <Ban className="w-3.5 h-3.5" />
@@ -675,7 +694,7 @@ const Students = () => {
                   <div className="space-y-4">
                     <p className="text-xs text-ink/50 font-sans">Core identity information about the student.</p>
                     <div className="grid grid-cols-2 gap-4">
-                      <div><label className={labelCls}>Admission Number *</label><input required type="text" className={inputCls} value={newStudent.admission_number} onChange={e => setNewStudent({...newStudent, admission_number: e.target.value})} /></div>
+                      <div><label className={labelCls}>Admission Number</label><input disabled type="text" className={`${inputCls} bg-sage/10 cursor-not-allowed text-teal-dark font-semibold`} value="Generated Automatically" /></div>
                       <div><label className={labelCls}>Gender *</label>
                         <select required className={inputCls} value={newStudent.gender} onChange={e => setNewStudent({...newStudent, gender: e.target.value})}>
                           <option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
@@ -687,7 +706,7 @@ const Students = () => {
                       <div><label className={labelCls}>Middle Name</label><input type="text" className={inputCls} value={newStudent.middle_name} onChange={e => setNewStudent({...newStudent, middle_name: e.target.value})} /></div>
                       <div><label className={labelCls}>Last Name *</label><input required type="text" className={inputCls} value={newStudent.last_name} onChange={e => setNewStudent({...newStudent, last_name: e.target.value})} /></div>
                     </div>
-                    <div><label className={labelCls}>Date of Birth *</label><input required type="date" className={inputCls} value={newStudent.date_of_birth} onChange={e => setNewStudent({...newStudent, date_of_birth: e.target.value})} /></div>
+                    <div><label className={labelCls}>Date of Birth *</label><input required type="date" max={new Date().toISOString().split('T')[0]} className={inputCls} value={newStudent.date_of_birth} onChange={e => setNewStudent({...newStudent, date_of_birth: e.target.value})} /></div>
                   </div>
                 )}
 
@@ -740,96 +759,9 @@ const Students = () => {
                   </div>
                 )}
 
-                {/* Section 5 — Guardian & Autocomplete Linkage */}
+                {/* Section 5 — Guardian Details */}
                 {activeSection === 5 && (
                   <div className="space-y-4">
-                    <div className="p-3 rounded-xl bg-teal-primary/10 border border-teal-primary/20 text-xs text-teal-primary font-semibold">
-                      🔍 <strong>Search & Auto-Complete:</strong> Start typing an existing parent's name, phone, or email to auto-fill and link their account instead of re-entering data manually!
-                    </div>
-
-                    {/* Autocomplete Input */}
-                    <div className="relative">
-                      <label className="block text-xs font-bold text-ink/75 mb-1">Search Existing Parent / Guardian (Autocomplete)</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="Type parent name, phone (+263...), or email to retrieve existing record..."
-                          className="w-full px-3.5 py-2.5 bg-paper border border-teal-primary/40 rounded-xl text-xs font-sans text-ink focus:outline-none focus:ring-2 focus:ring-teal-primary/30"
-                          value={parentSearch}
-                          onChange={(e) => {
-                            setParentSearch(e.target.value);
-                            setShowParentDropdown(true);
-                          }}
-                          onFocus={() => setShowParentDropdown(true)}
-                        />
-                        <Search className="w-4 h-4 text-teal-primary absolute right-3 top-3" />
-                      </div>
-
-                      {/* Dropdown Results */}
-                      {showParentDropdown && parentSearch.trim().length > 0 && (
-                        <div className="absolute z-50 w-full mt-1 bg-paper border border-line-border/40 rounded-xl shadow-xl max-h-48 overflow-y-auto divide-y divide-line-border/20">
-                          {parents
-                            .filter(p =>
-                              p.name?.toLowerCase().includes(parentSearch.toLowerCase()) ||
-                              p.phone?.includes(parentSearch) ||
-                              p.email?.toLowerCase().includes(parentSearch.toLowerCase())
-                            )
-                            .map(p => (
-                              <div
-                                key={p.id}
-                                onClick={() => {
-                                  setNewStudent({
-                                    ...newStudent,
-                                    guardian_name: p.name || '',
-                                    guardian_phone: p.phone || '',
-                                    guardian_email: p.email || '',
-                                    guardian_national_id: p.national_id || '',
-                                    guardian_relation: p.relation || 'Mother',
-                                    existing_guardian_id: p.id
-                                  });
-                                  setSelectedExistingParent(p);
-                                  setShowParentDropdown(false);
-                                }}
-                                className="p-3 hover:bg-teal-primary/10 cursor-pointer flex items-center justify-between transition-colors"
-                              >
-                                <div>
-                                  <span className="font-bold text-xs text-ink block">{p.name}</span>
-                                  <span className="text-[10px] text-ink/60 font-mono">Phone: {p.phone || '-'} | Email: {p.email || '-'}</span>
-                                </div>
-                                <span className="text-[9px] font-bold bg-teal-primary/10 text-teal-primary px-2 py-0.5 rounded">
-                                  Link Parent
-                                </span>
-                              </div>
-                            ))}
-                          {parents.filter(p =>
-                            p.name?.toLowerCase().includes(parentSearch.toLowerCase()) ||
-                            p.phone?.includes(parentSearch) ||
-                            p.email?.toLowerCase().includes(parentSearch.toLowerCase())
-                          ).length === 0 && (
-                            <div className="p-3 text-xs text-ink/50 italic text-center">
-                              No matching existing parent found. Fill in details below to register a new parent profile.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {selectedExistingParent && (
-                      <div className="p-3 rounded-xl bg-sage/30 border border-teal-primary/30 text-xs font-bold text-teal-dark flex justify-between items-center">
-                        <span>✓ Linked to Existing Parent: <strong>{selectedExistingParent.name}</strong> ({selectedExistingParent.phone || selectedExistingParent.email})</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedExistingParent(null);
-                            setParentSearch('');
-                          }}
-                          className="text-[10px] underline hover:text-brick-critical cursor-pointer"
-                        >
-                          Clear Linkage
-                        </button>
-                      </div>
-                    )}
-
                     <div className="grid grid-cols-2 gap-4">
                       <div><label className={labelCls}>Guardian Name *</label><input required type="text" className={inputCls} placeholder="e.g. Mary Mandizera" value={newStudent.guardian_name} onChange={e => setNewStudent({...newStudent, guardian_name: e.target.value})} /></div>
                       <div><label className={labelCls}>Guardian Relation</label>
@@ -933,7 +865,7 @@ const Students = () => {
                 <div><label className={labelCls}>Last Name</label><input type="text" className={inputCls} value={editForm.last_name} onChange={e => setEditForm({...editForm, last_name: e.target.value})} /></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div><label className={labelCls}>Date of Birth</label><input type="date" className={inputCls} value={editForm.date_of_birth} onChange={e => setEditForm({...editForm, date_of_birth: e.target.value})} /></div>
+                <div><label className={labelCls}>Date of Birth</label><input type="date" max={new Date().toISOString().split('T')[0]} className={inputCls} value={editForm.date_of_birth} onChange={e => setEditForm({...editForm, date_of_birth: e.target.value})} /></div>
                 <div><label className={labelCls}>Gender</label>
                   <select className={inputCls} value={editForm.gender} onChange={e => setEditForm({...editForm, gender: e.target.value})}>
                     <option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
@@ -962,7 +894,7 @@ const Students = () => {
       {/* Edit Parent Modal */}
       {showParentModal && (
         <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6 space-y-4">
+          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-line-border/30 pb-3">
               <h3 className="text-lg font-display font-bold text-ink">Edit Parent / Guardian Contact</h3>
               <button onClick={() => setShowParentModal(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
@@ -1009,60 +941,16 @@ const Students = () => {
         </div>
       )}
 
-      {/* Parent Credentials Modal */}
-      {createdParentCreds && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-paper border border-line-border rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center space-x-3 text-teal-primary">
-              <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center font-bold">
-                🔑
-              </div>
-              <div>
-                <h3 className="font-sans font-bold text-base text-ink">Parent Credentials Generated!</h3>
-                <p className="text-xs text-ink/60 font-sans">Login credentials created for {createdParentCreds.studentName}</p>
-              </div>
-            </div>
 
-            <div className="bg-sage/10 p-4 rounded-xl space-y-3 font-sans border border-teal-primary/20">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-ink/50 block">Admission Number</span>
-                <span className="text-xs font-mono font-bold text-ink">{createdParentCreds.admissionNumber}</span>
-              </div>
-              <div className="border-t border-line-border/20 pt-2">
-                <span className="text-[10px] uppercase font-bold text-ink/50 block">Parent Portal Username</span>
-                <span className="text-sm font-mono font-bold text-teal-dark">{createdParentCreds.username}</span>
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-ink/50 block">Temporary Password</span>
-                <span className="text-sm font-mono font-bold text-brick-critical bg-brick-critical/10 px-2 py-0.5 rounded">{createdParentCreds.tempPassword}</span>
-              </div>
-            </div>
-
-            <p className="text-xs text-ink/60 italic font-sans">
-              Provide these credentials to the parent/guardian to log in at the Parent Portal.
-            </p>
-
-            <div className="pt-2">
-              <button
-                onClick={() => setCreatedParentCreds(null)}
-                className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl font-sans text-xs font-bold shadow-md cursor-pointer transition-colors"
-              >
-                Got It &amp; Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* ── EDIT PARENT MODAL ─────────────────────────────────────────────────── */}
       {showParentModal && editingParent && (
         <div className="fixed inset-0 bg-ink/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 relative p-6 space-y-4 animate-scaleUp">
+          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 relative p-6 space-y-4 animate-scaleUp max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-line-border/20 pb-3">
               <h3 className="text-lg font-display font-bold text-ink">Edit Parent / Guardian Details</h3>
               <button onClick={() => setShowParentModal(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-4 h-4" /></button>
             </div>
 
-            <form onSubmit={handleUpdateParent} className="space-y-4 text-xs font-sans">
+            <form onSubmit={handleSaveParent} className="space-y-4 text-xs font-sans">
               <div>
                 <label className="block font-bold text-ink/75 mb-1">Parent Full Name *</label>
                 <input required type="text" className="w-full px-3 py-2 bg-paper border border-line-border rounded-xl" value={parentForm.name} onChange={e => setParentForm({ ...parentForm, name: e.target.value })} />
@@ -1116,6 +1004,49 @@ const Students = () => {
         data={students}
         userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
       />
+
+      {/* ── CREDENTIAL DISPLAY MODAL ────────────────────────────────────────── */}
+      {createdCreds && (
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-paper border border-line-border rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-start space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center text-xl shrink-0">🔑</div>
+              <div>
+                <h3 className="font-display font-bold text-base text-ink">Parent Login Created</h3>
+                <p className="text-xs text-ink/60 font-sans mt-0.5">Share these login credentials with the parent securely. They can access the Parent Portal using these details.</p>
+              </div>
+            </div>
+
+            <div className="bg-sage/10 rounded-xl border border-teal-primary/20 divide-y divide-line-border/30 overflow-hidden font-sans">
+              <div className="px-4 py-3 flex justify-between items-center">
+                <span className="text-[10px] uppercase font-bold text-ink/50 tracking-wider">Username</span>
+                <span className="text-sm font-mono font-bold text-teal-dark select-all">{createdCreds.username}</span>
+              </div>
+              <div className="px-4 py-3 flex justify-between items-center">
+                <span className="text-[10px] uppercase font-bold text-ink/50 tracking-wider">Initial Password</span>
+                <span className="text-sm font-mono font-bold text-brick-critical bg-brick-critical/10 px-2 py-0.5 rounded select-all">{createdCreds.password}</span>
+              </div>
+            </div>
+
+            <div className="text-[11px] font-sans rounded-xl p-3 bg-amber-500/10 border border-amber-500/25 text-amber-800 space-y-1">
+              <div className="font-bold">📧 Dispatch Status:</div>
+              <div className="font-semibold text-ink/75">{createdCreds.delivery_status || 'Not configured'}</div>
+              <p className="text-[10px] text-ink/60 font-medium">Since SMTP configurations or network are missing, please copy and manually send these details to the parent.</p>
+            </div>
+
+            <p className="text-[11px] text-brick-critical font-bold font-sans">
+              ⚠ This password is shown once. Copy it and relay it to the parent immediately.
+            </p>
+
+            <button
+              onClick={() => setCreatedCreds(null)}
+              className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl font-sans text-xs font-bold shadow-md cursor-pointer transition-colors"
+            >
+              Got It & Close
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

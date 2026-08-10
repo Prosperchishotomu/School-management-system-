@@ -4,6 +4,41 @@ const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 
+// Schema Migration Helper for schools table
+async function ensureSchoolsSchema() {
+  try {
+    await query("ALTER TABLE schools ADD COLUMN head_title VARCHAR(50) DEFAULT 'Headmaster'");
+  } catch(e) {}
+}
+ensureSchoolsSchema();
+
+// Ensure staff_subjects table exists (teacher ↔ subject many-to-many)
+async function ensureStaffSubjectsTable() {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS staff_subjects (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        staff_id VARCHAR(8) NOT NULL,
+        school_id VARCHAR(8) NOT NULL,
+        subject_id INT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_staff_subject (staff_id, subject_id),
+        FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE
+      )
+    `);
+  } catch(e) { console.error('staff_subjects migration error:', e.message); }
+}
+ensureStaffSubjectsTable();
+
+const getTermFromDate = (dateVal = new Date()) => {
+  const d = new Date(dateVal);
+  const month = d.getMonth(); // 0 = Jan, 11 = Dec
+  if (month >= 0 && month <= 3) return 'Term 1';
+  if (month >= 4 && month <= 7) return 'Term 2';
+  return 'Term 3';
+};
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SUBJECTS (global, not school-scoped — used by Tasks.jsx)
 // GET /subjects
@@ -210,7 +245,7 @@ router.post('/schools/:schoolId/teacher-messages', authenticateToken, async (req
 router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { username, email, role, password, student_id } = req.body;
+    const { username, email, role, password, student_id, name, phone } = req.body;
     if (!username || !role || !password) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Username, role, and password are required.' } });
     }
@@ -221,15 +256,37 @@ router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_
     const id = 'USR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
     const hash = bcrypt.hashSync(password, 10);
     await query(
-      `INSERT INTO users (id, school_id, username, email, password_hash, role, student_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [id, schoolId, username.trim(), email || null, hash, role, student_id || null]
+      `INSERT INTO users (id, school_id, username, email, password_hash, role, student_id, phone, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [id, schoolId, username.trim(), email || null, hash, role, student_id || null, phone || null]
     );
-    const created = await queryOne('SELECT id, username, email, role, status, created_at FROM users WHERE id = ?', [id]);
-    return res.status(201).json({ data: created });
+
+    // If creating a parent, link the user to their guardian record
+    if (role === 'parent' && student_id) {
+      try {
+        // Find guardian linked to this student
+        const sg = await queryOne(
+          `SELECT g.* FROM guardians g JOIN student_guardians sg ON g.id = sg.guardian_id WHERE sg.student_id = ? AND g.school_id = ? LIMIT 1`,
+          [student_id, schoolId]
+        );
+        if (sg && !sg.user_id) {
+          await query('UPDATE guardians SET user_id = ? WHERE id = ?', [id, sg.id]);
+        }
+        // Also update student record for direct lookup
+        await query('UPDATE users SET student_id = ? WHERE id = ?', [student_id, id]);
+      } catch (linkErr) {
+        console.warn('Parent-guardian link warning:', linkErr.message);
+      }
+    }
+
+    const created = await queryOne('SELECT id, username, email, role, status, created_at, phone FROM users WHERE id = ?', [id]);
+    return res.status(201).json({ data: created, credentials: { username: username.trim(), password } });
   } catch (err) {
+    console.error('Create user error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create user account.' } });
   }
 });
+
+
 
 router.delete('/schools/:schoolId/users/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
@@ -499,7 +556,7 @@ router.post('/schools/:schoolId/comments', authenticateToken, requireRoles('scho
     const id = 'CMT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
     await query(
       `INSERT INTO report_comments (id, school_id, student_id, class_id, author_id, comment, term) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [id, schoolId, student_id, class_id || null, req.user.id, comment, term || 'Term 1']
+      [id, schoolId, student_id, class_id || null, req.user.id, comment, term || getTermFromDate()]
     );
     const created = await queryOne('SELECT * FROM report_comments WHERE id = ?', [id]);
     return res.status(201).json({ data: created });
@@ -706,17 +763,61 @@ router.post('/schools/:schoolId/health', authenticateToken, async (req, res) => 
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/schools/:schoolId/leave-requests', authenticateToken, async (req, res) => {
   try {
-    const requests = await query(
-      `SELECT lr.*, stf.name as staff_name, u.username as approver_name
-       FROM leave_requests lr
-       LEFT JOIN staff stf ON lr.staff_id = stf.id
-       LEFT JOIN users u ON lr.reviewed_by = u.id
-       WHERE lr.school_id = ?
-       ORDER BY lr.created_at DESC`,
-      [req.params.schoolId]
-    );
+    const { schoolId } = req.params;
+    const { role, id: userId } = req.user;
+
+    let requests = [];
+
+    if (role === 'teacher') {
+      const staff = await queryOne('SELECT id FROM staff WHERE user_id = ?', [userId]);
+      if (staff) {
+        requests = await query(
+          `SELECT lr.*, stf.name as staff_name, u.username as approver_name
+           FROM leave_requests lr
+           LEFT JOIN staff stf ON lr.staff_id = stf.id
+           LEFT JOIN users u ON lr.reviewed_by = u.id
+           WHERE lr.school_id = ? AND lr.staff_id = ?
+           ORDER BY lr.created_at DESC`,
+          [schoolId, staff.id]
+        );
+      }
+    } else if (role === 'parent') {
+      const guardian = await queryOne('SELECT id FROM guardians WHERE user_id = ?', [userId]);
+      if (guardian) {
+        const kids = await query('SELECT student_id FROM student_guardians WHERE guardian_id = ?', [guardian.id]);
+        const kidIds = kids.map(k => k.student_id);
+        if (kidIds.length > 0) {
+          const placeholders = kidIds.map(() => '?').join(',');
+          requests = await query(
+            `SELECT lr.*, CONCAT(st.first_name, ' ', st.last_name) as staff_name, u.username as approver_name
+             FROM leave_requests lr
+             LEFT JOIN students st ON lr.student_id = st.id
+             LEFT JOIN users u ON lr.reviewed_by = u.id
+             WHERE lr.school_id = ? AND lr.student_id IN (${placeholders})
+             ORDER BY lr.created_at DESC`,
+            [schoolId, ...kidIds]
+          );
+        }
+      }
+    } else {
+      // Admins and super admins see all
+      requests = await query(
+        `SELECT lr.*, 
+                COALESCE(stf.name, CONCAT(st.first_name, ' ', st.last_name)) as staff_name, 
+                u.username as approver_name
+         FROM leave_requests lr
+         LEFT JOIN staff stf ON lr.staff_id = stf.id
+         LEFT JOIN students st ON lr.student_id = st.id
+         LEFT JOIN users u ON lr.reviewed_by = u.id
+         WHERE lr.school_id = ?
+         ORDER BY lr.created_at DESC`,
+        [schoolId]
+      );
+    }
+
     return res.json({ data: requests });
   } catch (err) {
+    console.error('Get leave requests error:', err);
     return res.json({ data: [] });
   }
 });
@@ -812,7 +913,7 @@ router.post('/schools/:schoolId/exams', authenticateToken, requireRoles('school_
     await query(
       `INSERT INTO exams (id, school_id, class_id, term, subject, exam_date, start_time, duration_minutes, venue, invigilator)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, schoolId, class_id, term || 'Term 1', validSubject.name, exam_date, start_time || null, duration_minutes || 120, venue || null, invigilator || null]
+      [id, schoolId, class_id, term || getTermFromDate(), validSubject.name, exam_date, start_time || null, duration_minutes || 120, venue || null, invigilator || null]
     );
     const created = await queryOne('SELECT * FROM exams WHERE id = ?', [id]);
     return res.status(201).json({ data: created });
@@ -1051,7 +1152,7 @@ router.post(['/hostels/allocate', '/schools/:schoolId/hostels/allocate'], authen
 
     const id = 'HAL' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const allocatedDate = new Date().toISOString().slice(0, 10);
-    const termVal = term || 'Term 1 2026';
+    const termVal = term || `${getTermFromDate()} ${new Date().getFullYear()}`;
 
     await query(
       `INSERT INTO hostel_allocations (id, school_id, hostel_id, occupant_id, occupant_type, room_number, bed_number, allocated_date, term, status, checked_in_at)
@@ -1196,8 +1297,8 @@ router.post(['/hostels/smart-allocate', '/schools/:schoolId/hostels/smart-alloca
     const allocId = 'HAL' + Math.random().toString(36).substr(2, 5).toUpperCase();
     await query(
       `INSERT INTO hostel_allocations (id, school_id, hostel_id, occupant_id, occupant_type, room_number, bed_number, allocated_date, term, status, checked_in_at)
-       VALUES (?, ?, ?, ?, 'student', ?, ?, CURDATE(), 'Term 1 2026', 'checked_in', NOW())`,
-      [allocId, schoolId, chosenHostel.id, student_id, assignedRoom, assignedBed]
+       VALUES (?, ?, ?, ?, 'student', ?, ?, CURDATE(), ?, 'checked_in', NOW())`,
+      [allocId, schoolId, chosenHostel.id, student_id, assignedRoom, assignedBed, `${getTermFromDate()} ${new Date().getFullYear()}`]
     );
 
     await query(`UPDATE hostel_applications SET status = 'allocated' WHERE student_id = ? AND school_id = ?`, [student_id, schoolId]);
@@ -1274,7 +1375,7 @@ router.get('/schools/:schoolId/timetable', authenticateToken, async (req, res) =
 });
 
 
-router.post('/schools/:schoolId/timetable', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.post('/schools/:schoolId/timetable', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
   try {
     const { schoolId } = req.params;
     // Accept both old-style (day_of_week, start_time) and new-style (day, period) field names
@@ -1303,7 +1404,7 @@ router.post('/schools/:schoolId/timetable', authenticateToken, requireRoles('sch
   }
 });
 
-router.delete('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.delete('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
   try {
     await query('DELETE FROM timetable WHERE id = ? AND school_id = ?', [req.params.id, req.params.schoolId]);
     return res.json({ data: { message: 'Timetable entry deleted.' } });
@@ -1312,7 +1413,8 @@ router.delete('/schools/:schoolId/timetable/:id', authenticateToken, requireRole
   }
 });
 
-router.put('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.put('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
+
   try {
     const { schoolId, id } = req.params;
     const day = req.body.day || req.body.day_of_week;
@@ -1454,15 +1556,15 @@ router.get('/schools/:schoolId/audit-log', authenticateToken, requireRoles('scho
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/schools', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
-    const { id, name, school_type } = req.body;
+    const { id, name, school_type, head_title } = req.body;
     if (!id || !name) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'School ID and name are required.' } });
     }
     const exists = await queryOne('SELECT id FROM schools WHERE id = ?', [id]);
     if (exists) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'A school with this ID already exists.' } });
     await query(
-      `INSERT INTO schools (id, name, school_type, status) VALUES (?, ?, ?, 'active')`,
-      [id.toUpperCase(), name.trim(), school_type || 'secondary']
+      `INSERT INTO schools (id, name, school_type, head_title, status) VALUES (?, ?, ?, ?, 'active')`,
+      [id.toUpperCase(), name.trim(), school_type || 'secondary', head_title || 'Headmaster']
     );
     const created = await queryOne('SELECT * FROM schools WHERE id = ?', [id.toUpperCase()]);
     return res.status(201).json({ data: created });
@@ -1474,14 +1576,15 @@ router.post('/schools', authenticateToken, requireRoles('super_admin'), async (r
 router.put('/schools/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, school_type, status } = req.body;
+    const { name, school_type, head_title, status } = req.body;
     await query(
       `UPDATE schools SET
          name        = COALESCE(?, name),
          school_type = COALESCE(?, school_type),
+         head_title  = COALESCE(?, head_title),
          status      = COALESCE(?, status)
        WHERE id = ?`,
-      [name, school_type, status, id]
+      [name, school_type, head_title, status, id]
     );
     const updated = await queryOne('SELECT * FROM schools WHERE id = ?', [id]);
     return res.json({ data: updated });

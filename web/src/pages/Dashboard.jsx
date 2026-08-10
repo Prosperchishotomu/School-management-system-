@@ -1998,6 +1998,14 @@ const Dashboard = () => {
   const [data, setData]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+  const [schoolInfo, setSchoolInfo] = useState(null);
+
+  useEffect(() => {
+    if (!activeSchoolId) return;
+    api.get(`/schools/${activeSchoolId}`)
+      .then(res => { setSchoolInfo(res.data?.data || res.data); })
+      .catch(e => console.error(e));
+  }, [activeSchoolId]);
 
   const fetchData = useCallback(() => {
     if (!activeSchoolId) return;
@@ -2042,10 +2050,7 @@ const Dashboard = () => {
   const kpis  = data?.kpis  || {};
   const today = new Date().toLocaleDateString('en-ZW', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
-  const rawTitle = (user?.role_title || user?.title || '').toLowerCase();
-  let adminTitle = 'Headmaster / Principal';
-  if (rawTitle.includes('headmaster')) adminTitle = "Headmaster";
-  else if (rawTitle.includes('principal')) adminTitle = "Principal";
+  const adminTitle = schoolInfo?.head_title || 'Headmaster';
 
   const getHeaderTitle = () => {
     if (user?.role === 'super_admin') return "Super Admin Central Command Hub";

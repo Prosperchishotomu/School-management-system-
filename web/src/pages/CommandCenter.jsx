@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
   HardDrive, Building, Key, AlertTriangle, RefreshCw, Plus, X,
   FileLock, Globe, Settings, ChevronRight, TrendingUp, Users,
@@ -460,6 +461,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
     status: 'active', 
     tuition_fee_benchmark: 500.00,
     school_type: 'primary',
+    head_title: 'Headmaster',
     admin_username: '',
     admin_email: '',
     admin_password: ''
@@ -672,6 +674,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         status: 'active', 
         tuition_fee_benchmark: 500.00,
         school_type: 'primary',
+        head_title: 'Headmaster',
         admin_username: '',
         admin_email: '',
         admin_password: ''
@@ -687,7 +690,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
       await api.patch(`/schools/${editSchool.id}`, editForm);
       setShowEdit(false); setEditSchool(null); onRefresh();
     } catch (ex) {
-      alert(ex.message || 'Failed to update school details.');
+      toast.error(ex.message || 'Failed to update school details.');
     } finally { setEditSaving(false); }
   };
 
@@ -990,7 +993,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
   const handleSaveSlot = async (e) => {
     e.preventDefault();
     if (!editSlot.subject) {
-      alert('Please specify a curriculum subject.');
+      toast.warning('Please specify a curriculum subject.');
       return;
     }
     setSlotSaving(true);
@@ -1006,7 +1009,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
       setShowSlotModal(false);
       fetchTimetableEntries();
     } catch (err) {
-      alert(err.message || 'Failed to schedule lesson.');
+      toast.error(err.message || 'Failed to schedule lesson.');
     } finally {
       setSlotSaving(false);
     }
@@ -1021,7 +1024,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
       setShowSlotModal(false);
       fetchTimetableEntries();
     } catch (err) {
-      alert(err.message || 'Failed to delete lesson.');
+      toast.error(err.message || 'Failed to delete lesson.');
     } finally {
       setSlotSaving(false);
     }
@@ -1032,7 +1035,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
     const p = newPeriodName.trim();
     if (!p) return;
     if (periodsList.includes(p)) {
-      alert('Period slot already exists.');
+      toast.warning('Period slot already exists.');
       return;
     }
     const updated = [...periodsList, p].sort((a, b) => {
@@ -2003,7 +2006,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 <label className="block text-xs font-semibold text-ink/70 mb-1">School Name</label>
                 <input required className="w-full glass-input rounded-xl text-sm" placeholder="e.g. Bulawayo Primary School" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
               </div>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-ink/70 mb-1">Tenant Code *</label>
                   <input required className="w-full glass-input rounded-xl text-sm font-mono uppercase" placeholder="e.g. BYO-PREP-01" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} />
@@ -2013,6 +2016,13 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                   <select required className="w-full glass-input rounded-xl text-xs bg-paper font-semibold" value={form.school_type} onChange={e => setForm({...form, school_type: e.target.value})}>
                     <option value="primary">Primary</option>
                     <option value="secondary">Secondary</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-ink/70 mb-1">Head Title *</label>
+                  <select required className="w-full glass-input rounded-xl text-xs bg-paper font-semibold" value={form.head_title} onChange={e => setForm({...form, head_title: e.target.value})}>
+                    <option value="Headmaster">Headmaster</option>
+                    <option value="Principal">Principal</option>
                   </select>
                 </div>
                 <div>

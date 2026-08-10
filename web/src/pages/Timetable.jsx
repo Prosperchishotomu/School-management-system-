@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { Plus, X, Loader2, Clock, Trash2, Calendar, Edit3, BookOpen, User, Layers } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 const Timetable = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
+
   const [classes, setClasses] = useState([]);
   const [selectedClass, setSelectedClass] = useState('');
   const [timetable, setTimetable] = useState([]);
@@ -17,6 +20,8 @@ const Timetable = () => {
   const [viewMode, setViewMode] = useState('class'); // 'class' | 'teacher'
   const [staffList, setStaffList] = useState([]);
   const [selectedTeacher, setSelectedTeacher] = useState('');
+  const [schoolInfo, setSchoolInfo] = useState(null);
+
 
   // Curriculum subjects list
   const [subjects, setSubjects] = useState([]);
@@ -35,11 +40,24 @@ const Timetable = () => {
   const [slotLoading, setSlotLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  const canEdit = ['super_admin', 'school_admin'].includes(user?.role);
+  const canEdit = ['super_admin', 'school_admin', 'teacher'].includes(user?.role);
 
   // Initial load
   useEffect(() => {
     if (!activeSchoolId) return;
+
+    // School Info
+    api.get(`/schools/${activeSchoolId}`)
+      .then(res => {
+        if (res.data) {
+          setSchoolInfo(res.data);
+          // For secondary teachers, the timetable should be unified
+          if (res.data.school_type === 'secondary' && user?.role === 'teacher') {
+            setViewMode('teacher');
+          }
+        }
+      })
+      .catch(() => {});
     
     // Classes
     api.get(`/schools/${activeSchoolId}/classes`)
@@ -142,7 +160,7 @@ const Timetable = () => {
       day, 
       period, 
       subject: existing?.subject || '', 
-      teacher: classTeacher || 'Unassigned', 
+      teacher: existing?.teacher || classTeacher || 'Unassigned', 
       id: existing?.id || '' 
     });
     setShowModal(true);
@@ -162,16 +180,17 @@ const Timetable = () => {
         day: editSlot.day,
         period: editSlot.period,
         subject: finalSubject,
-        teacher: classTeacher || 'Unassigned'
+        teacher: editSlot.teacher || 'Unassigned'
       });
       setShowModal(false);
       fetchTimetable();
     } catch (err) {
-      alert(err.message || 'Failed to save slot.');
+      toast.error(err.message || 'Failed to save timetable slot.');
     } finally {
       setSlotLoading(false);
     }
   };
+
 
   const handleDeleteSlot = async () => {
     if (!editSlot.id) return;
@@ -182,7 +201,7 @@ const Timetable = () => {
       setShowModal(false);
       fetchTimetable();
     } catch (err) {
-      alert(err.message || 'Failed to delete slot.');
+      toast.error(err.message || 'Failed to delete slot.');
     } finally {
       setDeleteLoading(false);
     }
@@ -194,7 +213,7 @@ const Timetable = () => {
     const p = newPeriodName.trim();
     if (!p) return;
     if (periodsList.includes(p)) {
-      alert('Timeslot already exists.');
+      toast.warning('Timeslot already exists.');
       return;
     }
     const updated = [...periodsList, p].sort((a, b) => {
@@ -241,7 +260,7 @@ const Timetable = () => {
       });
       fetchTimetable();
     } catch (err) {
-      alert(err.message || 'Failed to assign dropped subject.');
+      toast.error(err.message || 'Failed to assign dropped subject.');
     }
   };
 
@@ -320,7 +339,7 @@ const Timetable = () => {
             <div>
               <h3 className="text-sm font-bold text-ink">Unified Schedule: {selectedTeacher || 'Faculty Member'}</h3>
               <p className="text-xs text-ink/60 font-sans">
-                Aggregated master timetable across all secondary classes assigned to this teacher ({timetable.length} scheduled periods).
+                Aggregated master timetable across all classes assigned to this teacher ({timetable.length} scheduled periods).
               </p>
             </div>
           </div>
@@ -518,13 +537,26 @@ const Timetable = () => {
                 </div>
               )}
 
-              <div className="p-3 bg-sage/5 border border-line-border/30 rounded-xl space-y-1">
-                <span className="text-[10px] font-sans font-bold text-ink/40 uppercase tracking-wider block">Assigned Class Teacher</span>
-                <span className="text-xs font-semibold text-teal-primary block">
-                  {classTeacher ? classTeacher : 'Unassigned (set in Staff Roster)'}
-                </span>
-                <p className="text-[9px] text-ink/40 font-sans">Class teachers are automatically assigned based on class schedules.</p>
+              <div>
+                <label className="block text-xs font-semibold text-ink/70 mb-1">Subject Teacher *</label>
+                <select
+                  value={editSlot.teacher}
+                  onChange={(e) => setEditSlot({ ...editSlot, teacher: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 border border-line-border rounded-lg text-xs bg-paper text-ink focus:outline-none focus:border-teal-primary font-sans"
+                >
+                  <option value="Unassigned">Unassigned</option>
+                  {staffList.map(s => (
+                    <option key={s.id} value={s.name}>{s.name} ({s.role_title || 'Teacher'})</option>
+                  ))}
+                </select>
+                {classTeacher && classTeacher !== editSlot.teacher && (
+                  <p className="text-[10px] text-teal-primary mt-1 font-sans italic">
+                    Note: Classroom Class Teacher is {classTeacher}.
+                  </p>
+                )}
               </div>
+
               <div className="pt-2 flex justify-between items-center">
                 {editSlot.id ? (
                   <button type="button" onClick={handleDeleteSlot} disabled={deleteLoading} className="inline-flex items-center space-x-1 px-3 py-2 border border-brick-critical/30 bg-brick-critical/5 hover:bg-brick-critical/10 text-brick-critical rounded-xl text-xs font-semibold cursor-pointer">

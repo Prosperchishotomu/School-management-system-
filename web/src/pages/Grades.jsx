@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
   GraduationCap,
   Save,
@@ -13,12 +14,23 @@ import {
 
 // NOTE: Grades.jsx represents ongoing coursework/CATs (raw individual assessment marks recorded by teachers).
 // For formal term-end reports or published report cards, see Results.jsx.
+const getCurrentTermCode = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = d.getMonth(); // 0 = Jan
+  let t = 'T1';
+  if (month >= 4 && month <= 7) t = 'T2';
+  else if (month >= 8) t = 'T3';
+  return `${year}-${t}`;
+};
+
 const Grades = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
   
   const [classes, setClasses] = useState([]);
   const [selectedClass, setSelectedClass] = useState('');
-  const [term, setTerm] = useState('2026-T1');
+  const [term, setTerm] = useState(getCurrentTermCode());
   const [subject, setSubject] = useState('Mathematics');
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
   const [assessmentType, setAssessmentType] = useState('test');
@@ -50,9 +62,10 @@ const Grades = () => {
   const handleToggleVoice = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('Voice recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
+      toast.warning('Voice recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
       return;
     }
+
 
     if (isListening) {
       setIsListening(false);

@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { ShieldCheck, Filter, Search, ChevronDown, ChevronUp, Printer, Loader2 } from 'lucide-react';
 import PrintReportModal from '../components/PrintReportModal';
 
 const AuditLog = () => {
   const { activeSchoolId } = useAuth();
+  const toast = useToast();
+
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -84,9 +87,10 @@ const AuditLog = () => {
           setIsFetchingPrint(false);
         }, 500);
       } catch (err) {
-        alert('Failed to generate full security audit report.');
+        toast.error('Failed to generate full security audit report.');
         setIsFetchingPrint(false);
       }
+
     }
   };
 

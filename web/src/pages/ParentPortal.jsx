@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Users, Calendar, GraduationCap, CreditCard, ChevronRight,
@@ -8,6 +9,8 @@ import {
 
 const ParentPortal = () => {
   const { activeSchoolId } = useAuth();
+  const toast = useToast();
+
   const [children, setChildren] = useState([]);
   const [selectedChildId, setSelectedChildId] = useState('');
   const [childProfile, setChildProfile] = useState(null);
@@ -125,9 +128,10 @@ const ParentPortal = () => {
     if (!childProfile?.feeSummary?.id) return;
     const amount = Number(paymentForm.amount_paid);
     if (isNaN(amount) || amount <= 0) {
-      alert('Please enter a valid positive payment amount.');
+      toast.warning('Please enter a valid positive payment amount.');
       return;
     }
+
 
     setPaying(true);
     setMessage({ type: '', text: '' });

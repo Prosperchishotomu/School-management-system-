@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
   CalendarCheck,
   TrendingUp,
@@ -20,6 +21,7 @@ const StudentProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
   
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -134,7 +136,7 @@ const StudentProfile = () => {
       await api.patch(`/schools/${activeSchoolId}/students/${student.id}`, { status: newStatus });
       fetchProfile();
     } catch (err) {
-      alert(err.message || 'Failed to update student status.');
+      toast.error(err.message || 'Failed to update student status.');
     } finally {
       setUpdatingStatus(false);
     }
@@ -181,7 +183,7 @@ const StudentProfile = () => {
                     try {
                       await api.patch(`/schools/${activeSchoolId}/students/${student.id}`, { leadership_position: e.target.value });
                       fetchProfile();
-                    } catch (err) { alert(err.message); }
+                    } catch (err) { toast.error(err.message || 'Failed to update fee record.'); }
                     finally { setUpdatingStatus(false); }
                   }}
                   className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-white border border-line-border/50 text-ink focus:outline-none cursor-pointer"

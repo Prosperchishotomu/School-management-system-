@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import {
   Calendar, Clipboard, FileText, CheckCircle2, XCircle, Plus,
   AlertTriangle, Loader2, Sparkles, UserCheck, MessageSquare, Check, X
@@ -8,6 +9,8 @@ import {
 
 const LeaveRequests = () => {
   const { user, activeSchoolId } = useAuth();
+  const toast = useToast();
+
   
   const [requests, setRequests] = useState([]);
   const [children, setChildren] = useState([]);
@@ -63,9 +66,10 @@ const LeaveRequests = () => {
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
     if (!form.start_date || !form.end_date || !form.reason.trim()) {
-      alert('Please fill in all required fields.');
+      toast.warning('Please fill in all required fields.');
       return;
     }
+
 
     setSubmitting(true);
     setMessage({ type: '', text: '' });

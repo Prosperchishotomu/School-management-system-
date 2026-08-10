@@ -118,6 +118,14 @@ const Tasks = () => {
       return;
     }
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const selectedDate = new Date(taskForm.due_date);
+    if (selectedDate < today) {
+      setFormError('Due date/Lesson plan date cannot be in the past.');
+      return;
+    }
+
     setSavingTask(true);
     api.post(`/schools/${activeSchoolId}/tasks`, taskForm)
       .then(() => {
@@ -136,6 +144,7 @@ const Tasks = () => {
       })
       .finally(() => setSavingTask(false));
   };
+
 
   const getStatusBadge = (status) => {
     if (status === 'done') {
@@ -268,6 +277,7 @@ const Tasks = () => {
                   <input
                     type="date"
                     required
+                    min={new Date().toISOString().split('T')[0]}
                     className="w-full glass-input rounded-xl text-xs"
                     value={taskForm.due_date}
                     onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })}

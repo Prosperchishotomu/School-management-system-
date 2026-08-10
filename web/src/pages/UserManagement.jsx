@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { Users, Plus, X, Loader2, Shield, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Ban, CheckCircle2 } from 'lucide-react';
 
 
@@ -13,6 +14,8 @@ const ROLE_STYLES = {
 
 const UserManagement = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
+
   const [users, setUsers] = useState([]);
   const [classes, setClasses] = useState([]);
   const [students, setStudents] = useState([]);
@@ -37,6 +40,9 @@ const UserManagement = () => {
   const [resetLoading, setResetLoading]     = useState(false);
   const [resetError, setResetError]         = useState('');
   const [resetSuccess, setResetSuccess]     = useState('');
+  // Credential display after creation
+  const [createdCreds, setCreatedCreds]     = useState(null);
+
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [showResetPasswordVal, setShowResetPasswordVal] = useState(false);
 
@@ -71,13 +77,20 @@ const UserManagement = () => {
     setFormLoading(true);
     setFormError('');
     try {
-      await api.post(`/schools/${activeSchoolId}/users`, form);
+      const res = await api.post(`/schools/${activeSchoolId}/users`, {
+        ...form,
+        student_id: form.student_id || undefined
+      });
       setShowModal(false);
       setForm({
         username: '', email: '', password: '', role: 'teacher',
         name: '', phone: '', class_id: '', student_id: '', relation: 'Father'
       });
       fetchUsers();
+      // Show credential card to admin
+      if (res.credentials) {
+        setCreatedCreds(res.credentials);
+      }
     } catch (err) {
       setFormError(err.message || 'Failed to create user.');
     } finally {
@@ -85,12 +98,16 @@ const UserManagement = () => {
     }
   };
 
-  const handleDeactivate = async (id) => {
-    if (!window.confirm('Deactivate this user account? They will not be able to log in.')) return;
+  const handleDeactivate = async (userId) => {
+    const target = users.find(u => u.id === userId);
+    const nextActive = !target?.is_active;
     try {
-      await api.delete(`/schools/${activeSchoolId}/users/${id}`);
+      await api.patch(`/schools/${activeSchoolId}/users/${userId}`, { is_active: nextActive });
+      toast.success(nextActive ? `${target?.name || 'User'} account activated.` : `${target?.name || 'User'} account suspended.`);
       fetchUsers();
-    } catch {}
+    } catch (err) {
+      toast.error(err.message || 'Failed to update user status.');
+    }
   };
 
   const handleResetPassword = async (e) => {
@@ -105,15 +122,17 @@ const UserManagement = () => {
       await api.post(`/schools/${activeSchoolId}/users/${resetUser.id}/reset-password`, {
         password: resetPassword
       });
-      setResetSuccess('Password reset successfully!');
+      toast.success(`Password reset successfully for ${resetUser?.username}.`);
       setResetPassword('');
-      setTimeout(() => { setShowResetModal(false); setResetSuccess(''); }, 1500);
+      setShowResetModal(false);
+      setResetSuccess('');
     } catch (err) {
       setResetError(err.message || 'Failed to reset password.');
     } finally {
       setResetLoading(false);
     }
   };
+
 
   if (!activeSchoolId) {
     return (
@@ -142,7 +161,64 @@ const UserManagement = () => {
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm">{error}</div>}
 
-      {/* Role filter chips */}
+      {/* ── FLOATING SELECTION ACTION BAR ───────────────────────────────────── */}
+      {selectedUserIds.length > 0 && (
+        <div className="bg-ink/95 backdrop-blur-md rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-3 animate-fadeIn shadow-2xl border border-white/10">
+          <div className="flex items-center gap-3">
+            <span className="bg-teal-primary text-paper text-[11px] font-bold px-3 py-1 rounded-full font-mono">{selectedUserIds.length} selected</span>
+            <span className="text-paper/70 text-xs font-sans">
+              {selectedUserIds.length === 1
+                ? users.find(u => u.id === selectedUserIds[0])?.name || users.find(u => u.id === selectedUserIds[0])?.username
+                : `${selectedUserIds.length} users`}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {selectedUserIds.length === 1 && (() => {
+              const u = users.find(u => u.id === selectedUserIds[0]);
+              return u ? (
+                <>
+                  <button
+                    onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-amber-400/20"
+                  >
+                    <KeyRound className="w-3.5 h-3.5" /><span>Reset Password</span>
+                  </button>
+                  <button
+                    onClick={() => handleDeactivate(u.id)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border ${
+                      !u.is_active
+                        ? 'bg-teal-primary/30 hover:bg-teal-primary/50 text-teal-300 border-teal-400/30'
+                        : 'bg-orange-400/20 hover:bg-orange-400/30 text-orange-300 border-orange-400/20'
+                    }`}
+                  >
+                    {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm(`Delete account for '${u.username}'?`)) return;
+                      try {
+                        await api.delete(`/schools/${activeSchoolId}/users/${u.id}`);
+                        toast.success(`User '${u.username}' deleted.`);
+                        setSelectedUserIds([]);
+                        fetchUsers();
+                      } catch (err) { toast.error(err.message || 'Failed to delete user.'); }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-red-500/20"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /><span>Delete</span>
+                  </button>
+                </>
+              ) : null;
+            })()}
+            <button onClick={() => setSelectedUserIds([])} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-paper/50 hover:text-paper text-xs font-semibold rounded-xl transition-all cursor-pointer">
+              <X className="w-3.5 h-3.5" /><span>Clear</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+
       <div className="glass-card rounded-2xl p-4 flex flex-wrap items-center gap-2">
         {['', 'super_admin', 'school_admin', 'teacher', 'parent'].map(r => (
           <button key={r} onClick={() => setRoleFilter(r)}
@@ -182,8 +258,16 @@ const UserManagement = () => {
             {loading ? (
               <tr><td colSpan="7" className="py-12 text-center text-xs text-ink/40">Loading users...</td></tr>
             ) : users.map(u => (
-              <tr key={u.id} className="hover:bg-sage/5 transition-colors">
-                <td className="py-4 px-4 text-center">
+              <tr
+                key={u.id}
+                onClick={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(i => i !== u.id) : [...prev, u.id])}
+                className={`transition-colors cursor-pointer ${
+                  selectedUserIds.includes(u.id)
+                    ? 'bg-teal-primary/8 border-l-2 border-l-teal-primary'
+                    : 'hover:bg-sage/5 border-l-2 border-l-transparent'
+                }`}
+              >
+                <td className="py-4 px-4 text-center" onClick={e => e.stopPropagation()}>
                   <input
                     type="checkbox"
                     checked={selectedUserIds.includes(u.id)}
@@ -211,44 +295,10 @@ const UserManagement = () => {
                   </span>
                 </td>
                 <td className="py-4 px-6 text-right whitespace-nowrap">
-                  {selectedUserIds.includes(u.id) ? (
-                    <div className="flex items-center justify-end gap-1.5 animate-fadeIn">
-                      <button
-                        onClick={() => alert(`User Account Details:\nName: ${u.username}\nRole: ${u.role}\nEmail: ${u.email || 'N/A'}`)}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>View</span>
-                      </button>
-                      <button
-                        onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        onClick={() => handleDeactivate(u.id)}
-                        className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
-                          !u.is_active
-                            ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
-                            : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
-                        }`}
-                      >
-                        {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                        <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
-                      </button>
-                      <button
-                        onClick={() => handleDeactivate(u.id)}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-[11px] font-sans text-ink/30 italic select-none">Select row to action</span>
-                  )}
+                  {selectedUserIds.includes(u.id)
+                    ? <span className="text-[10px] font-semibold text-teal-primary">✓ Selected</span>
+                    : <span className="text-[11px] text-ink/25">click row</span>
+                  }
                 </td>
               </tr>
             ))}
@@ -397,6 +447,43 @@ const UserManagement = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── CREDENTIAL DISPLAY MODAL ────────────────────────────────────────── */}
+      {createdCreds && (
+        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-paper border border-line-border rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-start space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center text-xl shrink-0">🔑</div>
+              <div>
+                <h3 className="font-display font-bold text-base text-ink">User Account Created</h3>
+                <p className="text-xs text-ink/60 font-sans mt-0.5">Share these login credentials with the user securely. They should change their password on first login.</p>
+              </div>
+            </div>
+
+            <div className="bg-sage/10 rounded-xl border border-teal-primary/20 divide-y divide-line-border/30 overflow-hidden">
+              <div className="px-4 py-3 flex justify-between items-center">
+                <span className="text-[10px] uppercase font-bold text-ink/50 tracking-wider">Username</span>
+                <span className="text-sm font-mono font-bold text-teal-dark select-all">{createdCreds.username}</span>
+              </div>
+              <div className="px-4 py-3 flex justify-between items-center">
+                <span className="text-[10px] uppercase font-bold text-ink/50 tracking-wider">Initial Password</span>
+                <span className="text-sm font-mono font-bold text-brick-critical bg-brick-critical/10 px-2 py-0.5 rounded select-all">{createdCreds.password}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-amber-warning font-semibold font-sans">
+              ⚠ This password is shown once. Relay it to the user immediately.
+            </p>
+
+            <button
+              onClick={() => setCreatedCreds(null)}
+              className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl font-sans text-xs font-bold shadow-md cursor-pointer transition-colors"
+            >
+              Got It & Close
+            </button>
           </div>
         </div>
       )}

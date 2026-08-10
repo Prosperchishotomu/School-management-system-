@@ -1,2 +1,2 @@
-On notifications, te users can select some or delete all.
-the cards should be clickable to show the data.... 0 students? really? 
+For subject teachers, when registering, I should be able to pick/add new subject so that on time table it becomes easy since subjects will be mapped to teachers. NB: A teacher can teach more than 2 subjects
+I said inline buttons should be removed. Students and their guidains arent linked. I created a student but its not linked to his guidain

@@ -65,6 +65,57 @@ router.delete('/classes/:id', authenticateToken, requireRoles('school_admin', 's
   }
 });
 
+// PATCH /schools/:schoolId/classes/:id
+router.patch('/classes/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { name, level, capacity, form_master_id } = req.body;
+
+    // Check if class exists
+    const existing = await queryOne('SELECT * FROM classes WHERE id = ? AND school_id = ?', [id, schoolId]);
+    if (!existing) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Class not found.' } });
+    }
+
+    const updatedName = name !== undefined ? name.trim() : existing.name;
+    const updatedLevel = level !== undefined ? level : existing.level;
+    const updatedCapacity = capacity !== undefined ? parseInt(capacity) : existing.capacity;
+    const updatedFormMaster = form_master_id !== undefined ? (form_master_id || null) : existing.form_master_id;
+
+    if (name !== undefined && name.trim().toLowerCase() !== existing.name.toLowerCase()) {
+      const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, name.trim()]);
+      if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${name.trim()}' already exists.` } });
+    }
+
+    await query(
+      `UPDATE classes SET name = ?, level = ?, capacity = ?, form_master_id = ? WHERE id = ? AND school_id = ?`,
+      [updatedName, updatedLevel, updatedCapacity, updatedFormMaster, id, schoolId]
+    );
+
+    // If form_master_id is updated, also update staff record's class_id!
+    if (form_master_id !== undefined) {
+      // Clear previous class teacher's class assignment
+      await query('UPDATE staff SET class_id = NULL WHERE class_id = ? AND school_id = ?', [id, schoolId]);
+      if (form_master_id) {
+        await query('UPDATE staff SET class_id = ? WHERE id = ? AND school_id = ?', [id, form_master_id, schoolId]);
+      }
+    }
+
+    const updated = await queryOne(
+      `SELECT c.*, stf.name as form_master_name 
+       FROM classes c 
+       LEFT JOIN staff stf ON c.form_master_id = stf.id 
+       WHERE c.id = ?`,
+      [id]
+    );
+    return res.json({ data: updated });
+  } catch (err) {
+    console.error('Update class error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update class details.' } });
+  }
+});
+
+
 // POST /schools/:schoolId/classes/promote
 router.post('/classes/promote', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
@@ -118,7 +169,7 @@ router.get('/subjects', authenticateToken, async (req, res) => {
 // POST /schools/:schoolId/subjects
 router.post('/subjects', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    const { name, code, category } = req.body;
+    const { name, code, category, level } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subject name is required.' } });
@@ -131,8 +182,8 @@ router.post('/subjects', authenticateToken, requireRoles('school_admin', 'super_
     const subjectId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
 
     await query(
-      `INSERT INTO subjects (id, name, code, category, created_by) VALUES (?, ?, ?, ?, ?)`,
-      [subjectId, name.trim(), code ? code.trim().toUpperCase() : name.substr(0, 3).toUpperCase(), category || 'general', req.user.id]
+      `INSERT INTO subjects (id, name, code, category, level, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
+      [subjectId, name.trim(), code ? code.trim().toUpperCase() : name.substr(0, 3).toUpperCase(), category || 'general', level || 'all', req.user.id]
     );
 
     const created = await queryOne('SELECT * FROM subjects WHERE id = ?', [subjectId]);

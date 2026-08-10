@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
   ClipboardList,
   Plus,
@@ -22,6 +23,8 @@ const STATUS_STYLES = {
 
 const Enquiries = () => {
   const { activeSchoolId } = useAuth();
+  const toast = useToast();
+
   const [enquiries, setEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
@@ -82,11 +85,12 @@ const Enquiries = () => {
   const handleConvert = async (id) => {
     if (!window.confirm('Convert this enquiry into a full student record?')) return;
     try {
-      await api.post(`/schools/${activeSchoolId}/enquiries/${id}/convert`, {});
+      toast.success('Enquiry converted to student record!');
       fetchEnquiries();
     } catch (err) {
-      alert(err.message || 'Conversion failed.');
+      toast.error(err.message || 'Conversion failed.');
     }
+
   };
 
   return (

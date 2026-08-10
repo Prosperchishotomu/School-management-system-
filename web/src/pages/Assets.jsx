@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { 
   Package, Search, Filter, Plus, Edit2, Trash2, ArrowRightLeft, 
   RotateCcw, CheckCircle, AlertTriangle, AlertCircle, X, Loader2, 
@@ -25,6 +26,7 @@ const STATUS_COLORS = {
 
 const Assets = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
   const isSuperAdmin = user?.role === 'super_admin';
   const isAdmin = user?.role === 'school_admin' || isSuperAdmin;
 
@@ -258,7 +260,7 @@ const Assets = () => {
       await api.post(`/schools/${activeSchoolId}/asset-categories`, newCategoryForm);
       setNewCategoryForm({ name: '', code: '', color_class: 'text-rose-500 bg-rose-50' });
       fetchCategories();
-      alert('Custom category added successfully.');
+      toast.success('Custom category added successfully.');
     } catch (err) {
       setCategoryError(err.message || 'Failed to add category.');
     } finally {
@@ -272,7 +274,7 @@ const Assets = () => {
       await api.delete(`/schools/${activeSchoolId}/assets/${asset.id}`);
       fetchAssets();
     } catch (err) {
-      alert(err.message || 'Failed to delete asset.');
+      toast.error(err.message || 'Failed to delete asset.');
     }
   };
 
@@ -302,7 +304,7 @@ const Assets = () => {
       await api.post(`/schools/${activeSchoolId}/assets/${asset.id}/return`, {});
       fetchAssets();
     } catch (err) {
-      alert(err.message || 'Failed to return asset.');
+      toast.error(err.message || 'Failed to return asset.');
     }
   };
 

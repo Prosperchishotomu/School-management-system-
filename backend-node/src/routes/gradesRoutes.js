@@ -4,6 +4,15 @@ const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 const { calculatePrimaryUnits, calculateALevelPoints } = require('../utils/gradeCalculator');
 
+const getTermFromDate = (dateVal = new Date()) => {
+  const d = new Date(dateVal);
+  const month = d.getMonth(); // 0 = Jan, 11 = Dec
+  if (month >= 0 && month <= 3) return 'Term 1';
+  if (month >= 4 && month <= 7) return 'Term 2';
+  return 'Term 3';
+};
+
+
 // GET /schools/:schoolId/classes/:classId/grades
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -96,7 +105,7 @@ router.post('/', authenticateToken, requireRoles('teacher', 'school_admin', 'sup
     await query(
       `INSERT INTO grades (id, school_id, student_id, class_id, subject, grade_value, assessment_type, term, weight)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [gradeId, schoolId, student_id, classId, subjName, mark, assessment_type || 'test', term || 'Term 1', parseFloat(weight || 1.0)]
+      [gradeId, schoolId, student_id, classId, subjName, mark, assessment_type || 'test', term || getTermFromDate(), parseFloat(weight || 1.0)]
     );
 
     const created = await queryOne('SELECT * FROM grades WHERE id = ?', [gradeId]);
@@ -124,7 +133,7 @@ router.post('/batch', authenticateToken, requireRoles('teacher', 'school_admin',
     if (['exam', 'final', 'midterm'].includes(rawType)) validAssType = 'exam';
     else if (['coursework', 'assignment', 'project', 'homework'].includes(rawType)) validAssType = 'coursework';
 
-    const currentTerm = term || 'Term 1';
+    const currentTerm = term || getTermFromDate();
     const numWeight = parseFloat(weight || 1.0);
 
     let savedCount = 0;

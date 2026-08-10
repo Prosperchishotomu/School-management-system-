@@ -3,12 +3,22 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
 import { Calendar, Plus, X, Loader2, Clock, MapPin, User } from 'lucide-react';
 
+const getCurrentTermCode = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = d.getMonth(); // 0 = Jan
+  let t = 'T1';
+  if (month >= 4 && month <= 7) t = 'T2';
+  else if (month >= 8) t = 'T3';
+  return `${year}-${t}`;
+};
+
 const Exams = () => {
   const { activeSchoolId, user } = useAuth();
   const [exams, setExams] = useState([]);
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [term, setTerm] = useState('2026-T1');
+  const [term, setTerm] = useState(getCurrentTermCode());
   const [error, setError] = useState('');
 
   const [showModal, setShowModal] = useState(false);

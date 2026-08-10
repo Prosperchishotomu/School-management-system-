@@ -43,7 +43,8 @@ async function request(path, options = {}) {
 
     if (!response.ok) {
       // Auto-logout on 401 — session expired or invalid token
-      if (response.status === 401) {
+      // Do NOT redirect on the login endpoint itself (wrong password returns 401)
+      if (response.status === 401 && !path.includes('/auth/login')) {
         sessionStorage.removeItem('schoolbase_token');
         sessionStorage.removeItem('schoolbase_user');
         sessionStorage.removeItem('schoolbase_active_school_id');

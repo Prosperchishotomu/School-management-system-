@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
   CreditCard,
   Search,
@@ -20,6 +21,7 @@ import PrintReportModal from '../components/PrintReportModal';
 
 const Fees = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
   const isParent = user?.role === 'parent';
 
   // Shared state
@@ -253,7 +255,7 @@ const Fees = () => {
         fetchRemotePayments();
         fetchFees();
       })
-      .catch(err => alert(err.response?.data?.error?.message || 'Failed to verify transaction.'));
+      .catch(err => toast.error(err.response?.data?.error?.message || 'Failed to verify transaction.'));
   };
 
   // Admin rejects transaction
@@ -269,7 +271,7 @@ const Fees = () => {
         setRejectionReason('');
         fetchRemotePayments();
       })
-      .catch(err => alert(err.response?.data?.error?.message || 'Failed to submit rejection.'))
+      .catch(err => toast.error(err.response?.data?.error?.message || 'Failed to submit rejection.'))
       .finally(() => setRejecting(false));
   };
 
@@ -280,7 +282,7 @@ const Fees = () => {
       .then(res => {
         setActiveReceipt(res.data);
       })
-      .catch(() => alert('Failed to pull electronic receipt.'))
+      .catch(() => toast.error('Failed to pull electronic receipt.'))
       .finally(() => setReceiptLoading(false));
   };
 

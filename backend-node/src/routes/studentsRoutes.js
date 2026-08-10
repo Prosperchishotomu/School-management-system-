@@ -5,6 +5,7 @@ const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 const validate = require('../middleware/validate');
 
+
 // GET /schools/:schoolId/students
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -29,7 +30,7 @@ router.get('/', authenticateToken, async (req, res) => {
          FROM students st
          JOIN student_guardians sg ON st.id = sg.student_id
          LEFT JOIN classes c ON st.class_id = c.id
-         WHERE sg.guardian_id = ? AND st.school_id = ? AND st.status = 'active'
+         WHERE sg.guardian_id = ? AND st.school_id = ? AND st.status IN ('enrolled', 'active', 'suspended')
          ORDER BY st.first_name ASC`,
         [guardian.id, schoolId]
       );
@@ -118,15 +119,15 @@ router.post('/',
       });
     }
 
-    // Auto-generate admission number if not provided
+    // Auto-generate admission number starting with current year + 2 digits + 1 uppercase letter
     const year = new Date().getFullYear();
-    const finalAdmNumber = (admission_number && admission_number.trim())
-      ? admission_number.trim()
-      : `ADM-${year}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const randDigits = Math.floor(10 + Math.random() * 90);
+    const letter = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+    const finalAdmNumber = `${year}${randDigits}${letter}`;
 
     // Duplicate admission number check
     const dup = await queryOne('SELECT id FROM students WHERE admission_number = ? AND school_id = ?', [finalAdmNumber, schoolId]);
-    if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Admission number '${finalAdmNumber}' is already registered.` } });
+    if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Generated admission number '${finalAdmNumber}' collided. Please try again.` } });
 
     // Duplicate student name & class check
     const nameDup = await queryOne(
@@ -154,84 +155,94 @@ router.post('/',
     let existingGuardian = null;
     if (guardian_phone) {
       existingGuardian = await queryOne(
-        'SELECT id FROM guardians WHERE school_id = ? AND phone = ?',
+        'SELECT id, user_id FROM guardians WHERE school_id = ? AND phone = ?',
         [schoolId, guardian_phone.trim()]
       );
     }
     if (!existingGuardian && guardian_email) {
       existingGuardian = await queryOne(
-        'SELECT id FROM guardians WHERE school_id = ? AND email = ?',
+        'SELECT id, user_id FROM guardians WHERE school_id = ? AND email = ?',
         [schoolId, guardian_email.trim()]
       );
     }
 
+    let parentCredentials = null;
+
     if (existingGuardian) {
       guardianId = existingGuardian.id;
+      // If guardian exists but doesn't have a linked user account, create one
+      if (!existingGuardian.user_id) {
+        const parentUsername = 'p_' + finalAdmNumber.toLowerCase();
+        const parentPassword = 'PRN' + Math.floor(1000 + Math.random() * 9000);
+        const passHash = bcrypt.hashSync(parentPassword, 10);
+        const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
+
+        await query(
+          `INSERT INTO users (id, username, password_hash, role, school_id, status, phone, email) 
+           VALUES (?, ?, ?, 'parent', ?, 'active', ?, ?)`,
+          [userId, parentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
+        );
+
+        await query('UPDATE guardians SET user_id = ? WHERE id = ?', [userId, guardianId]);
+        
+        const hasEmailConfig = !!(process.env.SMTP_HOST || process.env.SMTP_USER);
+        parentCredentials = { 
+          username: parentUsername, 
+          password: parentPassword,
+          delivery_status: hasEmailConfig ? 'Sent successfully' : 'Not sent (No email configuration found)'
+        };
+      }
     } else {
       guardianId = 'GDN' + Math.random().toString(36).substr(2, 5).toUpperCase();
+      
+      // Auto-create parent user credentials
+      const parentUsername = 'p_' + finalAdmNumber.toLowerCase();
+      const parentPassword = 'PRN' + Math.floor(1000 + Math.random() * 9000);
+      const passHash = bcrypt.hashSync(parentPassword, 10);
+      const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
+
       await query(
-        `INSERT INTO guardians (id, school_id, name, phone, email, national_id, relation) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [guardianId, schoolId, guardian_name.trim(), guardian_phone || null, guardian_email || null, guardian_national_id || null, guardian_relation || 'Parent']
+        `INSERT INTO users (id, username, password_hash, role, school_id, status, phone, email) 
+         VALUES (?, ?, ?, 'parent', ?, 'active', ?, ?)`,
+        [userId, parentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
       );
+
+      await query(
+        `INSERT INTO guardians (id, school_id, name, phone, email, national_id, relation, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [guardianId, schoolId, guardian_name.trim(), guardian_phone || null, guardian_email || null, guardian_national_id || null, guardian_relation || 'Parent', userId]
+      );
+
+      const hasEmailConfig = !!(process.env.SMTP_HOST || process.env.SMTP_USER);
+      parentCredentials = { 
+        username: parentUsername, 
+        password: parentPassword,
+        delivery_status: hasEmailConfig ? 'Sent successfully' : 'Not sent (No email configuration found)'
+      };
     }
+
 
     await query(
       `INSERT INTO student_guardians (student_id, guardian_id) VALUES (?, ?)`,
       [studentId, guardianId]
     );
 
-    // Auto-generate parent user account credentials
-    let parentCredentials = null;
-    try {
-      const gdn = await queryOne('SELECT * FROM guardians WHERE id = ?', [guardianId]);
-      if (gdn && !gdn.user_id) {
-        const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
-        const usernameStr = 'parent.' + finalAdmNumber.toLowerCase().replace(/[^a-z0-9]/g, '');
-        const rawPass = 'Parent' + Math.floor(1000 + Math.random() * 9000) + '!';
-        const hash = bcrypt.hashSync(rawPass, 10);
-        
-        await query(
-          `INSERT INTO users (id, school_id, username, password_hash, role, email, status)
-           VALUES (?, ?, ?, ?, 'parent', ?, 'active')`,
-          [userId, schoolId, usernameStr, hash, guardian_email || null]
-        );
-        await query('UPDATE guardians SET user_id = ? WHERE id = ?', [userId, guardianId]);
-        parentCredentials = {
-          username: usernameStr,
-          temp_password: rawPass
-        };
-      }
-    } catch (passErr) {
-      console.warn('Failed to auto-generate parent credentials:', passErr.message);
-    }
-
-    // Send enrollment notification to guardian
-    try {
-      const notifId = 'NTF' + Math.random().toString(36).substr(2, 5).toUpperCase();
-      const message = `Dear ${guardian_name.trim()}, ${first_name.trim()} ${last_name.trim()} (Adm: ${finalAdmNumber}) has been successfully enrolled. Welcome to our school community.`;
-      await query(
-        `INSERT INTO notifications (id, school_id, user_id, title, message, is_read, created_at)
-         VALUES (?, ?, NULL, ?, ?, 0, NOW())`,
-        [notifId, schoolId, 'Enrollment Confirmation', message]
-      );
-    } catch (e) {
-      console.warn('Failed to create enrollment notification:', e.message);
-    }
-
-    const created = await queryOne(
+    const student = await queryOne(
       `SELECT st.*, c.name as class_name
        FROM students st LEFT JOIN classes c ON st.class_id = c.id WHERE st.id = ?`,
       [studentId]
     );
-    if (created && parentCredentials) {
-      created.parent_credentials = parentCredentials;
-    }
-    return res.status(201).json({ data: created });
+
+    return res.status(201).json({ 
+      data: student, 
+      credentials: parentCredentials 
+    });
   } catch (err) {
     console.error('Create student error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create student.' } });
   }
+
 });
+
 
 // GET /schools/:schoolId/students/:id/profile
 router.get('/:id/profile', authenticateToken, async (req, res) => {
@@ -419,31 +430,46 @@ router.post('/promote', authenticateToken, requireRoles('school_admin', 'super_a
   try {
     const { schoolId } = req.params;
     const { promotions } = req.body;
-    // promotions: [{ student_id, new_class_id, action: 'promote' | 'repeat' }]
+    // promotions: [{ student_id, new_class_id, action: 'promote' | 'repeat' | 'graduate' }]
     if (!promotions || !Array.isArray(promotions) || promotions.length === 0) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Promotions array is required.' } });
     }
 
     let promoted = 0;
     let repeated = 0;
+    let graduated = 0;
     for (const p of promotions) {
-      if (!p.student_id || !p.new_class_id) continue;
-      await query(
-        'UPDATE students SET class_id = ?, previous_class_id = class_id WHERE id = ? AND school_id = ?',
-        [p.new_class_id, p.student_id, schoolId]
-      );
-      if (p.action === 'repeat') {
+      if (!p.student_id) continue;
+
+      if (p.action === 'graduate') {
+        await query(
+          "UPDATE students SET class_id = NULL, previous_class_id = class_id, status = 'graduated' WHERE id = ? AND school_id = ?",
+          [p.student_id, schoolId]
+        );
+        graduated++;
+      } else if (p.action === 'repeat') {
+        await query(
+          "UPDATE students SET previous_class_id = class_id WHERE id = ? AND school_id = ?",
+          [p.student_id, schoolId]
+        );
         repeated++;
       } else {
+        // promote
+        if (!p.new_class_id) continue;
+        await query(
+          'UPDATE students SET class_id = ?, previous_class_id = class_id WHERE id = ? AND school_id = ?',
+          [p.new_class_id, p.student_id, schoolId]
+        );
         promoted++;
       }
     }
 
     return res.json({
       data: {
-        message: `Promotion complete: ${promoted} student(s) promoted, ${repeated} student(s) set to repeat level.`,
+        message: `Promotion complete: ${promoted} student(s) promoted, ${repeated} student(s) set to repeat, ${graduated} student(s) graduated.`,
         promoted,
-        repeated
+        repeated,
+        graduated
       }
     });
   } catch (err) {

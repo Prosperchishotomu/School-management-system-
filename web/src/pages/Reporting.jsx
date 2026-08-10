@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { 
   FileBarChart2, Download, TrendingUp, AlertTriangle, Users, 
   Landmark, ShieldCheck, CheckCircle2, AlertCircle, MessageSquare, 
@@ -9,6 +10,8 @@ import {
 
 const Reporting = () => {
   const { user, activeSchoolId } = useAuth();
+  const toast = useToast();
+
   
   // Super Admin stats
   const [platformReports, setPlatformReports] = useState(null);
@@ -92,9 +95,9 @@ const Reporting = () => {
       });
       setCommentForm({ ...commentForm, comment: '', ref_id: '' });
       // Refresh school data to pull new comments
-      fetchSchoolData(currentSchoolId);
+      toast.success('Annotation comment saved.');
     } catch (err) {
-      alert(err.message || 'Failed to submit annotation comment.');
+      toast.error(err.message || 'Failed to submit annotation comment.');
     } finally {
       setCommentSaving(false);
     }

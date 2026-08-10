@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import {
   Grid, BookOpen, User, Plus, Trash2, CheckCircle2,
   AlertTriangle, Loader2, Sparkles, BookMarked, UserCheck,
-  Eye, Edit2, Ban
+  Eye, Edit2, Ban, X
 } from 'lucide-react';
-
 
 const Classes = () => {
   const { activeSchoolId } = useAuth();
+  const toast = useToast();
+
   const [schoolInfo, setSchoolInfo] = useState(null);
   
   // Tabs: 'classes' | 'subjects' | 'assignments'
@@ -25,6 +27,16 @@ const Classes = () => {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+
+  // Promotions Tab state
+  const [fromClassId, setFromClassId] = useState('');
+  const [toClassId, setToClassId] = useState('');
+  const [promoStudents, setPromoStudents] = useState([]);
+  const [loadingPromoStudents, setLoadingPromoStudents] = useState(false);
+  const [fromClassTeacher, setFromClassTeacher] = useState('');
+  const [toClassTeacher, setToClassTeacher] = useState('');
+  const [promoSubmitting, setPromoSubmitting] = useState(false);
+
   
   // Create Class Form
   const [classForm, setClassForm] = useState({
@@ -114,6 +126,123 @@ const Classes = () => {
   useEffect(() => {
     fetchData();
   }, [activeSchoolId]);
+
+  useEffect(() => {
+    if (!activeSchoolId || !fromClassId) {
+      setPromoStudents([]);
+      setFromClassTeacher('');
+      return;
+    }
+
+    // Find the Class Teacher for source class
+    const sourceClass = classes.find(c => String(c.id) === String(fromClassId));
+    setFromClassTeacher(sourceClass?.form_master_id || '');
+
+    const levelStr = (sourceClass?.level || sourceClass?.grade_level || '').trim().toLowerCase();
+    // Students finish at Grade 7, Form 4 and 6
+    const isTerminal = ['grade 7', 'form 4', 'form 6'].some(termLvl => levelStr.includes(termLvl.toLowerCase()));
+
+    setLoadingPromoStudents(true);
+    api.get(`/schools/${activeSchoolId}/students?class_id=${fromClassId}`)
+      .then(res => {
+        const list = (res.data || []).map(s => {
+          const status = (s.status || '').toLowerCase();
+          // By default all students must be promoted, except for those suspended, finished or transferred.
+          const isExcluded = ['suspended', 'transferred', 'withdrawn', 'dropped_out', 'graduated'].includes(status);
+          
+          let defaultAction = 'promote';
+          if (isExcluded) {
+            defaultAction = 'repeat';
+          } else if (isTerminal) {
+            defaultAction = 'graduate';
+          }
+
+          return {
+            id: s.id,
+            first_name: s.first_name,
+            last_name: s.last_name,
+            admission_number: s.admission_number,
+            status: s.status,
+            action: defaultAction
+          };
+        });
+        setPromoStudents(list);
+      })
+      .catch(err => console.error('Error fetching students for promotion:', err))
+      .finally(() => setLoadingPromoStudents(false));
+  }, [fromClassId, activeSchoolId, classes]);
+
+
+  useEffect(() => {
+    if (!toClassId) {
+      setToClassTeacher('');
+      return;
+    }
+    const targetClass = classes.find(c => String(c.id) === String(toClassId));
+    setToClassTeacher(targetClass?.form_master_id || '');
+  }, [toClassId, classes]);
+
+  const handleProcessPromotions = async (e) => {
+    e.preventDefault();
+    if (!fromClassId || !toClassId) {
+      setMessage({ type: 'error', text: 'Please select both source and destination classes.' });
+      return;
+    }
+    if (fromClassId === toClassId) {
+      setMessage({ type: 'error', text: 'Source and Destination classes must be different.' });
+      return;
+    }
+    if (promoStudents.length === 0) {
+      setMessage({ type: 'error', text: 'No students in the source class to promote.' });
+      return;
+    }
+
+    setPromoSubmitting(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      // 1. Process student promotions (API expects new_class_id for each, even repeaters who get fromClassId)
+      const payload = promoStudents.map(s => ({
+        student_id: s.id,
+        new_class_id: s.action === 'promote' ? toClassId : fromClassId,
+        action: s.action
+      }));
+
+      const promoRes = await api.post(`/schools/${activeSchoolId}/promote-students/promote`, { promotions: payload });
+
+      // 2. Reassign teachers if they are modified
+      const sourceClass = classes.find(c => String(c.id) === String(fromClassId));
+      const targetClass = classes.find(c => String(c.id) === String(toClassId));
+
+      if (sourceClass && String(sourceClass.form_master_id || '') !== String(fromClassTeacher)) {
+        await api.patch(`/schools/${activeSchoolId}/classes/${fromClassId}`, {
+          form_master_id: fromClassTeacher || null
+        });
+      }
+
+      if (targetClass && String(targetClass.form_master_id || '') !== String(toClassTeacher)) {
+        await api.patch(`/schools/${activeSchoolId}/classes/${toClassId}`, {
+          form_master_id: toClassTeacher || null
+        });
+      }
+
+      setMessage({
+        type: 'success',
+        text: `Promotions processed successfully! ${promoRes.data?.message || ''}`
+      });
+
+      // Refresh data
+      fetchData();
+      // Reset selectors
+      setFromClassId('');
+      setToClassId('');
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Failed to complete promotions.' });
+    } finally {
+      setPromoSubmitting(false);
+    }
+  };
+
 
   const handleCreateClass = async (e) => {
     e.preventDefault();
@@ -240,6 +369,16 @@ const Classes = () => {
             <UserCheck className="w-4 h-4" />
             <span>Teaching Assignments ({assignments.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('promotions')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
+              activeTab === 'promotions' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>End of Year Promotions</span>
+          </button>
         </div>
       </div>
 
@@ -360,7 +499,15 @@ const Classes = () => {
 
                     <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-line-border/20 pt-3">
                       <button
-                        onClick={() => alert(`Class Details:\nName: ${c.name}\nGrade: ${c.grade_level}\nForm Master: ${c.form_master_name || 'Unassigned'}`)}
+                        onClick={() => {
+                          const info = [
+                            `Class: ${c.name}`,
+                            `Grade: ${c.grade_level}`,
+                            `Form Master: ${c.form_master_name || 'Unassigned'}`,
+                            `Level: ${c.level || 'Not set'}`,
+                          ].join(' · ');
+                          toast.info(info);
+                        }}
                         className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-teal-primary/20"
                       >
                         <Eye className="w-3 h-3" />
@@ -372,7 +519,8 @@ const Classes = () => {
                           if (newName && newName.trim()) {
                             api.put(`/schools/${activeSchoolId}/classes/${c.id}`, { name: newName.trim() })
                               .then(() => fetchData())
-                              .catch(err => alert(err.message));
+                              .then(() => { toast.success(`${c.name} deleted.`); fetchData(); })
+                              .catch(err => toast.error(err.message || 'Failed to delete class.'));
                           }
                         }}
                         className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-amber-warning/30"
@@ -381,7 +529,8 @@ const Classes = () => {
                         <span>Edit</span>
                       </button>
                       <button
-                        onClick={() => alert('Classroom is active.')}
+                        onClick={() => toast.info('Classroom is active and ready.')}
+
                         className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-orange-500/30"
                       >
                         <Ban className="w-3 h-3" />
@@ -450,9 +599,15 @@ const Classes = () => {
                         onChange={e => setSubjectForm({ ...subjectForm, level: e.target.value })}
                       >
                         <option value="all">All Levels</option>
-                        <option value="primary">Primary</option>
-                        <option value="secondary">Secondary (O-Level)</option>
-                        <option value="alevel">Advanced (A-Level)</option>
+                        {(!schoolInfo || schoolInfo.school_type === 'primary') && (
+                          <option value="primary">Primary</option>
+                        )}
+                        {(!schoolInfo || schoolInfo.school_type === 'secondary') && (
+                          <>
+                            <option value="secondary">Secondary (O-Level)</option>
+                            <option value="alevel">Advanced (A-Level)</option>
+                          </>
+                        )}
                       </select>
                     </div>
                   </div>
@@ -614,6 +769,210 @@ const Classes = () => {
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TAB 4: END OF YEAR PROMOTIONS */}
+          {activeTab === 'promotions' && (
+            <div className="space-y-6">
+              {/* Top Configuration Bar */}
+              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-2">
+                    Source Class (Current Class) *
+                  </label>
+                  <select
+                    className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
+                    value={fromClassId}
+                    onChange={e => setFromClassId(e.target.value)}
+                  >
+                    <option value="">-- Choose Class to Promote From --</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-2">
+                    Destination Class (Promoted To) *
+                  </label>
+                  <select
+                    className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
+                    value={toClassId}
+                    onChange={e => setToClassId(e.target.value)}
+                  >
+                    <option value="">-- Choose Class to Promote To --</option>
+                    {classes.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {fromClassId && toClassId && (
+                <form onSubmit={handleProcessPromotions} className="space-y-6">
+                  {/* Class Teachers Reassignment Card */}
+                  <div className="glass-panel p-6 rounded-2xl border border-line-border/30">
+                    <h3 className="font-sans font-bold text-sm text-ink mb-4 flex items-center space-x-2">
+                      <UserCheck className="w-4 h-4 text-teal-primary" />
+                      <span>Class Teachers (Form Masters) Reassignment</span>
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
+                      <div className="p-4 bg-sage/5 border border-line-border/20 rounded-xl space-y-3">
+                        <span className="font-bold text-teal-dark block">Source Class Teacher</span>
+                        <div>
+                          <label className="block text-[9px] font-sans text-ink/50 uppercase tracking-wider mb-1">Assign Teacher</label>
+                          <select
+                            className="w-full bg-paper border border-line-border rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+                            value={fromClassTeacher}
+                            onChange={e => setFromClassTeacher(e.target.value)}
+                          >
+                            <option value="">Unassigned</option>
+                            {staff.map(st => (
+                              <option key={st.id} value={st.id}>{st.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-teal-primary/5 border border-teal-primary/20 rounded-xl space-y-3">
+                        <span className="font-bold text-teal-primary block">Destination Class Teacher</span>
+                        <div>
+                          <label className="block text-[9px] font-sans text-ink/50 uppercase tracking-wider mb-1">Assign Teacher</label>
+                          <select
+                            className="w-full bg-paper border border-line-border rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+                            value={toClassTeacher}
+                            onChange={e => setToClassTeacher(e.target.value)}
+                          >
+                            <option value="">Unassigned</option>
+                            {staff.map(st => (
+                              <option key={st.id} value={st.id}>{st.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Student Promotions Table */}
+                  <div className="glass-panel rounded-2xl border border-line-border/30 overflow-hidden">
+                    <div className="p-4 bg-sage/5 border-b border-line-border/30 flex justify-between items-center">
+                      <span className="font-sans font-bold text-xs text-ink/75">
+                        Students list ({promoStudents.length})
+                      </span>
+                      <div className="space-x-2">
+                        <button
+                          type="button"
+                          onClick={() => setPromoStudents(prev => prev.map(s => ({ ...s, action: 'promote' })))}
+                          className="px-3 py-1 bg-teal-primary/10 text-teal-dark border border-teal-primary/20 rounded-lg text-[10px] font-bold cursor-pointer hover:bg-teal-primary/20"
+                        >
+                          Mark All Promote
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPromoStudents(prev => prev.map(s => ({ ...s, action: 'repeat' })))}
+                          className="px-3 py-1 bg-brick-critical/10 text-brick-critical border border-brick-critical/20 rounded-lg text-[10px] font-bold cursor-pointer hover:bg-brick-critical/20"
+                        >
+                          Mark All Repeat
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPromoStudents(prev => prev.map(s => ({ ...s, action: 'graduate' })))}
+                          className="px-3 py-1 bg-ink/10 text-ink border border-line-border/30 rounded-lg text-[10px] font-bold cursor-pointer hover:bg-ink/20"
+                        >
+                          Mark All Graduate
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse text-xs font-sans text-ink">
+                        <thead>
+                          <tr className="bg-sage/10 border-b border-line-border/30 text-ink/60 font-bold uppercase tracking-wider">
+                            <th className="py-3 px-5">Admission No.</th>
+                            <th className="py-3 px-5">Student Name</th>
+                            <th className="py-3 px-5 text-right pr-6">Action / Provision</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-line-border/20">
+                          {loadingPromoStudents ? (
+                            <tr>
+                              <td colSpan={3} className="py-12 text-center text-ink/40">
+                                <Loader2 className="w-6 h-6 animate-spin mx-auto text-teal-primary mb-2" />
+                                <span>Loading class roster...</span>
+                              </td>
+                            </tr>
+                          ) : (
+                            promoStudents.map(student => (
+                              <tr key={student.id} className="hover:bg-sage/5 transition-colors">
+                                <td className="py-3 px-5 font-mono font-bold text-teal-primary">{student.admission_number}</td>
+                                <td className="py-3 px-5 font-bold text-ink">{student.first_name} {student.last_name}</td>
+                                <td className="py-3 px-5 text-right pr-6">
+                                  <div className="inline-flex rounded-lg border border-line-border overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPromoStudents(prev => prev.map(s => s.id === student.id ? { ...s, action: 'promote' } : s));
+                                      }}
+                                      className={`px-3 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
+                                        student.action === 'promote' ? 'bg-teal-primary text-white' : 'bg-paper text-ink/65 hover:bg-sage/5'
+                                      }`}
+                                    >
+                                      Promote
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPromoStudents(prev => prev.map(s => s.id === student.id ? { ...s, action: 'repeat' } : s));
+                                      }}
+                                      className={`px-3 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
+                                        student.action === 'repeat' ? 'bg-brick-critical text-white' : 'bg-paper text-ink/65 hover:bg-sage/5'
+                                      }`}
+                                    >
+                                      Repeat
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPromoStudents(prev => prev.map(s => s.id === student.id ? { ...s, action: 'graduate' } : s));
+                                      }}
+                                      className={`px-3 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
+                                        student.action === 'graduate' ? 'bg-ink text-white' : 'bg-paper text-ink/65 hover:bg-sage/5'
+                                      }`}
+                                    >
+                                      Graduate
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                          {!loadingPromoStudents && promoStudents.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="py-12 text-center text-ink/40">
+                                No students currently registered in this source class.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Submission buttons */}
+                  <div className="flex justify-end pt-4 border-t border-line-border/30">
+                    <button
+                      type="submit"
+                      disabled={promoSubmitting}
+                      className="px-6 py-3 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center space-x-2 cursor-pointer transition-colors"
+                    >
+                      {promoSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                      <span>Process Year-End Promotions</span>
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           )}
         </>

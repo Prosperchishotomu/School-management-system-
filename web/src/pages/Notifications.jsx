@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import {
   Bell, CheckCircle2, AlertTriangle, MessageSquare, BookOpen,
   DollarSign, Loader2, CheckCheck, Inbox, ShieldAlert, Sparkles,
-  Send, Reply, X, User, Mail, Plus, ArrowRight
+  Send, Reply, X, User, Mail, Plus, ArrowRight, Trash2
 } from 'lucide-react';
+
 
 const Notifications = () => {
   const { user, activeSchoolId } = useAuth();
+  const toast = useToast();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -283,7 +286,7 @@ const Notifications = () => {
       setNotifications(prev => prev.filter(item => !selectedIds.includes(item.id)));
       setSelectedIds([]);
     } catch (err) {
-      alert(err.response?.data?.error?.message || err.message || 'Failed to delete selected notifications.');
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to delete selected notifications.');
     } finally {
       setDeletingBatch(false);
     }
@@ -298,7 +301,7 @@ const Notifications = () => {
       setNotifications([]);
       setSelectedIds([]);
     } catch (err) {
-      alert(err.response?.data?.error?.message || err.message || 'Failed to clear all notifications.');
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to clear all notifications.');
     } finally {
       setDeletingBatch(false);
     }

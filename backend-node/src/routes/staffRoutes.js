@@ -72,8 +72,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
 // POST /schools/:schoolId/staff
 router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    const { schoolId } = req.params;
-    const { name, email, phone, role_title, class_id, username, password } = req.body;
+  const { schoolId } = req.params;
+    const { name, email, phone, role_title, class_id, username, password, subject_ids } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Full name is required.' } });
@@ -127,6 +127,31 @@ router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'),
       `INSERT INTO staff (id, school_id, user_id, class_id, name, email, phone, role_title, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
       [staffId, schoolId, userId, class_id || null, name.trim(), email || null, phone || null, role_title || 'Teacher']
     );
+
+    // If subject_ids provided, create teaching_assignments (no class_id required here — class can be assigned later via timetable)
+    if (Array.isArray(subject_ids) && subject_ids.length > 0) {
+      for (const subjectId of subject_ids) {
+        try {
+          const taId = 'TA' + Math.random().toString(36).substr(2, 6).toUpperCase();
+          // Use class_id if provided, otherwise a placeholder (we allow null by making a nullable class_id or skip)
+          // teaching_assignments has class_id NOT NULL, so we only insert if class_id is provided
+          if (class_id) {
+            await query(
+              `INSERT IGNORE INTO teaching_assignments (id, school_id, teacher_id, class_id, subject_id) VALUES (?, ?, ?, ?, ?)`,
+              [taId, schoolId, userId, class_id, subjectId]
+            );
+          }
+          // Store the teacher's preferred subjects in a looser way — store in a staff_subjects table or as a JSON note
+          // As a safe fallback, also store in a staff_subjects junction table if it exists
+          try {
+            await query(
+              `INSERT IGNORE INTO staff_subjects (staff_id, school_id, subject_id) VALUES (?, ?, ?)`,
+              [staffId, schoolId, subjectId]
+            );
+          } catch (_) { /* table may not exist yet — will be created below */ }
+        } catch (e) { console.error('Subject assignment error:', e); }
+      }
+    }
 
     const created = await queryOne(
       `SELECT stf.*, c.name as assigned_class_name, u.username
@@ -231,6 +256,55 @@ router.delete('/:id', authenticateToken, requireRoles('school_admin', 'super_adm
   } catch (err) {
     console.error('Delete staff error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete staff member.' } });
+  }
+});
+
+// GET /schools/:schoolId/staff/:id/subjects — get subjects assigned to a staff member
+router.get('/:id/subjects', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const subjects = await query(
+      `SELECT s.id, s.name, s.code, s.level
+       FROM staff_subjects ss
+       JOIN subjects s ON ss.subject_id = s.id
+       WHERE ss.staff_id = ? AND ss.school_id = ?
+       ORDER BY s.name ASC`,
+      [id, schoolId]
+    );
+    return res.json({ data: subjects });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch staff subjects.' } });
+  }
+});
+
+// PUT /schools/:schoolId/staff/:id/subjects — replace all subject assignments for a staff member
+router.put('/:id/subjects', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { subject_ids } = req.body;
+    if (!Array.isArray(subject_ids)) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'subject_ids must be an array.' } });
+    }
+    // Replace all assignments for this staff member
+    await query('DELETE FROM staff_subjects WHERE staff_id = ? AND school_id = ?', [id, schoolId]);
+    for (const subjectId of subject_ids) {
+      await query(
+        'INSERT IGNORE INTO staff_subjects (staff_id, school_id, subject_id) VALUES (?, ?, ?)',
+        [id, schoolId, subjectId]
+      );
+    }
+    const subjects = await query(
+      `SELECT s.id, s.name, s.code, s.level
+       FROM staff_subjects ss
+       JOIN subjects s ON ss.subject_id = s.id
+       WHERE ss.staff_id = ? AND ss.school_id = ?
+       ORDER BY s.name ASC`,
+      [id, schoolId]
+    );
+    return res.json({ data: subjects });
+  } catch (err) {
+    console.error('Update staff subjects error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update staff subject assignments.' } });
   }
 });
 

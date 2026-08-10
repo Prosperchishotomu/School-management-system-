@@ -4,6 +4,14 @@ const crypto = require('crypto');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 
+const getTermFromDate = (dateVal = new Date()) => {
+  const d = new Date(dateVal);
+  const month = d.getMonth(); // 0 = Jan, 11 = Dec
+  if (month >= 0 && month <= 3) return 'Term 1';
+  if (month >= 4 && month <= 7) return 'Term 2';
+  return 'Term 3';
+};
+
 // GET /schools/:schoolId/fees
 router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
   try {
@@ -52,7 +60,7 @@ router.post('/schools/:schoolId/fees', authenticateToken, requireRoles('school_a
     await query(
       `INSERT INTO fees (id, school_id, student_id, title, amount_due, amount_paid, term, due_date, status)
        VALUES (?, ?, ?, ?, ?, 0.00, ?, ?, 'unpaid')`,
-      [feeId, schoolId, student_id, title.trim(), parseFloat(amount_due), term || 'Term 1', due_date || null]
+      [feeId, schoolId, student_id, title.trim(), parseFloat(amount_due), term || getTermFromDate(), due_date || null]
     );
 
     const created = await queryOne('SELECT * FROM fees WHERE id = ?', [feeId]);
@@ -62,6 +70,7 @@ router.post('/schools/:schoolId/fees', authenticateToken, requireRoles('school_a
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create fee ledger.' } });
   }
 });
+
 
 // POST /schools/:schoolId/fees/:feeId/payments
 router.post('/schools/:schoolId/fees/:feeId/payments', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {

@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer, Eye, BookOpen, Phone, AtSign, Ban, CheckCircle2 } from 'lucide-react';
+import { useToast } from '../contexts/ToastContext';
+import { UserCheck, Plus, X, Loader2, Mail, Send, MessageSquare, Inbox, Edit3, Trash2, Printer, Eye, BookOpen, Phone, AtSign, Ban, CheckCircle2, ArrowUpRight } from 'lucide-react';
 
 import PrintReportModal from '../components/PrintReportModal';
 
 const Staff = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
+
   const [staff, setStaff] = useState([]);
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +30,7 @@ const Staff = () => {
   const [editStaff, setEditStaff] = useState(null);
   const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', role_title: '', class_id: '' });
   const [classes, setClasses] = useState([]);
+  const [schoolInfo, setSchoolInfo] = useState(null);
 
   // Messaging state
   const [showMsgModal, setShowMsgModal] = useState(false);
@@ -61,16 +65,13 @@ const Staff = () => {
     const nextStatus = staffMember.status === 'deactivated' ? 'active' : 'deactivated';
     try {
       await api.patch(`/schools/${activeSchoolId}/staff/${staffMember.id}`, {
-        name: staffMember.name,
-        email: staffMember.email,
-        phone: staffMember.phone,
-        role_title: staffMember.role_title,
-        class_id: staffMember.class_id,
-        status: nextStatus
+        name: staffMember.name, email: staffMember.email, phone: staffMember.phone,
+        role_title: staffMember.role_title, class_id: staffMember.class_id, status: nextStatus
       });
+      toast.success(nextStatus === 'active' ? `${staffMember.name} reactivated.` : `${staffMember.name} deactivated.`);
       fetchStaff();
     } catch (err) {
-      alert(err.message || 'Failed to update staff status.');
+      toast.error(err.message || 'Failed to update staff status.');
     }
   };
 
@@ -104,6 +105,11 @@ const Staff = () => {
     fetchStaff();
     fetchMessages();
     fetchClasses();
+    if (activeSchoolId) {
+      api.get(`/schools/${activeSchoolId}`)
+        .then(res => { setSchoolInfo(res.data?.data || res.data); })
+        .catch(e => console.error(e));
+    }
   }, [activeSchoolId]);
 
   const handleAdd = async (e) => {
@@ -159,12 +165,15 @@ const Staff = () => {
   };
 
   const handleDelete = async (staffId) => {
-    if (!window.confirm('Are you sure you want to delete this staff member? This will also revoke their login account.')) return;
+    if (!window.confirm('Are you sure you want to remove this staff member?')) return;
+    const target = staff.find(s => s.id === staffId);
     try {
       await api.delete(`/schools/${activeSchoolId}/staff/${staffId}`);
+      toast.success(`${target?.name || 'Staff member'} removed from roster.`);
       fetchStaff();
+      setSelectedIds([]);
     } catch (err) {
-      alert(err.message || 'Failed to delete staff member.');
+      toast.error(err.message || 'Failed to delete staff member.');
     }
   };
 
@@ -222,29 +231,22 @@ const Staff = () => {
     );
   }
 
-  const handleSelectAll = (e) => {
-    if (e.target.checked) {
-      setSelectedIds(staff.map(s => s.id));
-    } else {
-      setSelectedIds([]);
-    }
-  };
-
   const handleToggleSelect = (id) => {
     setSelectedIds(prev =>
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
 
-  const handleBulkDeleteStaff = async () => {
+  const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Are you sure you want to permanently remove ${selectedIds.length} staff records and their associated login accounts?`)) return;
+    if (!window.confirm(`Delete ${selectedIds.length} staff member(s) permanently?`)) return;
     try {
-      await api.post(`/schools/${activeSchoolId}/staff/bulk-delete`, { staff_ids: selectedIds });
+      await Promise.all(selectedIds.map(id => api.delete(`/schools/${activeSchoolId}/staff/${id}`).catch(() => {})));
+      toast.success(`${selectedIds.length} staff record(s) removed.`);
       setSelectedIds([]);
       fetchStaff();
     } catch (err) {
-      alert(err.message || 'Failed to bulk delete staff records.');
+      toast.error(err.message || 'Failed to bulk delete staff records.');
     }
   };
 
@@ -301,64 +303,57 @@ const Staff = () => {
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm font-sans">{error}</div>}
 
-      {/* Selection Action Bar (Appears when items are selected) */}
+      {/* ── FLOATING SELECTION ACTION BAR ───────────────────────────────────── */}
       {selectedIds.length > 0 && (
-        <div className="bg-sage/15 border border-teal-primary/30 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-4 animate-fadeIn shadow-sm">
-          <div className="flex items-center space-x-3 text-xs font-bold text-ink">
-            <span className="bg-teal-primary text-paper px-3 py-1 rounded-full font-mono">{selectedIds.length} Selected</span>
-            <span>Batch Actions: Manage selected faculty records.</span>
+        <div className="bg-ink/95 backdrop-blur-md rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-3 animate-fadeIn shadow-2xl border border-white/10">
+          <div className="flex items-center gap-3">
+            <span className="bg-teal-primary text-paper text-[11px] font-bold px-3 py-1 rounded-full font-mono">{selectedIds.length} selected</span>
+            <span className="text-paper/70 text-xs font-sans">
+              {selectedIds.length === 1
+                ? filteredStaff.find(s => s.id === selectedIds[0])?.name
+                : `${selectedIds.length} staff members`}
+            </span>
           </div>
-
           <div className="flex flex-wrap items-center gap-2">
-            {selectedIds.length === 1 && (
-              <button
-                onClick={() => {
-                  const s = staff.find(item => item.id === selectedIds[0]);
-                  if (s) handleViewStaff(s);
-                }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer border border-teal-primary/20 shadow-2xs"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>View</span>
+            {selectedIds.length === 1 && (() => {
+              const s = filteredStaff.find(m => m.id === selectedIds[0]);
+              return s ? (
+                <>
+                  <button onClick={() => handleViewStaff(s)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-paper text-xs font-semibold rounded-xl transition-all cursor-pointer border border-white/15">
+                    <Eye className="w-3.5 h-3.5" /><span>View</span>
+                  </button>
+                  <button onClick={() => openEditModal(s)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-amber-400/20">
+                    <Edit3 className="w-3.5 h-3.5" /><span>Edit</span>
+                  </button>
+                  <button
+                    onClick={() => handleToggleStatus(s)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border ${
+                      s.status === 'deactivated'
+                        ? 'bg-teal-primary/30 hover:bg-teal-primary/50 text-teal-300 border-teal-400/30'
+                        : 'bg-orange-400/20 hover:bg-orange-400/30 text-orange-300 border-orange-400/20'
+                    }`}
+                  >
+                    {s.status === 'deactivated' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                    <span>{s.status === 'deactivated' ? 'Activate' : 'Suspend'}</span>
+                  </button>
+                  <button onClick={() => handleDelete(s.id)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-red-500/20">
+                    <Trash2 className="w-3.5 h-3.5" /><span>Delete</span>
+                  </button>
+                </>
+              ) : null;
+            })()}
+            {selectedIds.length > 1 && (
+              <button onClick={handleBulkDelete} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-red-500/20">
+                <Trash2 className="w-3.5 h-3.5" /><span>Delete All ({selectedIds.length})</span>
               </button>
             )}
-
-            {selectedIds.length === 1 && (
-              <button
-                onClick={() => {
-                  const s = staff.find(item => item.id === selectedIds[0]);
-                  if (s) openEditModal(s);
-                }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer border border-amber-warning/30 shadow-2xs"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Edit</span>
-              </button>
-            )}
-
-            <button
-              onClick={async () => {
-                if (!window.confirm(`Deactivate/Suspend ${selectedIds.length} selected staff member(s)?`)) return;
-                await Promise.all(selectedIds.map(id => api.put(`/schools/${activeSchoolId}/staff/${id}`, { status: 'deactivated' }).catch(() => {})));
-                setSelectedIds([]);
-                fetchStaff();
-              }}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fdf0e6] hover:bg-orange-500/25 text-[#a84b00] text-xs font-bold rounded-xl transition-all cursor-pointer border border-orange-500/30 shadow-2xs"
-            >
-              <Ban className="w-3.5 h-3.5" />
-              <span>Suspend ({selectedIds.length})</span>
-            </button>
-
-            <button
-              onClick={handleBulkDeleteStaff}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fbeae8] hover:bg-brick-critical/25 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer border border-brick-critical/30 shadow-2xs"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete ({selectedIds.length})</span>
+            <button onClick={() => setSelectedIds([])} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-paper/50 hover:text-paper text-xs font-semibold rounded-xl transition-all cursor-pointer">
+              <X className="w-3.5 h-3.5" /><span>Clear</span>
             </button>
           </div>
         </div>
       )}
+
 
       {/* Role filter tabs */}
       <div className="flex flex-wrap gap-2 text-xs font-sans">
@@ -417,21 +412,29 @@ const Staff = () => {
           <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
             {loading ? (
               <tr><td colSpan="7" className="py-12 text-center text-ink/40 text-xs">Loading staff data...</td></tr>
-            ) : filteredStaff.map((s) => (
-              <tr key={s.id} className="hover:bg-sage/5 transition-colors">
-                <td className="py-4 px-4 text-center">
-
+            ) : filteredStaff.map((s) => {
+              const isSelected = selectedIds.includes(s.id);
+              return (
+              <tr
+                key={s.id}
+                onClick={() => setSelectedIds(prev => prev.includes(s.id) ? prev.filter(i => i !== s.id) : [...prev, s.id])}
+                className={`transition-colors cursor-pointer ${
+                  isSelected
+                    ? 'bg-teal-primary/8 border-l-2 border-l-teal-primary'
+                    : 'hover:bg-sage/5 border-l-2 border-l-transparent'
+                }`}
+              >
+                <td className="py-4 px-4 text-center" onClick={e => e.stopPropagation()}>
                   <input
                     type="checkbox"
-                    checked={selectedIds.includes(s.id)}
+                    checked={isSelected}
                     onChange={() => setSelectedIds(prev => prev.includes(s.id) ? prev.filter(i => i !== s.id) : [...prev, s.id])}
                     className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
                   />
                 </td>
                 <td className="py-4 px-6 font-bold">
-
                   <button
-                    onClick={() => handleViewStaff(s)}
+                    onClick={(e) => { e.stopPropagation(); handleViewStaff(s); }}
                     className="text-left text-teal-primary hover:text-teal-dark hover:underline font-bold cursor-pointer transition-colors"
                   >
                     {s.name}
@@ -450,50 +453,15 @@ const Staff = () => {
                     {s.status || 'active'}
                   </span>
                 </td>
-                <td className="py-4 px-6 text-right whitespace-nowrap">
-                  {selectedIds.includes(s.id) ? (
-                    <div className="flex items-center justify-end gap-1.5 animate-fadeIn">
-                      <button
-                        onClick={() => handleViewStaff(s)}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-teal-primary/20"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>View</span>
-                      </button>
-                      <button
-                        onClick={() => openEditModal(s)}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-amber-warning/30"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        onClick={() => handleToggleStatus(s)}
-                        title={s.status === 'deactivated' ? 'Activate Staff Member' : 'Suspend/Deactivate Staff Member'}
-                        className={`inline-flex items-center space-x-1.5 px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border ${
-                          s.status === 'deactivated'
-                            ? 'bg-teal-primary/15 text-teal-dark hover:bg-teal-primary/25 border-teal-primary/30'
-                            : 'bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 border-orange-500/30'
-                        }`}
-                      >
-                        {s.status === 'deactivated' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                        <span>{s.status === 'deactivated' ? 'Activate' : 'Suspend'}</span>
-                      </button>
-                      <button
-                        onClick={() => handleDelete(s.id)}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs border border-brick-critical/30"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-[11px] font-sans text-ink/30 italic select-none">Select row to action</span>
-                  )}
+                <td className="py-4 px-6 text-right">
+                  {isSelected
+                    ? <span className="text-[10px] font-semibold text-teal-primary">✓ Selected</span>
+                    : <span className="text-[11px] text-ink/25">click row</span>
+                  }
                 </td>
-
               </tr>
-            ))}
+              );
+            })}
             {filteredStaff.length === 0 && !loading && (
               <tr><td colSpan="6" className="py-8 text-center text-ink/50 text-xs">No staff records match this filter.</td></tr>
             )}
@@ -566,11 +534,17 @@ const Staff = () => {
                     defaultValue=""
                   >
                     <option value="" disabled>Select Administrative Preset...</option>
-                    <option value="Headmaster / Principal">Headmaster / Principal</option>
+                    {user?.role === 'super_admin' && (
+                      <option value="Headmaster / Principal">Headmaster / Principal</option>
+                    )}
                     <option value="Deputy Head / Vice Principal">Deputy Head / Vice Principal</option>
-                    <option value="Form Master / Mistress">Form Master / Mistress</option>
+                    {schoolInfo?.school_type !== 'primary' && (
+                      <option value="Form Master / Mistress">Form Master / Mistress</option>
+                    )}
                     <option value="Class Teacher">Class Teacher</option>
-                    <option value="Subject Teacher">Subject Teacher</option>
+                    {schoolInfo?.school_type !== 'primary' && (
+                      <option value="Subject Teacher">Subject Teacher</option>
+                    )}
                     <option value="Senior Master / Mistress">Senior Master / Mistress</option>
                     <option value="Bursar / Accountant">Bursar / Accountant</option>
                     <option value="School Librarian">School Librarian</option>
@@ -659,11 +633,17 @@ const Staff = () => {
                     defaultValue=""
                   >
                     <option value="" disabled>Select Administrative Preset...</option>
-                    <option value="Headmaster / Principal">Headmaster / Principal</option>
+                    {user?.role === 'super_admin' && (
+                      <option value="Headmaster / Principal">Headmaster / Principal</option>
+                    )}
                     <option value="Deputy Head / Vice Principal">Deputy Head / Vice Principal</option>
-                    <option value="Form Master / Mistress">Form Master / Mistress</option>
+                    {schoolInfo?.school_type !== 'primary' && (
+                      <option value="Form Master / Mistress">Form Master / Mistress</option>
+                    )}
                     <option value="Class Teacher">Class Teacher</option>
-                    <option value="Subject Teacher">Subject Teacher</option>
+                    {schoolInfo?.school_type !== 'primary' && (
+                      <option value="Subject Teacher">Subject Teacher</option>
+                    )}
                     <option value="Senior Master / Mistress">Senior Master / Mistress</option>
                     <option value="Bursar / Accountant">Bursar / Accountant</option>
                     <option value="School Librarian">School Librarian</option>

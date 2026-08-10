@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
 import { BookOpen, Plus, X, Loader2, RotateCcw, PenTool, BookMarked, Search, Filter } from 'lucide-react';
 
 const Library = () => {
   const { activeSchoolId, user } = useAuth();
+  const toast = useToast();
+
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -118,7 +121,7 @@ const Library = () => {
       setLendForm({ holder_type: 'student', holder_id: '' });
       fetchAssets();
     } catch (err) {
-      alert(err.message || 'Failed to issue item.');
+      toast.error(err.message || 'Failed to issue item.');
     } finally {
       setLendLoading(false);
     }
