@@ -10,7 +10,8 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 15,
   queueLimit: 0,
-  dateStrings: true
+  dateStrings: true,
+  connectTimeout: parseInt(process.env.DB_CONNECT_TIMEOUT || '3000', 10)
 });
 
 // Helper for executing queries with parameters
@@ -23,6 +24,31 @@ async function query(sql, params = []) {
 async function queryOne(sql, params = []) {
   const results = await query(sql, params);
   return results.length > 0 ? results[0] : null;
+}
+
+async function withTransaction(work) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const tx = {
+      query: async (sql, params = []) => {
+        const [rows] = await connection.execute(sql, params);
+        return rows;
+      },
+      queryOne: async (sql, params = []) => {
+        const [rows] = await connection.execute(sql, params);
+        return rows.length ? rows[0] : null;
+      }
+    };
+    const result = await work(tx);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    try { await connection.rollback(); } catch (_) {}
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 // Automatic schema table migrations & column enhancements
@@ -71,6 +97,158 @@ async function ensureTables() {
 
     // Users phone column
     try { await query(`ALTER TABLE \`users\` ADD COLUMN \`phone\` VARCHAR(30) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`users\` ADD COLUMN \`role\` VARCHAR(50) NULL`); } catch(e) {}
+    try {
+      await query(`UPDATE users u INNER JOIN user_roles ur ON ur.user_id = u.id INNER JOIN roles r ON r.id = ur.role_id SET u.role = r.name WHERE u.role IS NULL`);
+    } catch(e) {}
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`idempotency_keys\` (
+        \`id\` CHAR(36) PRIMARY KEY,
+        \`scope\` VARCHAR(160) NOT NULL,
+        \`idempotency_key\` VARCHAR(200) NOT NULL,
+        \`status_code\` SMALLINT UNSIGNED NOT NULL,
+        \`response_body\` JSON NOT NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_idempotency_scope_key\` (\`scope\`, \`idempotency_key\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Authentication persistence. These tables are required by login, rotation,
+    // logout-all, and password reset; keeping them in the runtime migration path
+    // prevents a fresh installation from silently losing session security.
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`refresh_tokens\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`user_id\` VARCHAR(50) NOT NULL,
+        \`token_hash\` CHAR(64) NOT NULL UNIQUE,
+        \`family_id\` VARCHAR(64) NOT NULL,
+        \`expires_at\` DATETIME NOT NULL,
+        \`revoked_at\` DATETIME NULL,
+        \`replaced_by_id\` VARCHAR(50) NULL,
+        \`ip\` VARCHAR(64) NULL,
+        \`user_agent\` VARCHAR(255) NULL,
+        \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_refresh_user\` (\`user_id\`),
+        INDEX \`idx_refresh_family\` (\`family_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`password_reset_tokens\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`user_id\` VARCHAR(50) NOT NULL,
+        \`token_hash\` CHAR(64) NOT NULL UNIQUE,
+        \`expires_at\` DATETIME NOT NULL,
+        \`used\` TINYINT(1) DEFAULT 0,
+        \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_reset_user\` (\`user_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // First-class communication model. Notifications remain useful for alerts,
+    // while conversations/messages provide an auditable threaded workflow.
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`conversations\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`school_id\` VARCHAR(50) NOT NULL,
+        \`subject\` VARCHAR(200) NOT NULL,
+        \`created_by\` VARCHAR(50) NOT NULL,
+        \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_conversations_school\` (\`school_id\`, \`updated_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`conversation_participants\` (
+        \`conversation_id\` VARCHAR(50) NOT NULL,
+        \`user_id\` VARCHAR(50) NOT NULL,
+        \`last_read_at\` DATETIME NULL,
+        \`joined_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`conversation_id\`, \`user_id\`),
+        INDEX \`idx_conversation_participant_user\` (\`user_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`messages\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`conversation_id\` VARCHAR(50) NOT NULL,
+        \`sender_id\` VARCHAR(50) NOT NULL,
+        \`body\` TEXT NOT NULL,
+        \`sent_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \`edited_at\` DATETIME NULL,
+        \`deleted_at\` DATETIME NULL,
+        INDEX \`idx_messages_conversation\` (\`conversation_id\`, \`sent_at\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`delivery_outbox\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`school_id\` VARCHAR(50) NOT NULL,
+        \`recipient_id\` VARCHAR(50) NOT NULL,
+        \`channel\` VARCHAR(20) NOT NULL,
+        \`event_type\` VARCHAR(50) NOT NULL,
+        \`reference_id\` VARCHAR(50) NOT NULL,
+        \`payload\` JSON NOT NULL,
+        \`status\` VARCHAR(20) DEFAULT 'queued',
+        \`attempts\` INT UNSIGNED DEFAULT 0,
+        \`last_error\` VARCHAR(500) NULL,
+        \`available_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \`sent_at\` DATETIME NULL,
+        \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX \`idx_delivery_status\` (\`status\`, \`available_at\`),
+        UNIQUE KEY \`uq_delivery_reference_channel\` (\`reference_id\`, \`channel\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // Approval compatibility for the canonical schema and the existing route
+    // contract. Both names are retained during migration so old records remain
+    // readable while all new writes can be audited consistently.
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`approvals\` (
+        \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+        \`school_id\` VARCHAR(50) NOT NULL,
+        \`entity_type\` VARCHAR(50) NOT NULL,
+        \`entity_id\` VARCHAR(50) NOT NULL,
+        \`action\` VARCHAR(50) NOT NULL,
+        \`action_type\` VARCHAR(50) NOT NULL,
+        \`payload\` JSON NULL,
+        \`requested_by\` VARCHAR(50) NOT NULL,
+        \`approved_by\` VARCHAR(50) NULL,
+        \`status\` VARCHAR(20) DEFAULT 'pending',
+        \`rejection_reason\` VARCHAR(500) NULL,
+        \`requested_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+        \`decided_at\` DATETIME NULL,
+        \`processed_at\` DATETIME NULL,
+        INDEX \`idx_approvals_school_status\` (\`school_id\`, \`status\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`uuid\` VARCHAR(50) NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`action_type\` VARCHAR(50) NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`rejection_reason\` VARCHAR(500) NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`requested_at\` DATETIME NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`created_at\` DATETIME NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`decided_at\` DATETIME NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` ADD COLUMN \`processed_at\` DATETIME NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` MODIFY COLUMN \`action\` VARCHAR(50) NULL`); } catch (_) {}
+    try { await query(`ALTER TABLE \`approvals\` MODIFY COLUMN \`uuid\` VARCHAR(50) NULL`); } catch (_) {}
+    try { await query(`UPDATE approvals SET action_type = action WHERE action_type IS NULL`); } catch (_) {}
+    try { await query(`UPDATE approvals SET action = action_type WHERE action IS NULL`); } catch (_) {}
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS \`result_publications\` (
+        \`id\` VARCHAR(50) PRIMARY KEY,
+        \`school_id\` VARCHAR(50) NOT NULL,
+        \`class_id\` VARCHAR(50) NOT NULL,
+        \`term\` VARCHAR(50) NOT NULL,
+        \`status\` VARCHAR(20) DEFAULT 'draft',
+        \`published_by\` VARCHAR(50) NULL,
+        \`published_at\` DATETIME NULL,
+        \`release_at\` DATETIME NULL,
+        \`released_by\` VARCHAR(50) NULL,
+        UNIQUE KEY \`uq_result_publication\` (\`school_id\`, \`class_id\`, \`term\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
 
     // Discipline incidents — widen status to include 'resolved'
     try { await query(`ALTER TABLE \`discipline_incidents\` MODIFY COLUMN \`status\` ENUM('open','investigating','resolved','closed','dismissed') DEFAULT 'open'`); } catch(e) {}
@@ -151,6 +329,411 @@ async function ensureTables() {
     // Teacher messages migrations
     try { await query(`ALTER TABLE \`teacher_messages\` ADD COLUMN \`message\` TEXT DEFAULT NULL`); } catch (e) {}
 
+    // Offline-safe attendance/marks synchronization metadata.
+    try { await query(`ALTER TABLE \`attendance\` ADD COLUMN \`client_uuid\` CHAR(36) NULL`); } catch (e) {}
+    try { await query(`ALTER TABLE \`attendance\` ADD COLUMN \`session\` VARCHAR(20) NOT NULL DEFAULT 'full_day'`); } catch (e) {}
+    try { await query(`ALTER TABLE \`attendance\` ADD COLUMN \`version\` INT UNSIGNED NOT NULL DEFAULT 1`); } catch (e) {}
+    try { await query(`ALTER TABLE \`attendance\` ADD COLUMN \`synced_at\` DATETIME NULL`); } catch (e) {}
+    try { await query(`ALTER TABLE \`grades\` ADD COLUMN \`client_uuid\` CHAR(36) NULL`); } catch (e) {}
+    try { await query(`ALTER TABLE \`grades\` ADD COLUMN \`version\` INT UNSIGNED NOT NULL DEFAULT 1`); } catch (e) {}
+    try { await query(`ALTER TABLE \`grades\` ADD COLUMN \`synced_at\` DATETIME NULL`); } catch (e) {}
+    try { await query(`ALTER TABLE \`fee_payments\` ADD COLUMN \`requested_amount\` DECIMAL(12,2) NULL`); } catch (e) {}
+
+    // Zimbabwe Pathway Modules (ZIMSEC, Academic sessions, Schemes, Multi-Currency, Boarding, EMIS)
+    await query(`CREATE TABLE IF NOT EXISTS \`academic_sessions\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`year\` INT UNSIGNED DEFAULT 2026,
+      \`name\` VARCHAR(50) NOT NULL,
+      \`start_date\` DATE NOT NULL,
+      \`end_date\` DATE NOT NULL,
+      \`is_current\` TINYINT(1) DEFAULT 0,
+      \`status\` VARCHAR(20) DEFAULT 'active',
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_sess_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`terms\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`session_id\` INT UNSIGNED NOT NULL,
+      \`name\` VARCHAR(50) NOT NULL,
+      \`start_date\` DATE NOT NULL,
+      \`end_date\` DATE NOT NULL,
+      \`is_current\` TINYINT(1) DEFAULT 0,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_term_sess\` (\`session_id\`),
+      INDEX \`idx_term_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`departments\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`name\` VARCHAR(100) NOT NULL,
+      \`head_employee_id\` INT UNSIGNED DEFAULT NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_dept_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`employees\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` CHAR(36) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`user_id\` VARCHAR(50) NOT NULL,
+      \`department_id\` INT UNSIGNED DEFAULT NULL,
+      \`staff_no\` VARCHAR(50) NOT NULL,
+      \`first_name\` VARCHAR(80) NOT NULL,
+      \`last_name\` VARCHAR(80) NOT NULL,
+      \`designation\` VARCHAR(50) NOT NULL DEFAULT 'teacher',
+      \`qualification\` VARCHAR(255) DEFAULT NULL,
+      \`joining_date\` DATE DEFAULT NULL,
+      \`employment_type\` VARCHAR(30) DEFAULT 'permanent',
+      \`status\` VARCHAR(30) DEFAULT 'active',
+      \`is_teaching\` TINYINT(1) DEFAULT 1,
+      \`phone\` VARCHAR(30) DEFAULT NULL,
+      \`email\` VARCHAR(100) DEFAULT NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_emp_school\` (\`school_id\`),
+      INDEX \`idx_emp_user\` (\`user_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`exam_boards\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`name\` VARCHAR(50) NOT NULL UNIQUE,
+      \`code\` VARCHAR(20) NOT NULL UNIQUE,
+      \`is_active\` TINYINT(1) DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`grading_scales\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`name\` VARCHAR(50) NOT NULL UNIQUE,
+      \`type\` VARCHAR(30) NOT NULL,
+      \`phases\` JSON NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`grade_ranges\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`scale_id\` INT UNSIGNED NOT NULL,
+      \`grade\` VARCHAR(10) NOT NULL,
+      \`min_pct\` DECIMAL(5,2) NOT NULL,
+      \`max_pct\` DECIMAL(5,2) NOT NULL,
+      \`points\` TINYINT DEFAULT NULL,
+      \`remark\` VARCHAR(100) DEFAULT NULL,
+      \`is_pass\` TINYINT(1) DEFAULT 1,
+      INDEX \`idx_grade_scale\` (\`scale_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`class_subjects\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`class_id\` VARCHAR(50) NOT NULL,
+      \`subject_id\` VARCHAR(50) NOT NULL,
+      \`teacher_id\` VARCHAR(50) DEFAULT NULL,
+      \`is_active\` TINYINT(1) DEFAULT 1,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_cs_class\` (\`class_id\`),
+      INDEX \`idx_cs_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`enrollments\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`student_id\` VARCHAR(50) NOT NULL,
+      \`class_id\` VARCHAR(50) NOT NULL,
+      \`session_id\` INT UNSIGNED DEFAULT NULL,
+      \`roll_no\` VARCHAR(20) DEFAULT NULL,
+      \`house_id\` INT UNSIGNED DEFAULT NULL,
+      \`status\` VARCHAR(30) DEFAULT 'active',
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_enr_student\` (\`student_id\`),
+      INDEX \`idx_enr_class\` (\`class_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`promotion_rules\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`from_class_id\` VARCHAR(50) NOT NULL,
+      \`to_class_id\` VARCHAR(50) DEFAULT NULL,
+      \`required_passes\` INT DEFAULT 5,
+      \`mandatory_subject_ids\` JSON DEFAULT NULL,
+      \`min_average_pct\` DECIMAL(5,2) DEFAULT 50.00,
+      \`is_active\` TINYINT(1) DEFAULT 1
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`exam_entries\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`board_id\` INT UNSIGNED DEFAULT 1,
+      \`session_year\` INT UNSIGNED NOT NULL,
+      \`exam_series\` VARCHAR(30) NOT NULL DEFAULT 'november',
+      \`level\` VARCHAR(30) DEFAULT 'o_level',
+      \`center_no\` VARCHAR(30) NOT NULL,
+      \`opens_at\` DATETIME NULL,
+      \`closes_at\` DATETIME NULL,
+      \`results_release_at\` DATETIME NULL,
+      \`status\` VARCHAR(30) DEFAULT 'draft',
+      \`submitted_at\` DATETIME NULL,
+      \`submitted_by\` VARCHAR(50) NULL,
+      \`import_file_hash\` VARCHAR(64) NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_ee_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`exam_entry_candidates\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`entry_id\` INT UNSIGNED NOT NULL,
+      \`student_id\` VARCHAR(50) NOT NULL,
+      \`candidate_no\` VARCHAR(20) DEFAULT NULL,
+      \`center_no\` VARCHAR(30) DEFAULT NULL,
+      \`status\` VARCHAR(30) DEFAULT 'draft',
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_eec_entry\` (\`entry_id\`),
+      INDEX \`idx_eec_student\` (\`student_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`exam_entry_subjects\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`candidate_id\` INT UNSIGNED NOT NULL,
+      \`subject_id\` VARCHAR(50) NOT NULL,
+      \`option_code\` VARCHAR(20) DEFAULT NULL,
+      \`paper_codes\` VARCHAR(100) DEFAULT NULL,
+      \`sba_mark\` DECIMAL(5,2) DEFAULT NULL,
+      \`sba_submitted_at\` DATETIME DEFAULT NULL,
+      INDEX \`idx_ees_cand\` (\`candidate_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`entry_results\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`candidate_id\` INT UNSIGNED NOT NULL,
+      \`subject_id\` VARCHAR(50) NOT NULL,
+      \`grade\` VARCHAR(10) NOT NULL,
+      \`points\` TINYINT DEFAULT 0,
+      \`marks\` DECIMAL(5,2) DEFAULT NULL,
+      \`source\` VARCHAR(20) DEFAULT 'import',
+      \`imported_by\` VARCHAR(50) NULL,
+      \`imported_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY \`uq_cand_subj\` (\`candidate_id\`, \`subject_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`schemes_of_work\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`class_id\` VARCHAR(50) NOT NULL,
+      \`subject_id\` VARCHAR(50) NOT NULL,
+      \`term_id\` INT UNSIGNED DEFAULT 1,
+      \`teacher_employee_id\` VARCHAR(50) NOT NULL,
+      \`week_number\` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+      \`topic\` VARCHAR(200) NOT NULL,
+      \`sub_topic\` VARCHAR(200) DEFAULT NULL,
+      \`objectives\` TEXT DEFAULT NULL,
+      \`competencies\` TEXT DEFAULT NULL,
+      \`SOM\` TEXT DEFAULT NULL,
+      \`evaluation\` TEXT DEFAULT NULL,
+      \`status\` VARCHAR(30) DEFAULT 'draft',
+      \`approved_by\` VARCHAR(50) DEFAULT NULL,
+      \`approval_comments\` TEXT DEFAULT NULL,
+      \`approved_at\` DATETIME DEFAULT NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_sow_school\` (\`school_id\`),
+      INDEX \`idx_sow_class\` (\`class_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`lesson_plans\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`scheme_id\` INT UNSIGNED DEFAULT NULL,
+      \`class_id\` VARCHAR(50) NOT NULL,
+      \`subject_id\` VARCHAR(50) NOT NULL,
+      \`teacher_employee_id\` VARCHAR(50) NOT NULL,
+      \`lesson_date\` DATE NOT NULL,
+      \`duration_minutes\` INT UNSIGNED DEFAULT 40,
+      \`topic\` VARCHAR(200) NOT NULL,
+      \`sub_topic\` VARCHAR(200) DEFAULT NULL,
+      \`lesson_objectives\` TEXT DEFAULT NULL,
+      \`introduction\` TEXT DEFAULT NULL,
+      \`main_activities\` TEXT DEFAULT NULL,
+      \`conclusion\` TEXT DEFAULT NULL,
+      \`assessment_task\` TEXT DEFAULT NULL,
+      \`media_aids\` TEXT DEFAULT NULL,
+      \`evaluation\` TEXT DEFAULT NULL,
+      \`status\` VARCHAR(30) DEFAULT 'draft',
+      \`approved_by\` VARCHAR(50) DEFAULT NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_lp_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`currencies\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`code\` VARCHAR(10) NOT NULL UNIQUE,
+      \`name\` VARCHAR(60) NOT NULL,
+      \`symbol\` VARCHAR(10) NOT NULL,
+      \`is_base\` TINYINT(1) DEFAULT 0,
+      \`decimal_places\` TINYINT DEFAULT 2
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`exchange_rates\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`from_currency\` VARCHAR(10) NOT NULL,
+      \`to_currency\` VARCHAR(10) NOT NULL,
+      \`rate\` DECIMAL(16,6) NOT NULL,
+      \`effective_from\` DATETIME NOT NULL,
+      \`created_by\` VARCHAR(50) NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_fx_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`fee_structures\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`session_id\` INT UNSIGNED DEFAULT NULL,
+      \`class_id\` VARCHAR(50) DEFAULT NULL,
+      \`name\` VARCHAR(100) NOT NULL,
+      \`currency_code\` VARCHAR(10) DEFAULT 'USD',
+      \`status\` VARCHAR(30) DEFAULT 'draft',
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_fs_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`fee_items\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`fee_structure_id\` INT UNSIGNED NOT NULL,
+      \`name\` VARCHAR(100) NOT NULL,
+      \`amount\` DECIMAL(12,2) NOT NULL,
+      \`frequency\` VARCHAR(30) DEFAULT 'per_term',
+      INDEX \`idx_fi_struct\` (\`fee_structure_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`invoices\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`invoice_no\` VARCHAR(50) NOT NULL,
+      \`student_id\` VARCHAR(50) NOT NULL,
+      \`session_id\` INT UNSIGNED DEFAULT NULL,
+      \`term\` VARCHAR(20) DEFAULT 'Term 1',
+      \`currency_code\` VARCHAR(10) DEFAULT 'USD',
+      \`total_amount\` DECIMAL(12,2) NOT NULL,
+      \`discount_amount\` DECIMAL(12,2) DEFAULT 0.00,
+      \`amount_paid\` DECIMAL(12,2) DEFAULT 0.00,
+      \`balance\` DECIMAL(12,2) NOT NULL,
+      \`due_date\` DATE NULL,
+      \`status\` VARCHAR(30) DEFAULT 'unpaid',
+      \`issued_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_inv_student\` (\`student_id\`),
+      INDEX \`idx_inv_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`invoice_items\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`invoice_id\` INT UNSIGNED NOT NULL,
+      \`description\` VARCHAR(200) NOT NULL,
+      \`amount\` DECIMAL(12,2) NOT NULL,
+      INDEX \`idx_ii_inv\` (\`invoice_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`payments\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`invoice_id\` INT UNSIGNED DEFAULT NULL,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`student_id\` VARCHAR(50) NOT NULL,
+      \`currency_code\` VARCHAR(10) DEFAULT 'USD',
+      \`amount\` DECIMAL(12,2) NOT NULL,
+      \`fx_rate\` DECIMAL(16,6) DEFAULT 1.000000,
+      \`amount_base\` DECIMAL(12,2) DEFAULT NULL,
+      \`method\` VARCHAR(50) DEFAULT 'cash',
+      \`reference\` VARCHAR(100) NOT NULL UNIQUE,
+      \`status\` VARCHAR(30) DEFAULT 'success',
+      \`paid_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      \`received_by\` VARCHAR(50) NULL,
+      \`reversal_of_id\` INT UNSIGNED DEFAULT NULL,
+      INDEX \`idx_pay_inv\` (\`invoice_id\`),
+      INDEX \`idx_pay_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`bank_statements\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`bank_account\` VARCHAR(100) NOT NULL,
+      \`period_start\` DATE NULL,
+      \`period_end\` DATE NULL,
+      \`file_path\` VARCHAR(255) NULL,
+      \`file_hash\` VARCHAR(64) NULL,
+      \`imported_by\` VARCHAR(50) NULL,
+      \`status\` VARCHAR(30) DEFAULT 'imported',
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_bs_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`bank_statement_lines\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`statement_id\` INT UNSIGNED NOT NULL,
+      \`value_date\` DATE NOT NULL,
+      \`narrative\` TEXT NOT NULL,
+      \`amount\` DECIMAL(12,2) NOT NULL,
+      \`matched_payment_id\` INT UNSIGNED DEFAULT NULL,
+      INDEX \`idx_bsl_stmt\` (\`statement_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`houses\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`name\` VARCHAR(50) NOT NULL,
+      \`motto\` VARCHAR(200) DEFAULT NULL,
+      \`color\` VARCHAR(30) DEFAULT '#0d9488',
+      INDEX \`idx_house_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`house_points\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`house_id\` INT UNSIGNED NOT NULL,
+      \`event\` VARCHAR(100) NOT NULL,
+      \`points\` INT NOT NULL,
+      \`recorded_by\` VARCHAR(50) NULL,
+      \`recorded_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_hp_house\` (\`house_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`exeats\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`student_id\` VARCHAR(50) NOT NULL,
+      \`requested_by\` VARCHAR(50) NOT NULL,
+      \`reason\` TEXT NOT NULL,
+      \`destination\` VARCHAR(200) NOT NULL,
+      \`leave_from\` DATETIME NOT NULL,
+      \`return_by\` DATETIME NOT NULL,
+      \`status\` VARCHAR(30) DEFAULT 'pending',
+      \`approved_by\` VARCHAR(50) DEFAULT NULL,
+      \`guardian_notified\` TINYINT(1) DEFAULT 0,
+      \`checked_out_at\` DATETIME DEFAULT NULL,
+      \`checked_in_at\` DATETIME DEFAULT NULL,
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_exeat_school\` (\`school_id\`),
+      INDEX \`idx_exeat_student\` (\`student_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    await query(`CREATE TABLE IF NOT EXISTS \`statutory_returns\` (
+      \`id\` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      \`uuid\` VARCHAR(50) NOT NULL UNIQUE,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`return_type\` VARCHAR(50) NOT NULL,
+      \`year\` INT UNSIGNED NOT NULL,
+      \`term\` VARCHAR(20) DEFAULT NULL,
+      \`payload\` JSON NULL,
+      \`file_hash\` VARCHAR(64) NULL,
+      \`status\` VARCHAR(30) DEFAULT 'submitted',
+      \`submitted_by\` VARCHAR(50) NULL,
+      \`submitted_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_sr_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
     console.log('Schema migration verification complete. All required database tables active.');
   } catch (err) {
     console.warn('Database table verification warning:', err.message);
@@ -159,10 +742,13 @@ async function ensureTables() {
 
 
 // Execute migration check on pool initialization
-ensureTables();
+if (process.env.NODE_ENV !== 'test') {
+  ensureTables();
+}
 
 module.exports = {
   pool,
   query,
-  queryOne
+  queryOne,
+  withTransaction
 };

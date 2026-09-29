@@ -78,7 +78,7 @@ const Discipline = () => {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page discipline-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>
           <h2 className="text-3xl font-display font-bold text-ink">Discipline &amp; Incident Log</h2>
@@ -119,7 +119,7 @@ const Discipline = () => {
             ) : incidents.map(inc => (
               <tr key={inc.id} className="hover:bg-sage/5 transition-colors">
                 <td className="py-4 px-6 font-mono text-xs numeric-data text-ink/60 whitespace-nowrap">{inc.incident_date}</td>
-                <td className="py-4 px-6 font-bold">{inc.student_name || `Student #${inc.student_id}`}</td>
+                <td className="py-4 px-6 font-bold">{inc.student_name || inc.student_id || '—'}</td>
                 <td className="py-4 px-6 text-ink/70">{inc.incident_type}</td>
                 <td className="py-4 px-6">
                   <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${SEVERITY_STYLES[inc.severity]?.pill || 'bg-ink/10 text-ink'}`}>

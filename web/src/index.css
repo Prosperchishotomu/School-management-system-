@@ -1,25 +1,27 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&family=Inter:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap');
 
-/* ── TailwindCSS v4: single import replaces @tailwind base/components/utilities ── */
 @import "tailwindcss";
 
-/* ── Design Tokens via @theme (TailwindCSS v4 way) ──────────────────────────── */
+
 @theme {
-  /* Colors */
-  --color-ink:            #1C2530;
-  --color-paper:          #FAF8F4;
-  --color-sage:           #E4EBE6;
-  --color-teal-primary:   #2F6B5E;
-  --color-teal-dark:      #1E4A41;
-  --color-teal-light:     #4A9B8A;
-  --color-amber-warning:  #C98A2C;
-  --color-brick-critical: #B3492F;
-  --color-line-border:    #DAD4C8;
+  
+  --color-ink:            #0F172A;
+  --color-paper:          #F6F7FB;
+  --color-sage:           #F1F5F9;
+  --color-teal-primary:   #6366F1;
+  --color-teal-dark:      #4F46E5;
+  --color-teal-light:     #818CF8;
+  --color-amber-warning:  #F59E0B;
+  --color-brick-critical: #F43F5E;
+  --color-line-border:    #E2E8F0;
+  --color-surface:        #FFFFFF;
+  --color-teal-muted:     #EEF2FF;
+  --color-sky-info:       #22D3EE;
 
   /* Typography */
-  --font-display: 'Fraunces', Georgia, serif;
-  --font-sans:    'Inter', system-ui, sans-serif;
-  --font-mono:    'IBM Plex Mono', 'Courier New', monospace;
+  --font-display: 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
+  --font-sans:    Inter, system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
 
   /* Animations */
   --animate-fadeIn:  fadeIn 0.4s ease-out both;
@@ -42,9 +44,23 @@
   --keyframes-shake-100%: { transform: translateX(0); };
 }
 
-/* ============================================================
-   KEYFRAME ANIMATIONS
-   ============================================================ */
+/* Shared light/dark tokens used by Tailwind utilities and component CSS. */
+:root { color-scheme: light; }
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-ink: #E5E7EB;
+  --color-paper: #0B1020;
+  --color-sage: #16203C;
+  --color-teal-primary: #6366F1;
+  --color-teal-dark: #818CF8;
+  --color-teal-light: #A78BFA;
+  --color-amber-warning: #FBBF24;
+  --color-brick-critical: #FB7185;
+  --color-line-border: #1E293B;
+  --color-surface: #111832;
+  --color-teal-muted: #25245B;
+  --color-sky-info: #67E8F9;
+}
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
@@ -81,10 +97,6 @@
   50%       { box-shadow: 0 0 20px 4px rgba(47, 107, 94, 0.18); }
 }
 
-/* ============================================================
-   BASE RESETS
-   ============================================================ */
-
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -95,9 +107,9 @@ html {
 }
 
 body {
-  background-color: #FAF8F4;
-  color: #1C2530;
-  font-family: 'Inter', system-ui, sans-serif;
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: Inter, system-ui, sans-serif;
   margin: 0;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
@@ -106,8 +118,8 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Fraunces', Georgia, serif;
-  letter-spacing: -0.015em;
+  font-family: 'Plus Jakarta Sans', Inter, system-ui, sans-serif;
+  letter-spacing: 0;
   line-height: 1.25;
 }
 
@@ -125,10 +137,6 @@ a {
   text-decoration: none;
 }
 
-/* ============================================================
-   ANIMATION UTILITIES
-   ============================================================ */
-
 .animate-fadeIn  { animation: fadeIn  0.4s ease-out both; }
 .animate-slideUp { animation: slideUp 0.4s cubic-bezier(0.4, 0, 0.2, 1) both; }
 .animate-spin    { animation: spin    1s linear infinite; }
@@ -141,33 +149,22 @@ a {
 .delay-225 { animation-delay: 225ms; }
 .delay-300 { animation-delay: 300ms; }
 
-/* ============================================================
-   TYPOGRAPHY UTILITIES
-   ============================================================ */
 
-.font-display { font-family: 'Fraunces', Georgia, serif; }
-.font-sans    { font-family: 'Inter', system-ui, sans-serif; }
-.font-mono    { font-family: 'IBM Plex Mono', 'Courier New', monospace; }
+.font-display { font-family: 'Plus Jakarta Sans', Inter, system-ui, sans-serif; }
+.font-sans    { font-family: Inter, system-ui, sans-serif; }
+.font-mono    { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 
 /* Numeric & tabular data */
 .numeric-data {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-variant-numeric: tabular-nums;
 }
 
-/* ============================================================
-   GLASSMORPHISM SYSTEM
-   ============================================================ */
-
 /* Main content cards */
 .glass-card {
-  background: rgba(255, 255, 255, 0.60);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(220, 215, 200, 0.40);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 4px 32px rgba(0, 0, 0, 0.05);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line-border);
+  box-shadow: 0 1px 2px rgba(2, 6, 23, 0.04), 0 8px 24px rgba(2, 6, 23, 0.06);
 }
 
 /* Hovered card variants */
@@ -176,24 +173,16 @@ a {
 }
 .glass-card-hover:hover {
   transform: translateY(-2px);
-  background: rgba(255, 255, 255, 0.78);
-  border-color: rgba(47, 107, 94, 0.35);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 12px 40px rgba(0, 0, 0, 0.07),
-    0 4px 16px rgba(47, 107, 94, 0.08);
+  background: var(--color-surface);
+  border-color: color-mix(in srgb, var(--color-teal-primary) 50%, transparent);
+  box-shadow: 0 14px 32px rgba(24, 39, 75, 0.11);
 }
 
 /* Modal / overlay panels */
 .glass-panel {
-  background: rgba(250, 248, 244, 0.82);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  border: 1px solid rgba(220, 215, 200, 0.50);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.9) inset,
-    0 24px 64px rgba(28, 37, 48, 0.14),
-    0 8px 24px rgba(28, 37, 48, 0.08);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line-border);
+  box-shadow: 0 18px 48px rgba(2, 6, 23, 0.14);
 }
 
 /* Dark glass (e.g. sidebar, dark overlays) */
@@ -207,45 +196,37 @@ a {
 
 /* Form inputs */
 .glass-input {
-  background: rgba(255, 255, 255, 0.70);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid #DAD4C8;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line-border);
   padding: 0.5rem 0.875rem;
   border-radius: 0.75rem;
   transition: all 0.2s ease;
-  color: #1C2530;
+  color: var(--color-ink);
 }
 .glass-input::placeholder {
-  color: rgba(28, 37, 48, 0.38);
+  color: color-mix(in srgb, var(--color-ink) 45%, transparent);
 }
 .glass-input:focus {
   outline: none;
-  background: rgba(255, 255, 255, 0.94);
-  border-color: #2F6B5E;
-  box-shadow: 0 0 0 3px rgba(47, 107, 94, 0.14);
+  background: var(--color-surface);
+  border-color: var(--color-teal-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-teal-primary) 20%, transparent);
 }
 
 /* Sidebar navigation */
 .glass-sidebar {
-  background: rgba(18, 24, 33, 0.96);
-  backdrop-filter: blur(32px);
-  -webkit-backdrop-filter: blur(32px);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 4px 0 28px rgba(0, 0, 0, 0.18);
+  background: #0B1020;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 10px 0 32px rgba(10, 18, 35, 0.16);
 }
-
-/* ============================================================
-   BUTTON SYSTEM
-   ============================================================ */
 
 .btn-primary {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
-  background: #2F6B5E;
-  color: #FAF8F4;
+  background: var(--color-teal-primary);
+  color: #FFFFFF;
   border: none;
   border-radius: 0.75rem;
   font-size: 0.8125rem;
@@ -253,16 +234,16 @@ a {
   font-family: 'Inter', system-ui, sans-serif;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 8px rgba(47, 107, 94, 0.28);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-teal-primary) 28%, transparent);
 }
 .btn-primary:hover {
-  background: #1E4A41;
-  box-shadow: 0 4px 16px rgba(47, 107, 94, 0.36);
+  background: var(--color-teal-dark);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--color-teal-primary) 36%, transparent);
   transform: translateY(-1px);
 }
 .btn-primary:active {
   transform: translateY(0);
-  box-shadow: 0 1px 4px rgba(47, 107, 94, 0.20);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-teal-primary) 20%, transparent);
 }
 .btn-primary:disabled {
   opacity: 0.5;
@@ -276,8 +257,8 @@ a {
   gap: 0.5rem;
   padding: 0.5rem 1rem;
   background: transparent;
-  color: #1C2530;
-  border: 1px solid #DAD4C8;
+  color: var(--color-ink);
+  border: 1px solid var(--color-line-border);
   border-radius: 0.75rem;
   font-size: 0.8125rem;
   font-weight: 500;
@@ -286,13 +267,9 @@ a {
   transition: all 0.2s ease;
 }
 .btn-ghost:hover {
-  background: rgba(228, 235, 230, 0.5);
-  border-color: #2F6B5E;
+  background: var(--color-sage);
+  border-color: var(--color-teal-primary);
 }
-
-/* ============================================================
-   STATUS BADGE SYSTEM
-   ============================================================ */
 
 .badge {
   display: inline-flex;
@@ -306,14 +283,10 @@ a {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
-.badge-success { background: rgba(47, 107, 94, 0.12); color: #1E4A41; }
-.badge-warning { background: rgba(201, 138, 44, 0.12); color: #A06E18; }
-.badge-danger  { background: rgba(179, 73, 47, 0.12);  color: #8E3220; }
-.badge-neutral { background: rgba(28, 37, 48, 0.08);   color: rgba(28, 37, 48, 0.65); }
-
-/* ============================================================
-   PREMIUM TABLE STYLES
-   ============================================================ */
+.badge-success { background: color-mix(in srgb, #10B981 12%, transparent); color: #047857; }
+.badge-warning { background: color-mix(in srgb, var(--color-amber-warning) 14%, transparent); color: #B45309; }
+.badge-danger  { background: color-mix(in srgb, var(--color-brick-critical) 12%, transparent); color: #BE123C; }
+.badge-neutral { background: color-mix(in srgb, var(--color-ink) 8%, transparent); color: color-mix(in srgb, var(--color-ink) 68%, transparent); }
 
 .table-premium {
   width: 100%;
@@ -329,9 +302,9 @@ a {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: rgba(28, 37, 48, 0.5);
-  background: rgba(228, 235, 230, 0.25);
-  border-bottom: 1px solid rgba(218, 212, 200, 0.6);
+  color: color-mix(in srgb, var(--color-ink) 58%, transparent);
+  background: var(--color-sage);
+  border-bottom: 1px solid var(--color-line-border);
 }
 .table-premium thead th:first-child { border-radius: 0.75rem 0 0 0; }
 .table-premium thead th:last-child  { border-radius: 0 0.75rem 0 0; }
@@ -339,18 +312,14 @@ a {
   transition: background 0.15s ease;
 }
 .table-premium tbody tr:hover {
-  background: rgba(228, 235, 230, 0.30);
+  background: color-mix(in srgb, var(--color-teal-primary) 6%, transparent);
 }
 .table-premium tbody td {
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid rgba(218, 212, 200, 0.35);
-  color: #1C2530;
+  border-bottom: 1px solid var(--color-line-border);
+  color: var(--color-ink);
   vertical-align: middle;
 }
-
-/* ============================================================
-   LOADING SKELETON
-   ============================================================ */
 
 .skeleton {
   background: linear-gradient(
@@ -363,10 +332,6 @@ a {
   animation: shimmer 1.4s linear infinite;
   border-radius: 0.5rem;
 }
-
-/* ============================================================
-   PREMIUM SCROLLBAR
-   ============================================================ */
 
 ::-webkit-scrollbar {
   width: 5px;
@@ -384,28 +349,16 @@ a {
   background: rgba(47, 107, 94, 0.50);
 }
 
-/* ============================================================
-   FOCUS RING (Accessibility)
-   ============================================================ */
-
 :focus-visible {
-  outline: 2px solid #2F6B5E;
+  outline: 2px solid var(--color-teal-primary);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
-/* ============================================================
-   SELECTION COLOR
-   ============================================================ */
-
 ::selection {
-  background: rgba(47, 107, 94, 0.18);
-  color: #1C2530;
+  background: color-mix(in srgb, var(--color-teal-primary) 18%, transparent);
+  color: var(--color-ink);
 }
-
-/* ============================================================
-   PRINT UTILITIES
-   ============================================================ */
 
 @media print {
   .non-printable {
@@ -427,5 +380,211 @@ a {
   }
   main {
     margin-left: 0 !important;
+  }
+}
+
+/* Product shell refinements */
+.app-sidebar {
+  width: 272px;
+  padding: 22px 16px 16px;
+}
+.app-sidebar nav a {
+  min-height: 38px;
+  border-radius: 8px;
+  letter-spacing: 0.01em;
+}
+.app-sidebar nav a[aria-current="page"] {
+  background: linear-gradient(90deg, rgba(53, 106, 230, 0.28), rgba(53, 106, 230, 0.08));
+  border-left: 2px solid #6D96FF;
+  box-shadow: inset 0 0 18px rgba(53, 106, 230, 0.08);
+}
+.app-sidebar nav a:hover:not([aria-current="page"]) {
+  background: rgba(255, 255, 255, 0.07);
+}
+.nav-icon {
+  filter: drop-shadow(0 0 5px rgba(105, 148, 255, 0.24));
+}
+.topbar {
+  height: 64px;
+  background: color-mix(in srgb, var(--color-paper) 90%, transparent);
+  border-bottom: 1px solid var(--color-line-border);
+  backdrop-filter: blur(16px);
+}
+.topbar input {
+  background: var(--color-surface);
+  border-color: var(--color-line-border);
+}
+button, a, input, select, textarea {
+  transition-duration: 160ms;
+}
+.glass-card, .glass-panel {
+  border-radius: 10px;
+}
+.module-page {
+  width: 100%;
+  padding-top: 28px;
+  padding-bottom: 48px;
+}
+.module-page > .module-title,
+.module-page .module-title {
+  letter-spacing: -0.02em;
+}
+.module-page > .flex.justify-between.items-center.border-b,
+.module-page > .flex.flex-wrap.gap-4.justify-between.items-center.border-b {
+  border-bottom-color: var(--color-line-border);
+  padding-bottom: 20px;
+}
+.module-subtitle {
+  max-width: 680px;
+  line-height: 1.5;
+}
+.module-page .glass-card {
+  box-shadow: 0 6px 20px rgba(24, 39, 75, 0.055);
+}
+.module-tabs {
+  border: 1px solid var(--color-line-border);
+  background: var(--color-sage);
+}
+.module-tabs button {
+  min-height: 42px;
+  border-radius: 7px;
+}
+.module-tabs button svg {
+  color: var(--color-teal-primary);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-teal-primary) 20%, transparent));
+}
+
+/* Keep the active page context visible while long operational screens scroll. */
+main > div > div[class*="border-b"][class*="pb-"] {
+  position: sticky;
+  top: 64px;
+  z-index: 15;
+  isolation: isolate;
+  background: color-mix(in srgb, var(--color-paper) 96%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding-top: 12px;
+}
+.module-page table thead th {
+  white-space: nowrap;
+  font-family: Inter, system-ui, sans-serif;
+  letter-spacing: 0.05em;
+}
+.module-page table tbody tr:hover {
+  background: color-mix(in srgb, var(--color-teal-primary) 6%, transparent);
+}
+.module-page input,
+.module-page select,
+.module-page textarea {
+  border-color: var(--color-line-border);
+  border-radius: 8px;
+}
+.module-page input:focus,
+.module-page select:focus,
+.module-page textarea:focus {
+  border-color: var(--color-teal-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-teal-primary) 14%, transparent);
+}
+.command-center-page .glass-card,
+.students-page .glass-card,
+.fees-page .glass-card,
+.exams-page .glass-card {
+  border-color: var(--color-line-border);
+}
+@media (max-width: 767px) {
+  .module-page { padding: 20px 16px 36px; }
+  .module-page > .flex.justify-between.items-center.border-b,
+  .module-page > .flex.flex-wrap.gap-4.justify-between.items-center.border-b {
+    align-items: flex-start;
+  }
+  .module-title { font-size: 1.7rem; line-height: 1.15; }
+  main > div > div[class*="border-b"][class*="pb-"] { top: 64px; }
+}
+.btn-primary, .btn-ghost {
+  border-radius: 8px;
+}
+@media (max-width: 767px) {
+  .app-sidebar { width: min(86vw, 320px); }
+  .topbar { height: 64px; }
+}
+
+/* Legacy utility classes and white surfaces need explicit dark-mode treatment. */
+html[data-theme='dark'] .glass-sidebar {
+  background: #080E1A;
+  border-color: var(--color-line-border);
+}
+html[data-theme='dark'] .topbar {
+  background: color-mix(in srgb, var(--color-paper) 94%, transparent);
+  border-color: var(--color-line-border);
+}
+html[data-theme='dark'] .glass-card,
+html[data-theme='dark'] .glass-panel,
+html[data-theme='dark'] .glass-input,
+html[data-theme='dark'] .topbar input,
+html[data-theme='dark'] [class~='bg-white'] {
+  background-color: var(--color-surface) !important;
+  border-color: var(--color-line-border);
+  color: var(--color-ink);
+}
+html[data-theme='dark'] [class~='bg-white/70'],
+html[data-theme='dark'] [class~='bg-white/50'] {
+  background-color: color-mix(in srgb, var(--color-surface) 88%, transparent) !important;
+}
+html[data-theme='dark'] .table-premium thead th {
+  background: var(--color-sage);
+}
+html[data-theme='dark'] .module-page > .flex.justify-between.items-center.border-b,
+html[data-theme='dark'] .module-page > .flex.flex-wrap.gap-4.justify-between.items-center.border-b {
+  border-bottom-color: var(--color-line-border);
+}
+html[data-theme='dark'] .module-tabs {
+  border-color: var(--color-line-border);
+  background: var(--color-sage);
+}
+html[data-theme='dark'] .module-page table tbody tr:hover {
+  background: var(--color-sage);
+}
+html[data-theme='dark'] .module-page input,
+html[data-theme='dark'] .module-page select,
+html[data-theme='dark'] .module-page textarea {
+  border-color: var(--color-line-border);
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+/* Normalize legacy module utilities into the shared product palette. */
+.module-page [class*="bg-slate-900"],
+.module-page [class*="bg-slate-800"] {
+  background-color: var(--color-surface) !important;
+}
+.module-page [class*="bg-slate-900/"],
+.module-page [class*="bg-slate-800/"] {
+  background-color: color-mix(in srgb, var(--color-surface) 92%, var(--color-teal-primary)) !important;
+}
+.module-page [class*="border-slate-"] {
+  border-color: var(--color-line-border) !important;
+}
+.module-page [class*="text-slate-"] {
+  color: color-mix(in srgb, var(--color-ink) 72%, transparent) !important;
+}
+.module-page input[class*="bg-slate-"],
+.module-page select[class*="bg-slate-"],
+.module-page textarea[class*="bg-slate-"] {
+  color: var(--color-ink) !important;
+  background-color: var(--color-surface) !important;
+}
+.module-page [class*="bg-blue-50"] {
+  background-color: color-mix(in srgb, var(--color-sky-info) 12%, transparent) !important;
+}
+.module-page [class*="text-blue-"] {
+  color: var(--color-teal-dark) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
   }
 }

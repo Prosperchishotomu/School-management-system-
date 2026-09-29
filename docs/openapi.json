@@ -1,0 +1,299 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SchoolBase - Zimbabwe School Management System API",
+    "version": "1.0.0",
+    "description": "Production-grade, single-school and multi-school management system covering the full Zimbabwean school pathway: ECD A/B, Grades 1-7, Forms 1-4 (O-Level), and Forms 5-6 (A-Level). Compliant with OWASP ASVS L2, Cyber and Data Protection Act [Chapter 12:07] (POTRAZ), MoPSE EMIS standards, and ZIMSEC/Cambridge board workflows."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000/api/v1",
+      "description": "Local Development Server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "RS256 JWT access token"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "System Health Check",
+        "security": [],
+        "responses": {
+          "200": { "description": "System operational" }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Authenticate user",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "JWT token issued" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+    "/privacy/my-data": {
+      "get": {
+        "summary": "Subject Access Request (POTRAZ Cyber & Data Protection Act [Chapter 12:07])",
+        "responses": {
+          "200": { "description": "Returns user personal data and audit trail" }
+        }
+      }
+    },
+    "/privacy/erase": {
+      "post": {
+        "summary": "Right to be Forgotten / Data Erasure",
+        "responses": {
+          "200": { "description": "User identifiable info anonymized" }
+        }
+      }
+    },
+    "/exam-boards": {
+      "get": {
+        "summary": "List active Examination Boards (ZIMSEC, Cambridge)",
+        "responses": {
+          "200": { "description": "List of active exam boards" }
+        }
+      }
+    },
+    "/exam-entries": {
+      "get": {
+        "summary": "List Examination Registration Batches",
+        "responses": {
+          "200": { "description": "Batches with candidate and subject counts" }
+        }
+      },
+      "post": {
+        "summary": "Create Examination Entry Batch",
+        "responses": {
+          "201": { "description": "Batch created in draft status" }
+        }
+      }
+    },
+    "/exam-entries/{id}/candidates": {
+      "post": {
+        "summary": "Bulk add eligible students to entry batch",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Candidates registered" }
+        }
+      }
+    },
+    "/exam-entries/{id}/assign-candidate-numbers": {
+      "post": {
+        "summary": "Auto-assign sequential candidate numbers against centre number",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Candidate numbers assigned" }
+        }
+      }
+    },
+    "/exam-entries/{id}/sba-export": {
+      "get": {
+        "summary": "Export School-Based Assessment (SBA) marks for ZIMSEC submission",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "SBA marks export payload" }
+        }
+      }
+    },
+    "/exam-entries/{id}/submit": {
+      "post": {
+        "summary": "Submit exam entry batch for Maker-Checker dual approval",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Entry submitted for checker authorization" }
+        }
+      }
+    },
+    "/exam-entries/{id}/results-import": {
+      "post": {
+        "summary": "Import Board Examination Results with dry-run validation",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "202": { "description": "Dry-run validation successful, queued for Maker-Checker approval" },
+          "422": { "description": "Validation errors found in import records" }
+        }
+      }
+    },
+    "/schemes": {
+      "get": {
+        "summary": "List Schemes of Work",
+        "responses": {
+          "200": { "description": "Schemes matching filters" }
+        }
+      },
+      "post": {
+        "summary": "Create Scheme of Work for Class Subject & Term",
+        "responses": {
+          "201": { "description": "Scheme created" }
+        }
+      }
+    },
+    "/schemes/{id}/review": {
+      "post": {
+        "summary": "HOD review (Approve/Reject) with Maker-Checker author check",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Scheme reviewed" },
+          "403": { "description": "Maker-checker violation: author cannot review own scheme" }
+        }
+      }
+    },
+    "/lesson-plans": {
+      "get": {
+        "summary": "List Lesson Plans",
+        "responses": {
+          "200": { "description": "List of weekly lesson plans" }
+        }
+      },
+      "post": {
+        "summary": "Create Lesson Plan and record of work",
+        "responses": {
+          "201": { "description": "Lesson plan created" }
+        }
+      }
+    },
+    "/finance/currencies": {
+      "get": {
+        "summary": "List configured currencies (USD Base & ZWG)",
+        "responses": {
+          "200": { "description": "Currencies list" }
+        }
+      }
+    },
+    "/finance/exchange-rates": {
+      "get": {
+        "summary": "Get latest exchange rate snapshot",
+        "responses": {
+          "200": { "description": "FX rates history" }
+        }
+      },
+      "post": {
+        "summary": "Record new effective exchange rate",
+        "responses": {
+          "201": { "description": "FX rate recorded" }
+        }
+      }
+    },
+    "/fees/invoices/generate": {
+      "post": {
+        "summary": "Generate batch term invoices in USD base currency",
+        "responses": {
+          "200": { "description": "Invoices generated" }
+        }
+      }
+    },
+    "/payments/{id}/reverse": {
+      "post": {
+        "summary": "Request payment reversal through Maker-Checker workflow",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Reversal requested" }
+        }
+      }
+    },
+    "/houses": {
+      "get": {
+        "summary": "List Boarding Houses (Kudu, Sable, Impala, Buffalo)",
+        "responses": {
+          "200": { "description": "Houses list" }
+        }
+      }
+    },
+    "/exeats": {
+      "get": {
+        "summary": "List student boarding exeats",
+        "responses": {
+          "200": { "description": "Exeats list" }
+        }
+      },
+      "post": {
+        "summary": "Request weekend/emergency exeat for student",
+        "responses": {
+          "201": { "description": "Exeat requested" }
+        }
+      }
+    },
+    "/reports/emis/enrolment": {
+      "get": {
+        "summary": "Generate MoPSE statutory EMIS enrolment return by grade and sex",
+        "responses": {
+          "200": { "description": "Enrolment return matrix" }
+        }
+      }
+    },
+    "/reports/emis/staffing": {
+      "get": {
+        "summary": "Generate MoPSE EMIS staffing and qualification return",
+        "responses": {
+          "200": { "description": "Staff establishment data" }
+        }
+      }
+    },
+    "/statutory-returns": {
+      "post": {
+        "summary": "File official MoPSE return snapshot with file hash",
+        "responses": {
+          "201": { "description": "Return snapshot recorded" }
+        }
+      }
+    },
+    "/approvals": {
+      "get": {
+        "summary": "List pending Maker-Checker approval queue",
+        "responses": {
+          "200": { "description": "Pending approval tasks" }
+        }
+      }
+    },
+    "/approvals/{id}/approve": {
+      "post": {
+        "summary": "Authorize and execute Maker-Checker action",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Action executed" },
+          "403": { "description": "Maker-Checker violation: Requester cannot approve own action" }
+        }
+      }
+    },
+    "/approvals/{id}/reject": {
+      "post": {
+        "summary": "Reject pending Maker-Checker action with reason",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Action rejected" }
+        }
+      }
+    }
+  }
+}

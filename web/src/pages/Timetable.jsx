@@ -29,9 +29,7 @@ const Timetable = () => {
   const [customSubjectName, setCustomSubjectName] = useState('');
 
   // Timeslots (periods) state
-  const [periodsList, setPeriodsList] = useState([
-    '07:30–08:10', '08:10–08:50', '08:50–09:30', '09:30–10:10', 'BREAK', '10:30–11:10', '11:10–11:50', '11:50–12:30', '12:30–13:10'
-  ]);
+  const [periodsList, setPeriodsList] = useState([]);
   const [newPeriodName, setNewPeriodName] = useState('');
   const [showManagePeriods, setShowManagePeriods] = useState(false);
 
@@ -91,20 +89,21 @@ const Timetable = () => {
       .catch(() => {});
   }, [activeSchoolId, user]);
 
-  // Load class/teacher specific timeslots
+  // Derive visible periods from persisted timetable rows.
   useEffect(() => {
-    if (!activeSchoolId) return;
-    const key = viewMode === 'class' ? `schoolbase_periods_${activeSchoolId}_${selectedClass}` : `schoolbase_periods_${activeSchoolId}_teacher`;
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        setPeriodsList(JSON.parse(saved));
-      } catch (e) {}
-    } else {
-      setPeriodsList([
-        '07:30–08:10', '08:10–08:50', '08:50–09:30', '09:30–10:10', 'BREAK', '10:30–11:10', '11:10–11:50', '11:50–12:30', '12:30–13:10'
-      ]);
+    if (!activeSchoolId || (viewMode === 'class' && !selectedClass)) {
+      setPeriodsList([]);
+      return;
     }
+    const endpoint = viewMode === 'class'
+      ? `/schools/${activeSchoolId}/timetable?class_id=${selectedClass}`
+      : `/schools/${activeSchoolId}/timetable?teacher_name=${encodeURIComponent(selectedTeacher)}`;
+    api.get(endpoint)
+      .then(res => {
+        const rows = Array.isArray(res.data) ? res.data : [];
+        setPeriodsList([...new Set(rows.map(row => row.period).filter(Boolean))]);
+      })
+      .catch(() => setPeriodsList([]));
   }, [activeSchoolId, selectedClass, viewMode]);
 
   // Fetch timetable depending on viewMode
@@ -216,24 +215,13 @@ const Timetable = () => {
       toast.warning('Timeslot already exists.');
       return;
     }
-    const updated = [...periodsList, p].sort((a, b) => {
-      if (a === 'BREAK') return -1;
-      if (b === 'BREAK') return 1;
-      return a.localeCompare(b);
-    });
-    setPeriodsList(updated);
-    const key = viewMode === 'class' ? `schoolbase_periods_${activeSchoolId}_${selectedClass}` : `schoolbase_periods_${activeSchoolId}_teacher`;
-    localStorage.setItem(key, JSON.stringify(updated));
-    setNewPeriodName('');
+    toast.info('Create a scheduled lesson to add a persisted timetable period.');
   };
 
   // Delete a timeslot
   const handleDeletePeriod = (periodToDelete) => {
     if (!window.confirm(`Delete the timeslot "${periodToDelete}"? Scheduled entries in this slot will remain in database.`)) return;
-    const updated = periodsList.filter(p => p !== periodToDelete);
-    setPeriodsList(updated);
-    const key = viewMode === 'class' ? `schoolbase_periods_${activeSchoolId}_${selectedClass}` : `schoolbase_periods_${activeSchoolId}_teacher`;
-    localStorage.setItem(key, JSON.stringify(updated));
+    toast.info('Periods are removed when their scheduled lessons are deleted.');
   };
 
   const handleDragOver = (e) => {
@@ -265,7 +253,7 @@ const Timetable = () => {
   };
 
   return (
-    <div className="p-8 max-w-full mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page timetable-page p-8 max-w-full mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-line-border/30 pb-4 gap-4">
         <div>

@@ -137,6 +137,7 @@ router.post('/batch', authenticateToken, requireRoles('teacher', 'school_admin',
     const numWeight = parseFloat(weight || 1.0);
 
     let savedCount = 0;
+    const conflicts = [];
     for (const entry of entries) {
       const studentId = entry.student_id || entry.id;
       if (studentId && entry.grade_value !== undefined && entry.grade_value !== '' && entry.grade_value !== null) {
@@ -146,21 +147,27 @@ router.post('/batch', authenticateToken, requireRoles('teacher', 'school_admin',
         try {
           // Check if existing grade entry exists
           const existing = await queryOne(
-            `SELECT id FROM grades WHERE school_id = ? AND student_id = ? AND class_id = ? AND subject = ? AND term = ? AND assessment_type = ?`,
+            `SELECT id, version, grade_value, weight FROM grades WHERE school_id = ? AND student_id = ? AND class_id = ? AND subject = ? AND term = ? AND assessment_type = ?`,
             [schoolId, studentId, classId, subjName, currentTerm, validAssType]
           );
 
           if (existing) {
+            const expectedVersion = entry.expected_version == null ? null : Number(entry.expected_version);
+            if (expectedVersion !== null && Number(existing.version || 1) !== expectedVersion) {
+              conflicts.push({ student_id: studentId, server_version: Number(existing.version || 1), client_version: expectedVersion });
+              continue;
+            }
             await query(
-              `UPDATE grades SET grade_value = ?, weight = ? WHERE id = ?`,
-              [mark, numWeight, existing.id]
+              `UPDATE grades SET grade_value = ?, weight = ?, version = version + 1, synced_at = ? WHERE id = ?`,
+              [mark, numWeight, new Date(), existing.id]
             );
+            try { await query('INSERT INTO audit_logs (id, school_id, user_id, action, entity_type, entity_id, description) VALUES (?,?,?,?,?,?,?)', ['LOG' + Date.now().toString(36), schoolId, req.user.id, 'MARK_CORRECTED', 'grades', existing.id, JSON.stringify({ student_id: studentId, subject: subjName, old_mark: existing.grade_value, old_weight: existing.weight, new_mark: mark, new_weight: numWeight })]); } catch (_) {}
           } else {
             const gradeId = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
             await query(
-              `INSERT INTO grades (id, school_id, student_id, class_id, subject, grade_value, assessment_type, term, weight)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [gradeId, schoolId, studentId, classId, subjName, mark, validAssType, currentTerm, numWeight]
+              `INSERT INTO grades (id, school_id, student_id, class_id, subject, grade_value, assessment_type, term, weight, client_uuid, synced_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [gradeId, schoolId, studentId, classId, subjName, mark, validAssType, currentTerm, numWeight, entry.client_uuid || null, new Date()]
             );
           }
           savedCount++;
@@ -170,6 +177,7 @@ router.post('/batch', authenticateToken, requireRoles('teacher', 'school_admin',
       }
     }
 
+    if (conflicts.length) return res.status(409).json({ error: { code: 'STALE_VERSION', message: 'Some marks changed before synchronization.', fields: { conflicts } }, data: { saved_count: savedCount } });
     return res.json({ data: { message: `Recorded ${savedCount} grades successfully.` } });
   } catch (err) {
     console.error('Batch grades error:', err);

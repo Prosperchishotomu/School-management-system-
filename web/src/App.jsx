@@ -14,6 +14,7 @@ import Staff from './pages/Staff';
 import AuditLog from './pages/AuditLog';
 import CommandCenter from './pages/CommandCenter';
 import Sidebar from './components/layout/Sidebar';
+import TopBar from './components/layout/TopBar';
 import Enquiries from './pages/Enquiries';
 import Discipline from './pages/Discipline';
 import Library from './pages/Library';
@@ -25,6 +26,7 @@ import HealthRecords from './pages/HealthRecords';
 import Exams from './pages/Exams';
 import Reporting from './pages/Reporting';
 import Notifications from './pages/Notifications';
+import Messages from './pages/Messages';
 
 // New security/robustness components
 import ErrorBoundary from './components/ErrorBoundary';
@@ -38,6 +40,16 @@ import ParentPortal from './pages/ParentPortal';
 import LeaveRequests from './pages/LeaveRequests';
 import Hostels from './pages/Hostels';
 import Expenses from './pages/Expenses';
+import SecuritySettings from './pages/SecuritySettings';
+import StatusPage from './pages/StatusPage';
+import SyncStatus from './components/layout/SyncStatus';
+
+// Additional Domain Modules
+import AcademicsSetup from './pages/AcademicsSetup';
+import SchemesOfWork from './pages/SchemesOfWork';
+import ZimsecBoard from './pages/ZimsecBoard';
+import BoardingExeat from './pages/BoardingExeat';
+import EmisReturns from './pages/EmisReturns';
 
 // Protected Route wrapper component
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -59,16 +71,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    if (user.role === 'super_admin') {
-      return <Navigate to="/admin/command-center" replace />;
-    }
-    if (user.role === 'school_admin') {
-      return <Navigate to="/school-admin/dashboard" replace />;
-    }
-    if (user.role === 'teacher') {
-      return <Navigate to="/teacher/dashboard" replace />;
-    }
-    return <Navigate to="/parent/dashboard" replace />;
+    return <Navigate to="/403" replace />;
   }
 
   return children;
@@ -88,7 +91,7 @@ const LayoutShell = ({ children }) => {
     return (
       <div className="min-h-screen bg-paper flex text-ink">
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <main className="flex-1 md:ml-64 ml-0 min-h-screen bg-brick-critical/5 flex items-center justify-center p-8">
+        <main className="flex-1 md:ml-[272px] ml-0 min-h-screen bg-brick-critical/5 flex items-center justify-center p-8">
           <div className="max-w-md w-full glass-panel rounded-2xl p-8 border border-brick-critical/20 shadow-2xl text-center space-y-6 animate-fadeIn">
             <div className="w-16 h-16 rounded-2xl bg-brick-critical/10 flex items-center justify-center mx-auto text-brick-critical">
               <AlertTriangle className="w-8 h-8" />
@@ -143,7 +146,9 @@ const LayoutShell = ({ children }) => {
 
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       
-      <main className="flex-1 md:ml-64 ml-0 min-h-screen bg-sage/5 overflow-y-auto pt-16 md:pt-0">
+      <main className="flex-1 md:ml-[272px] ml-0 min-h-screen bg-sage/5 overflow-y-auto pt-16 md:pt-0">
+        <TopBar onMenuClick={() => setSidebarOpen(true)} />
+        <SyncStatus />
         <ErrorBoundary>
           {children}
         </ErrorBoundary>
@@ -482,6 +487,16 @@ function AppRoutes() {
 
       {/* Notifications settings */}
       <Route
+        path="/messages"
+        element={
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin', 'student', 'head', 'hod']}>
+            <LayoutShell>
+              <Messages />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/notifications"
         element={
           <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
@@ -491,6 +506,54 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+
+      <Route path="/settings/security" element={<ProtectedRoute><LayoutShell><SecuritySettings /></LayoutShell></ProtectedRoute>} />
+      <Route path="/calendar" element={<ProtectedRoute><LayoutShell><Timetable /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/approvals" element={<ProtectedRoute allowedRoles={['head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><EmisReturns /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/reports/registers" element={<ProtectedRoute allowedRoles={['head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><Reporting /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/reports/emis" element={<ProtectedRoute allowedRoles={['head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><EmisReturns /></LayoutShell></ProtectedRoute>} />
+      <Route path="/finance/dashboard" element={<ProtectedRoute allowedRoles={['bursar', 'school_admin', 'super_admin']}><LayoutShell><Fees /></LayoutShell></ProtectedRoute>} />
+      <Route path="/finance/fee-structures" element={<ProtectedRoute allowedRoles={['bursar', 'school_admin', 'super_admin']}><LayoutShell><Fees /></LayoutShell></ProtectedRoute>} />
+      <Route path="/finance/invoices" element={<ProtectedRoute allowedRoles={['bursar', 'parent', 'student', 'school_admin', 'super_admin']}><LayoutShell><Fees /></LayoutShell></ProtectedRoute>} />
+      <Route path="/finance/payments" element={<ProtectedRoute allowedRoles={['bursar', 'parent', 'student', 'school_admin', 'super_admin']}><LayoutShell><Fees /></LayoutShell></ProtectedRoute>} />
+      <Route path="/finance/expenses" element={<ProtectedRoute allowedRoles={['bursar', 'school_admin', 'super_admin']}><LayoutShell><Expenses /></LayoutShell></ProtectedRoute>} />
+      <Route path="/finance/reports" element={<ProtectedRoute allowedRoles={['bursar', 'head', 'school_admin', 'super_admin']}><LayoutShell><Reporting /></LayoutShell></ProtectedRoute>} />
+      <Route path="/student/dashboard" element={<ProtectedRoute allowedRoles={['student']}><LayoutShell><Dashboard /></LayoutShell></ProtectedRoute>} />
+      <Route path="/student/results" element={<ProtectedRoute allowedRoles={['student']}><LayoutShell><Results /></LayoutShell></ProtectedRoute>} />
+      <Route path="/student/report-cards" element={<ProtectedRoute allowedRoles={['student']}><LayoutShell><Results /></LayoutShell></ProtectedRoute>} />
+      <Route path="/parent/children/:id" element={<ProtectedRoute allowedRoles={['parent']}><LayoutShell><ParentPortal /></LayoutShell></ProtectedRoute>} />
+      <Route path="/parent/fees/pay" element={<ProtectedRoute allowedRoles={['parent']}><LayoutShell><Fees /></LayoutShell></ProtectedRoute>} />
+      <Route path="/parent/exeats" element={<ProtectedRoute allowedRoles={['parent']}><LayoutShell><BoardingExeat /></LayoutShell></ProtectedRoute>} />
+      <Route path="/boarding/dashboard" element={<ProtectedRoute allowedRoles={['boarding_master', 'head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><BoardingExeat /></LayoutShell></ProtectedRoute>} />
+      <Route path="/boarding/allocations" element={<ProtectedRoute allowedRoles={['boarding_master', 'head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><Hostels /></LayoutShell></ProtectedRoute>} />
+      <Route path="/boarding/houses" element={<ProtectedRoute allowedRoles={['boarding_master', 'head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><Hostels /></LayoutShell></ProtectedRoute>} />
+      <Route path="/health/dashboard" element={<ProtectedRoute allowedRoles={['nurse', 'school_admin', 'super_admin']}><LayoutShell><HealthRecords /></LayoutShell></ProtectedRoute>} />
+      <Route path="/health/students/:id" element={<ProtectedRoute allowedRoles={['nurse', 'school_admin', 'super_admin']}><LayoutShell><HealthRecords /></LayoutShell></ProtectedRoute>} />
+      <Route path="/guidance/sessions" element={<ProtectedRoute allowedRoles={['counsellor', 'school_admin', 'super_admin']}><LayoutShell><HealthRecords /></LayoutShell></ProtectedRoute>} />
+      <Route path="/teacher/classes" element={<ProtectedRoute allowedRoles={['teacher', 'hod', 'school_admin', 'super_admin']}><LayoutShell><Classes /></LayoutShell></ProtectedRoute>} />
+      <Route path="/teacher/attendance/:sectionId" element={<ProtectedRoute allowedRoles={['teacher', 'school_admin', 'super_admin']}><LayoutShell><Attendance /></LayoutShell></ProtectedRoute>} />
+      <Route path="/teacher/timetable" element={<ProtectedRoute allowedRoles={['teacher', 'hod', 'school_admin', 'super_admin']}><LayoutShell><Timetable /></LayoutShell></ProtectedRoute>} />
+      <Route path="/teacher/schemes" element={<ProtectedRoute allowedRoles={['teacher', 'hod', 'school_admin', 'super_admin']}><LayoutShell><SchemesOfWork /></LayoutShell></ProtectedRoute>} />
+      <Route path="/teacher/marks-entry" element={<ProtectedRoute allowedRoles={['teacher', 'hod', 'school_admin', 'super_admin']}><LayoutShell><Grades /></LayoutShell></ProtectedRoute>} />
+      <Route path="/teacher/students/:id" element={<ProtectedRoute allowedRoles={['teacher', 'hod', 'school_admin', 'super_admin']}><LayoutShell><StudentProfile /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/students/new" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><Students /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/students/:id/subjects" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><StudentProfile /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/enrollments" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><Students /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/timetable/:sectionId" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><Timetable /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/attendance" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><Attendance /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/exams/:id/results" element={<ProtectedRoute allowedRoles={['head', 'school_admin', 'teacher', 'super_admin']}><LayoutShell><Exams /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/exam-entries/:id/import" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><ZimsecBoard /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/library" element={<ProtectedRoute allowedRoles={['librarian', 'school_admin', 'super_admin']}><LayoutShell><Library /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/boarding" element={<ProtectedRoute allowedRoles={['boarding_master', 'school_admin', 'super_admin']}><LayoutShell><Hostels /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={['head', 'school_admin', 'super_admin']}><LayoutShell><Dashboard /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['super_admin']}><LayoutShell><UserManagement /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/staff/:id" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><Staff /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/academics/:section" element={<ProtectedRoute allowedRoles={['head', 'school_admin', 'super_admin']}><LayoutShell><AcademicsSetup /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/admissions" element={<ProtectedRoute allowedRoles={['school_admin', 'head', 'super_admin']}><LayoutShell><Enquiries /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/announcements" element={<ProtectedRoute allowedRoles={['school_admin', 'head', 'super_admin']}><LayoutShell><Announcements /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/calendar" element={<ProtectedRoute allowedRoles={['school_admin', 'head', 'super_admin']}><LayoutShell><Timetable /></LayoutShell></ProtectedRoute>} />
+      <Route path="/403" element={<LayoutShell><StatusPage code={403} /></LayoutShell>} />
+      <Route path="/404" element={<LayoutShell><StatusPage code={404} /></LayoutShell>} />
 
       {/* System Administration & Tasks */}
       <Route
@@ -563,12 +626,62 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/academics/setup"
+        element={
+          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+            <LayoutShell>
+              <AcademicsSetup />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/academics/schemes"
+        element={
+          <ProtectedRoute allowedRoles={['teacher', 'hod', 'deputy_head', 'head', 'school_admin', 'super_admin']}>
+            <LayoutShell>
+              <SchemesOfWork />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/zimsec/portal"
+        element={
+          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+            <LayoutShell>
+              <ZimsecBoard />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/boarding/exeats"
+        element={
+          <ProtectedRoute allowedRoles={['boarding_master', 'head', 'deputy_head', 'school_admin', 'super_admin']}>
+            <LayoutShell>
+              <BoardingExeat />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/reports/emis"
+        element={
+          <ProtectedRoute allowedRoles={['head', 'deputy_head', 'school_admin', 'super_admin']}>
+            <LayoutShell>
+              <EmisReturns />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
+      />
 
       {/* Fallback */}
       <Route
         path="*"
         element={
-          <Navigate to={user ? (user.role === 'super_admin' ? '/admin/command-center' : '/dashboard') : '/login'} replace />
+          <Navigate to={user ? '/404' : '/login'} replace />
         }
       />
     </Routes>

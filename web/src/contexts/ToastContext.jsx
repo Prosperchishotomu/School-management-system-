@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { CheckCircle2, XCircle, AlertTriangle, Info, X } from 'lucide-react';
 
 const ToastContext = createContext(null);
@@ -11,17 +11,17 @@ const ICONS = {
 };
 
 const STYLES = {
-  success: 'bg-[#ecfdf5] border-teal-primary/40 text-teal-dark',
-  error:   'bg-[#fef2f2] border-brick-critical/40 text-brick-critical',
-  warning: 'bg-[#fffbeb] border-amber-warning/40 text-amber-warning',
-  info:    'bg-[#f0f9ff] border-blue-400/40 text-blue-700',
+  success: 'bg-surface border-teal-primary/40 text-teal-dark',
+  error:   'bg-surface border-brick-critical/40 text-brick-critical',
+  warning: 'bg-surface border-amber-warning/40 text-amber-warning',
+  info:    'bg-surface border-sky-info/40 text-ink',
 };
 
 const ICON_STYLES = {
   success: 'text-teal-primary',
   error:   'text-brick-critical',
   warning: 'text-amber-warning',
-  info:    'text-blue-500',
+  info:    'text-sky-info',
 };
 
 let toastId = 0;
@@ -37,11 +37,31 @@ export const ToastProvider = ({ children }) => {
   }, []);
 
   const toast = useCallback((message, type = 'info', duration = 4000) => {
+    if (typeof window !== 'undefined') window.__schoolbase_last_toast_at = Date.now();
     const id = ++toastId;
     setToasts(prev => [...prev, { id, message, type, exiting: false }]);
     timers.current[id] = setTimeout(() => dismiss(id), duration);
     return id;
   }, [dismiss]);
+
+  useEffect(() => {
+    const schedule = (event, type) => {
+      const detail = event.detail || {};
+      window.setTimeout(() => {
+        // Page-level messages are more specific; do not stack a generic global toast.
+        if (Date.now() - Number(window.__schoolbase_last_toast_at || 0) < 300) return;
+        toast(detail.message || (type === 'error' ? 'Request failed.' : 'Request completed.'), type);
+      }, 180);
+    };
+    const onSuccess = (event) => schedule(event, 'success');
+    const onError = (event) => schedule(event, 'error');
+    window.addEventListener('schoolbase:request-success', onSuccess);
+    window.addEventListener('schoolbase:request-error', onError);
+    return () => {
+      window.removeEventListener('schoolbase:request-success', onSuccess);
+      window.removeEventListener('schoolbase:request-error', onError);
+    };
+  }, [toast]);
 
   const notify = {
     success: (msg, dur) => toast(msg, 'success', dur),
@@ -65,6 +85,7 @@ export const ToastProvider = ({ children }) => {
           return (
             <div
               key={t.id}
+              role={t.type === 'error' ? 'alert' : 'status'}
               className={[
                 'pointer-events-auto flex items-start gap-3 px-4 py-3.5 rounded-2xl',
                 'border shadow-xl backdrop-blur-sm font-sans text-sm',
@@ -78,6 +99,7 @@ export const ToastProvider = ({ children }) => {
               <span className="flex-1 leading-snug font-medium text-[13px]">{t.message}</span>
               <button
                 onClick={() => dismiss(t.id)}
+                aria-label="Dismiss message"
                 className="shrink-0 opacity-50 hover:opacity-100 transition-opacity cursor-pointer mt-0.5"
               >
                 <X className="w-3.5 h-3.5" />

@@ -15,9 +15,12 @@ import {
   Settings,
   Printer,
   Loader2,
-  HelpCircle
+  HelpCircle,
+  BarChart3
 } from 'lucide-react';
 import PrintReportModal from '../components/PrintReportModal';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+
 
 const Fees = () => {
   const { activeSchoolId, user } = useAuth();
@@ -302,7 +305,7 @@ const Fees = () => {
   );
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
+    <div className="module-page fees-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
       {/* Electronic Receipt Print Viewer */}
       {activeReceipt && (
         <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:relative print:bg-white print:inset-0 print:p-0 non-printable-target">
@@ -451,7 +454,7 @@ const Fees = () => {
       {/* Screen Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4 non-printable">
         <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Fees &amp; Payments Ledger</h2>
+          <h2 className="module-title text-3xl font-display font-bold text-ink">Fees &amp; Payments</h2>
           <p className="text-sm font-sans text-ink/60 mt-1">
             {isParent ? 'Review child tuition structures, check bank details, and declare remote transactions.' : 'Append-only receipts - balances are computed, never edited directly.'}
           </p>
@@ -701,7 +704,50 @@ const Fees = () => {
             </div>
           </div>
 
-          {/* Admin Tabs */}
+          {/* Fees Chart Panel */}
+          {fees.length > 0 && (() => {
+            const cleared   = fees.filter(f => f.status === 'cleared').length;
+            const partial   = fees.filter(f => f.status === 'partial').length;
+            const unpaid    = fees.filter(f => f.status === 'unpaid').length;
+            const pieData = [
+              { name: 'Cleared',  value: cleared,  fill: '#2a9d8f' },
+              { name: 'Partial',  value: partial,  fill: '#e9c46a' },
+              { name: 'Unpaid',   value: unpaid,   fill: '#e76f51' },
+            ].filter(d => d.value > 0);
+            const collectionRate = fees.length > 0 ? ((cleared / fees.length) * 100).toFixed(0) : 0;
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="glass-card rounded-2xl p-4 border border-line-border/30 flex flex-col items-center justify-center space-y-2">
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-teal-primary" />
+                    <h3 className="text-xs font-bold text-ink/70 uppercase tracking-wider">Collection Rate</h3>
+                  </div>
+                  <div className="text-4xl font-display font-bold text-teal-primary">{collectionRate}%</div>
+                  <div className="w-full bg-ink/10 rounded-full h-2">
+                    <div className="bg-teal-primary h-2 rounded-full transition-all" style={{ width: `${collectionRate}%` }} />
+                  </div>
+                  <p className="text-[10px] text-ink/50 font-sans">{cleared} of {fees.length} invoices fully cleared</p>
+                </div>
+                <div className="glass-card rounded-2xl p-4 border border-line-border/30 col-span-1 md:col-span-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-xs font-bold text-ink/70 uppercase tracking-wider">Fee Status Breakdown</h3>
+                  </div>
+                  <ResponsiveContainer width="100%" height={130}>
+                    <PieChart>
+                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" paddingAngle={3}>
+                        {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                      </Pie>
+                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, n) => [v + ' invoices', n]} />
+                      <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            );
+          })()}
+
+
           <div className="flex border-b border-line-border/30 space-x-6 text-sm font-sans">
             <button
               onClick={() => setActiveTab('ledger')}

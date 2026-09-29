@@ -1,2 +1,607 @@
-For subject teachers, when registering, I should be able to pick/add new subject so that on time table it becomes easy since subjects will be mapped to teachers. NB: A teacher can teach more than 2 subjects
-I said inline buttons should be removed. Students and their guidains arent linked. I created a student but its not linked to his guidain
+1. Project Overview
+Build a production‑grade, single‑school management system covering the full Zimbabwean school pathway — ECD A/B, Grades 1–7, Forms 1–4 (O Level), Forms 5–6 (A Level) — configurable to run as a primary‑only, secondary‑only, or combined institution (setting: offered_phases). It must handle admissions, curriculum & subject registration, attendance, timetabling, CA + internal exams, ZIMSEC (or Cambridge) examination entry and results, fees in a dual‑currency environment, boarding (houses, exeat), library, transport, health, guidance & counselling, statutory reporting (EMIS‑style), and communication (SMS/WhatsApp/email).
+
+Standards: OWASP ASVS L2; data integrity via constraints + transactions + append‑only finance ledger; confidentiality per the Cyber and Data Protection Act [Chapter 12:07] (POTRAZ‑aligned) with heightened controls for minors' data and examination data.
+
+Default stack: Laravel 11 (PHP 8.3) or NestJS (Node 20) · MySQL 8.0 (InnoDB, utf8mb4) · Redis · React 18 + TypeScript + Vite + Tailwind (PWA with offline queue for attendance/marks) · S3‑compatible private storage · WebSockets · Docker + Nginx · OpenAPI 3.1.
+
+2. Academic Model (Zimbabwe)
+2.1 Calendar
+Academic session = calendar year (e.g., 2025).
+Three terms per MoPSE calendar, dates entered annually in settings: Term 1 (Jan–Apr), Term 2 (May–Aug), Term 3 (Sep–Dec). All term dates, half‑terms and holidays are editable; MoPSE gazetted dates are seeded as defaults with a note that they change yearly.
+2.2 Phases & Levels
+Level code
+Name
+Phase
+1	ECD A	infant
+2	ECD B	infant
+3–9	Grade 1 … Grade 7	infant (G1–2) / junior (G3–7)
+10–13	Form 1 … Form 4	ordinary
+14–15	Form 5 (Lower 6) … Form 6 (Upper 6)	advanced
+
+classes carry a phase, level, and optional combination/stream label (e.g., "Form 2A", "Lower 6 Sciences"). A‑Level classes are typically per combination.
+
+2.3 Learning Areas & Subjects
+Subjects are configurable, seeded from the ZIMSEC updated‑curriculum learning areas, each tagged with a category, applicable phase(s), core/elective default per phase, and an optional exam board syllabus code (captured by the school from current ZIMSEC/Cambridge syllabus documents — never hard‑coded by the vendor).
+
+Seed learning‑area categories: languages, mathematics, sciences, humanities, commercials, agriculture, technical_vocational, arts, physical_education, general_studies, ict.
+
+Representative seed subjects (school‑editable):
+
+Primary/Infant: English Language; Shona; Ndebele; Mathematics; Science and Technology; Heritage‑Social Studies; FAREME (Family, Religion and Moral Education); Agriculture; Visual and Performing Arts; Physical Education, Sport and Mass Displays; ICT; Guidance and Counselling. (Support any constitutionally recognised Zimbabwean language as a subject: Tonga, Kalanga, Nambya, Sotho, Xhosa, Chewa, Venda, Shangani, Swati, Zulu, Ndau, Chibarwe, Koisan, Sign Language.)
+O‑Level (Forms 1–4): English Language; Mathematics; Combined Science; Biology; Chemistry; Physics; Human and Social Biology; Geography; History; Heritage Studies; FAREME; Commerce; Principles of Accounts; Business Studies; Computer Science; Agriculture; Food and Nutrition / Food Technology and Design; Textile Technology and Design; Wood / Metal Technology and Design; Technical Graphics and Design; Art and Design; Music; Physical Education, Sport and Mass Displays; Shona; Ndebele; Literature in English; Literature in Shona; Literature in Ndebele; French; Portuguese; Guidance and Counselling.
+A‑Level (Forms 5–6): Mathematics; Physics; Chemistry; Biology; Computer Science; Accounting; Business Studies; Economics; Geography; History; Divinity; Literature in English; Shona; Ndebele; French; Art; Music; General Paper (compulsory subsidiary — enforced by combination rules).
+Grade 7 examination subjects (config): English Language, Mathematics, Shona/Ndebele, General Paper.
+2.4 Grading Scales & Points (all configurable per school)
+ZIMSEC_O — letters A, B, C, D, E, U with points 1,2,3,4,5,6; school‑configurable pass grade (default C) and grade boundaries per subject.
+ZIMSEC_A — letters A, B, C, D, E, U with points on the 10‑point scale (A=10, B=8, C=6, D=4, E=2, U=0); alternative 5‑point mapping selectable in settings.
+PRIMARY_PCT — percentage with configurable achievement bands/descriptors for Grades 1–7 internal reporting.
+ECD_CHECKLIST — descriptive competence scale (e.g., Not yet at expected level / Approaching / At expected level / Above expected level) used for ECD A/B; no ranking or formal exams for ECD.
+CAMBRIDGE_* — IGCSE (A*–U or 9–1) and AS/A (A*–U) for schools using Cambridge.
+Points rules (settings): o_level_points_best = 6 (sum of best 6 subject points; lower is better), a_level_points_best = 3 (best three A‑Level subjects; higher is better), o_level_mandatory_include (e.g., English Language), a_level_include_general_paper = true. Grade 7 internal reporting uses averages; board results are imported as marks/grades.
+
+2.5 Assessment Architecture (CA + Exams)
+Per exam (type: mid_term, end_of_term, mock, continuous, board_sitting) and per class‑subject, define components — e.g., "Tests 20%", "Project/SBA 30%", "Examination 50%" — with weights summing to 100 and max marks each.
+Teachers enter marks per component; the system computes the weighted subject mark, maps it to the phase grading scale, assigns grade + points, and derives subject/class/form positions.
+Mock exams for Form 4, Form 6 and Grade 7 mirror board structure.
+ZIMSEC School‑Based Assessment (SBA/CA) marks for relevant syllabi can be flagged and exported separately (Section 5.14).
+Report card formats per phase: ECD checklist (no rank); Primary (marks %, position, remarks); O‑Level (%, grade A–U, points); A‑Level (%, grade, points). Every report card includes attendance summary, conduct, class teacher remark, and Head's remark with a signature/approval workflow.
+2.6 Promotion Rules (configurable engine)
+Grade 1–6 / Form 1–3: internal results thresholds per promotion_rules.
+Grade 7 → Form 1: internal results + board results where received; supports acceptance/placement workflow.
+Form 4 → Form 5: requires configured O‑Level passes (default: ≥5 subjects at grade C or better including English Language; sciences combinations may require Maths/Science — configurable).
+Form 5 → Form 6: internal promotion thresholds.
+Repeating a level ("repeat") must be a first‑class flow, not a delete/re‑create.
+3. Roles & Access Matrix
+Codes: SA Super Admin · HM Head (Headmaster/Headmistress) · DH Deputy Head · HOD Head of Department (also a teacher) · AD School Admin/Registry · BU Bursar/Accounts · TC Teacher · LB Librarian · NU Nurse · GC Guidance & Counsellor · BM Boarding Master/Mistress · ST Student · PA Parent/Guardian.
+Legend: F full CRUD · W create/update (scoped) · R read (scoped) · S own record only · O own children only · – none.
+
+Module
+SA
+HM
+DH
+HOD
+AD
+BU
+TC
+LB
+NU
+GC
+BM
+ST
+PA
+Users & Roles	F	R	–	–	F¹	–	–	–	–	–	–	–	–
+Students / Guardians	F	R	R	R²	F	R	R²	R	R	R	R	S	O
+Staff & Departments	F	F	R	R²	F	R	–	–	–	–	–	–	–
+Academic setup (sessions/terms/classes/subjects)	F	F	W	R	F	–	R	–	–	–	–	R	R
+Subject registration (combinations)	F	R	R	W²	F	–	R²	–	–	–	–	S	O
+Enrollments / Promotion	F	R	R	R	F	–	R²	–	–	–	R	S	O
+Attendance	F	R	R	R²	R	–	W²	–	–	–	R	S	O
+Timetable	F	F	R	R	F	–	R²	–	–	–	R	S	O
+Schemes & Lesson Plans	F	R	R	W³	–	–	W(own)	–	–	–	–	–	–
+CA components & Marks entry	F	R	R	W²	R	–	W⁴	–	–	–	–	S	O
+Internal Exams & Results	F	W⁵	W⁵	W⁴	R	R	W⁴	–	–	–	–	S	O
+Exam Board Entries (ZIMSEC)	F	W⁵	R	R²	W	R(fees)	R²	–	–	–	–	S	O
+Assignments	F	R	R	R²	–	–	F²	–	–	–	–	S	O
+Fees & Payments	F	R	R	–	R	F	–	–	–	–	–	S+pay	O+pay
+Library	F	R	R	–	R	–	R	F	–	–	R	S	O
+Transport	F	F	R	–	F	R	–	–	–	–	–	S	O
+Hostel / Houses / Exeat	F	R	R	–	F	R	–	–	–	–	F	S	O
+Health records	F	R	–	–	R	–	–	–	F	R	R⁶	S	O
+Counselling records	–	R⁷	–	–	–	–	–	–	–	F	–	S⁸	–
+Discipline	F	W	W	W²	R	–	W²(create)	–	–	R(own referrals)	W²	S	O
+Admissions	F	R	R	–	F	R(fees)	–	–	–	–	–	–	–
+Communication	F	F	W	W²	W	W	W²	–	W	W	W	R	R
+Reports & EMIS returns	F	F	R	R²	R	R	R²	–	–	–	R	S	O
+Settings, Currencies, Audit logs	F	R	–	–	R	R(currencies)	–	–	–	–	–	–	–
+
+¹ AD cannot modify SA/HM accounts. ² Scoped to own department/classes. ³ HOD approves schemes/plans for their department. ⁴ Marks entry for own subjects within the editable window; components per subject. ⁵ Publish/release + maker‑checker approver. ⁶ Exeat/boarding health incidents only. ⁷ Need‑to‑know only, every read audited. ⁸ Own session summaries only, not notes.
+
+All access = deny‑by‑default RBAC middleware + row‑level policies (parents filtered by linked students; teachers by assigned class‑subjects; HODs by department). Never trust client‑supplied IDs.
+
+Maker‑checker (dual approval) is mandatory for: results publish/release, ZIMSEC entry submission, payment reversal, invoice voiding, fee‑structure activation, and board results import. Requester ≠ approver; approvals table records both.
+
+4. API Conventions
+Unchanged from standard best practice, with these specifics:
+
+Base: https://<domain>/api/v1/...; URL versioning; Sunset header on deprecations.
+Auth: Bearer JWT (RS256, 15 min; claims sub, roles, sid, jti); refresh token = opaque 256‑bit, stored hashed, 7‑day sliding, rotated with reuse detection, Secure; HttpOnly; SameSite=Strict cookie.
+Public IDs: UUIDs in URLs; integer PKs never exposed.
+List params: ?page=&per_page≤100&sort=&q=&filter[...]=.
+Success envelope: {data, meta:{page, per_page, total, request_id}} · Error envelope: {error:{code, message, fields}, request_id}.
+Headers: X-Request-ID, Idempotency-Key (required on payments, invoice generation, entry submission, results import), Accept-Language: en|sn|nd (UI strings; subject names may exist in local languages).
+Offline sync: bulk attendance/marks endpoints are idempotent upserts accepting client‑generated UUIDs + synced_at; PWA queues when offline and replays on reconnect (server validates windows and conflicts with 409 STALE_VERSION).
+Rate limits: auth/OTP 5/min per IP+account (exponential lockout); general 120/min/user; uploads 10/min → 429 + Retry-After.
+Status codes: 200/201/204 · 400 · 401 · 403 · 404 · 409 conflict/stale · 422 business rule · 429 · 500.
+Error codes (additions to standard set): RESULTS_NOT_RELEASED, ENTRY_CLOSED, COMBINATION_INVALID, SBA_REQUIRED, DUPLICATE_CANDIDATE, FX_RATE_MISSING, APPROVAL_REQUIRED, MAKER_CHECKER_VIOLATION.
+
+5. Database Schema
+Global conventions: id BIGINT PK; uuid CHAR(36) UNIQUE on externally visible tables; created_at/updated_at/deleted_at (soft delete on business tables); created_by/updated_by FK→users; FKs ON DELETE RESTRICT unless noted; InnoDB/utf8mb4; 🔒 = field‑level AES‑256‑GCM encryption (keys in vault/KMS).
+
+5.1 Identity & Access (unchanged)
+text
+
+users            id, uuid, email UNIQUE, phone UNIQUE NULL, password_hash (Argon2id),
+                 status ENUM('pending','active','suspended'), email_verified_at,
+                 mfa_enabled BOOL, mfa_secret_enc 🔒, mfa_backup_codes_enc 🔒,
+                 last_login_at, failed_logins, locked_until, locale ENUM('en','sn','nd'), avatar_path
+roles / permissions / role_permission / user_role
+refresh_tokens   id, user_id, token_hash UNIQUE, family_id, expires_at, revoked_at,
+                 replaced_by_id, ip, user_agent
+password_resets, login_attempts (append-only, 90-day purge)
+5.2 People (students/guardians/staff)
+text
+
+students         id, uuid, user_id UNIQUE NULL, admission_no UNIQUE NOT NULL,
+                 first_name, last_name, other_name, gender ENUM('male','female','other'),
+                 date_of_birth, birth_cert_no UNIQUE NULL, national_id NULL,
+                 blood_group, nationality DEF 'Zimbabwean', religion, address, photo_path,
+                 admission_date, status ENUM('active','graduated','transferred',
+                 'withdrawn','suspended','deceased')
+guardians        id, uuid, user_id UNIQUE NULL, first_name, last_name, phone UNIQUE,
+                 email NULL, national_id, occupation, address, id_document_path,
+                 receives_sms BOOL DEF true
+student_guardian student_id, guardian_id, relationship ENUM('father','mother','legal_guardian',
+                 'other'), is_primary, is_emergency_contact, PK(student_id, guardian_id)
+departments      id, name UNIQUE ('Sciences','Humanities','Commercials','Languages',
+                 'Technical/Vocational','Primary','Guidance'), head_employee_id
+employees        id, uuid, user_id UNIQUE, staff_no UNIQUE, department_id, designation
+                 ('teacher','hod','deputy_head','head','bursar','librarian','nurse',
+                 'counsellor','boarding_master','grounds','clerk'),
+                 qualification, joining_date, employment_type, status,
+                 basic_salary_enc 🔒, bank_account_enc 🔒, is_teaching
+employee_subjects employee_id, subject_id           -- teaching specialisations (EMIS staffing)
+5.3 Academic Structure (Zimbabwe model)
+text
+
+academic_sessions id, name ('2025') UNIQUE, start_date, end_date, is_current
+terms             id, session_id, name ENUM('term_1','term_2','term_3'), start_date,
+                  end_date, is_current, UNIQUE(session_id, name)
+classes           id, name ('Form 2A','ECD B','Lower 6 Sciences') UNIQUE,
+                  phase ENUM('infant','junior','ordinary','advanced'),
+                  level TINYINT  -- 1..15 per §2.2, CHECK(1<=level<=15),
+                  combination VARCHAR NULL, capacity
+sections          id, class_id, name ('A'), capacity, form_teacher_id, UNIQUE(class_id, name)
+subjects          id, code UNIQUE ('MATH'), name, category ENUM(...§2.3), is_active,
+                  board_code VARCHAR NULL, board_id FK exam_boards NULL
+subject_phases    subject_id, phase, is_core BOOL, grading_scale_id FK, UNIQUE(subject_id, phase)
+exam_boards       id, name UNIQUE ('ZIMSEC','Cambridge','Other'), code, is_active
+class_subjects    id, class_id, subject_id, teacher_id, is_active, UNIQUE(class_id, subject_id)
+enrollments       id, student_id, class_id, section_id, session_id, roll_no, house_id FK NULL,
+                  status ENUM('active','promoted','repeating','transferred','withdrawn'),
+                  UNIQUE(student_id, session_id)
+student_subjects  id, student_id, session_id, class_subject_id,
+                  type ENUM('core','elective','subsidiary'),   -- A-Level GP = subsidiary
+                  status ENUM('active','dropped'),
+                  UNIQUE(student_id, class_subject_id, session_id)
+promotion_rules   id, from_class_id, to_class_id NULL, required_passes INT,
+                  mandatory_subject_ids JSON, min_average_pct DECIMAL(5,2), is_active
+5.4 Scheduling (unchanged)
+text
+
+periods / rooms / timetables(status draft|published) / timetable_slots
+                  UNIQUE(timetable_id, day, period_id); teacher & room double-booking blocked
+                  in service layer + DB trigger
+5.5 Attendance
+text
+
+student_attendance  id, student_id, date, session ENUM('full_day','morning','afternoon')
+                    DEF 'full_day', status ENUM('present','absent','late','excused','half_day'),
+                    marked_by, remarks, UNIQUE(student_id, date, session)
+staff_attendance    id, employee_id, date, check_in, check_out,
+                    status ENUM('present','absent','leave','late'), UNIQUE(employee_id, date)
+leave_requests      id, requester_id, type, start_date, end_date, reason,
+                    status ENUM('pending','approved','rejected','cancelled'),
+                    reviewed_by, reviewed_at
+5.6 Assessment (CA + Exams) — reworked
+text
+
+grading_scales   id, name UNIQUE, type ENUM('letter_points','percentage','descriptive',
+                 'checklist'), phases JSON
+grade_ranges     id, scale_id, grade ('A'), min_pct, max_pct, points TINYINT NULL,
+                 remark, is_pass BOOL, CHECK(min_pct < max_pct)
+
+exams            id, name, session_id, term_id,
+                 type ENUM('mid_term','end_of_term','mock','continuous','board_sitting'),
+                 start_date, end_date, status ENUM('draft','active','marks_entry',
+                 'published','archived'), marks_entry_deadline
+exam_schedules   id, exam_id, class_subject_id, exam_date, start_time, end_time,
+                 max_marks, pass_marks, room_id, UNIQUE(exam_id, class_subject_id)
+exam_components  id, exam_id, class_subject_id, name ('Paper 1','Test 1','Coursework',
+                 'SBA/CA','Practical'), weight_pct DECIMAL(5,2), max_marks,
+                 is_sba BOOL DEF false,
+                 UNIQUE(exam_id, class_subject_id, name)
+                 -- service enforces SUM(weight_pct)=100 per (exam, class_subject)
+component_marks  id, component_id, student_id, mark DECIMAL(6,2) NULL, is_absent BOOL,
+                 UNIQUE(component_id, student_id)
+results          id, exam_id, class_subject_id, student_id,
+                 marks_obtained DECIMAL(6,2) NULL,   -- computed weighted total
+                 grade_code NULL, points TINYINT NULL, remark,
+                 entered_by, entered_at,
+                 UNIQUE(exam_id, class_subject_id, student_id)
+report_cards     id, student_id, exam_id, total_marks, average_pct, gpa NULL,
+                 points_total NULL, class_rank, form_rank, conduct,
+                 class_teacher_remark, head_remark,
+                 status ENUM('draft','teacher_signed','head_approved','published'),
+                 published_at, UNIQUE(student_id, exam_id)
+assignments / assignment_submissions   (unchanged)
+5.7 ZIMSEC / Exam Board Registration & Results
+text
+
+exam_entries           id, uuid, session_id, board_id, level ENUM('grade_7','o_level',
+                       'a_level'), sitting ENUM('june','november'),
+                       centre_no VARCHAR, opens_at, closes_at, results_release_at DATETIME NULL,
+                       status ENUM('open','collecting','submitted','results_received'),
+                       submitted_at, submitted_by, import_file_hash CHAR(64) NULL
+exam_entry_candidates  id, entry_id, student_id, candidate_no VARCHAR NULL,
+                       status ENUM('draft','confirmed','submitted','results_received'),
+                       invoice_id FK NULL, UNIQUE(entry_id, student_id),
+                       UNIQUE(entry_id, candidate_no)
+exam_entry_subjects    id, candidate_id, subject_id, option_code VARCHAR NULL,
+                       sba_mark DECIMAL(5,2) NULL, sba_submitted_at,
+                       UNIQUE(candidate_id, subject_id)
+entry_results          id, candidate_id, subject_id, grade VARCHAR, points TINYINT NULL,
+                       marks DECIMAL(5,2) NULL, source ENUM('import','manual'),
+                       imported_by, imported_at, UNIQUE(candidate_id, subject_id)
+approvals              id, entity_type, entity_id, action, payload JSON,
+                       requested_by, approved_by, status ENUM('pending','approved',
+                       'rejected'), requested_at, decided_at
+                       -- maker-checker: approved_by != requested_by enforced
+5.8 Finance — multi‑currency (USD + ZiG/ZWG)
+text
+
+currencies       id, code UNIQUE ('USD','ZWG'), name ('Zimbabwe Gold (ZiG)'), symbol,
+                 is_base BOOL, decimal_places TINYINT DEF 2
+exchange_rates   id, from_currency FK, to_currency FK, rate DECIMAL(16,6),
+                 effective_from DATETIME, created_by, UNIQUE(from,to,effective_from)
+
+fee_structures   id, session_id, class_id, name, currency_id, status ENUM('draft',
+                 'pending_approval','active','retired'),
+                 UNIQUE(session_id, class_id, name)
+fee_items        id, fee_structure_id, name ('Tuition','SDA Levy','Building Fund',
+                 'Boarding Fee','Sports Levy','ZIMSEC Exam Fee','Stationery'),
+                 amount DECIMAL(12,2) CHECK(amount>0),
+                 frequency ENUM('per_term','annual','one_time','per_subject_entry')
+student_discounts id, student_id, name, type ENUM('percentage','fixed'), value,
+                  session_id, approved_by
+invoices         id, uuid, invoice_no UNIQUE, student_id, session_id, term_id,
+                 currency_id, generation_batch CHAR(36),
+                 total_amount, discount_amount, fine_amount, amount_paid, balance,
+                 due_date, status ENUM('unpaid','part_paid','paid','overdue','voided'),
+                 issued_at
+invoice_items    id, invoice_id, fee_item_id NULL, description, amount
+payments         id, uuid, invoice_id, currency_id, amount CHECK(amount>0),
+                 fx_rate DECIMAL(16,6) NULL, amount_base DECIMAL(16,2) NULL,
+                 method ENUM('cash','bank_transfer','ecocash','onemoney','innbucks',
+                 'card','online_gateway'), reference UNIQUE, gateway_txn_id UNIQUE NULL,
+                 status ENUM('pending','success','failed','reversed'), paid_at,
+                 received_by, reversal_of_id FK NULL, statement_line_id FK NULL
+                 -- APPEND-ONLY ledger: never UPDATE amount/status; corrections = reversal rows
+bank_statements  id, uuid, bank_account VARCHAR, period_start, period_end, file_path,
+                 file_hash, imported_by, status ENUM('imported','reconciled')
+bank_statement_lines id, statement_id, value_date, narrative, amount, matched_payment_id NULL
+expenses         id, category, currency_id, amount CHECK(amount>0), expense_date,
+                 description, receipt_path, recorded_by
+5.9 Library (unchanged) & Transport (unchanged)
+text
+
+book_categories / books / book_copies / book_loans / book_reservations
+transport_routes / route_stops / vehicles / student_transport
+5.10 Boarding: Houses, Hostels, Exeat
+text
+
+houses            id, name UNIQUE ('Kudu','Sable','Impala','Buffalo'), motto NULL
+house_points      id, house_id, event, points INT, recorded_by, recorded_at
+hostels           id, name UNIQUE, type ENUM('boys','girls'), warden_employee_id
+hostel_rooms      id, hostel_id, room_no, capacity, UNIQUE(hostel_id, room_no)
+hostel_allocations id, student_id, room_id, allocated_at, vacated_at
+exeats            id, student_id, requested_by, reason, destination,
+                  leave_from DATETIME, return_by DATETIME,
+                  status ENUM('pending','approved','rejected','checked_out','returned',
+                  'expired'), approved_by, guardian_notified BOOL,
+                  checked_out_at, checked_in_at
+student_leadership id, student_id, position ENUM('head_boy','head_girl','deputy_head_boy',
+                  'deputy_head_girl','prefect','src','house_captain','other'),
+                  scope ENUM('school','house','class'), session_id, appointed_by,
+                  UNIQUE(student_id, position, session_id)
+5.11 Communication & Calendar (channels expanded)
+text
+
+announcements / events                         (unchanged)
+notifications   id, user_id, channel ENUM('in_app','email','sms','whatsapp'),
+                type, title, body, entity_type, entity_id, read_at, sent_at
+                -- per-event channel matrix in settings (SMS primary for parents)
+conversations / conversation_participants / messages      (unchanged, append-only messages)
+5.12 Student Services
+text
+
+health_profiles / health_visits        (unchanged; 🔒 fields as v1)
+counselling_sessions id, student_id, counsellor_id, date,
+                     type ENUM('academic','psychosocial','career','substance','other'),
+                     outcome ENUM('resolved','ongoing','referred'), referred_to NULL,
+                     notes 🔒, follow_up_date NULL
+disciplinary_records id, student_id, incident_date, category ENUM('minor','major'),
+                     description, action ENUM('counselling_referral','detention',
+                     'written_warning','suspension','expulsion_process','other'),
+                     action_notes, recorded_by, resolved_at
+                     -- corporal punishment is prohibited by law; never an action option
+documents            id, owner_type, owner_id, doc_type, file_path, mime, size_bytes,
+                     uploaded_by, visibility ENUM('private','staff_only','owner')
+5.13 Schemes of Work, Lesson Plans, Statutory Registers
+text
+
+schemes_of_work   id, class_subject_id, term_id, teacher_id, title, content TEXT,
+                  file_path NULL, weeks JSON,
+                  status ENUM('draft','submitted','approved','returned'),
+                  reviewed_by NULL, review_notes NULL, reviewed_at,
+                  UNIQUE(class_subject_id, term_id)
+lesson_plans      id, teacher_id, class_subject_id, term_id, week TINYINT, date DATE NULL,
+                  topic, objectives TEXT, resources TEXT, taught_on DATE NULL, remarks,
+                  status ENUM('draft','submitted','approved','returned'),
+                  reviewed_by, reviewed_at
+statutory_returns id, type ENUM('emis_enrolment','emis_staffing','attendance_register',
+                  'admission_register','fee_return','other'), period VARCHAR,
+                  generated_by, file_path, file_hash, generated_at, submitted_at NULL
+5.14 Admissions (unchanged) & System
+text
+
+admission_cycles / applications        (unchanged from v1; review_notes 🔒)
+
+settings          id, `key` UNIQUE, value TEXT, `group`
+                  -- keys include: school_name, mopse_registration_no, emis_centre_code,
+                  -- zimsec_centre_no, offered_phases, base_currency, points rules (§2.4),
+                  -- attendance sessions, fine rules, notification channel matrix,
+                  -- o_level core subjects, a_level combination rules
+audit_logs        id, user_id, action, entity_type, entity_id, ip, user_agent,
+                  old_values JSON, new_values JSON, created_at
+                  -- APPEND-ONLY; app DB user has no UPDATE/DELETE grant on this table
+6. API Endpoints (complete)
+6.1 Auth & Account Security
+Method
+Endpoint
+Description
+Access
+POST	/auth/login	Login → JWT (+ MFA_REQUIRED → /auth/mfa/verify)	Public
+POST	/auth/mfa/verify, /auth/refresh, /auth/logout, /auth/logout-all	Standard session flows	Public/Cookie/ALL
+POST	/auth/forgot-password, /auth/reset-password, /auth/verify-email, /auth/resend-verification, /auth/change-password	Account recovery (no user enumeration; SMS fallback for password reset)	Public/ALL
+GET	/auth/me	User + roles + permissions + linked student IDs	ALL
+GET/DELETE	/auth/sessions, /auth/sessions/{id}	Device session list/revoke	ALL
+POST/DELETE	/auth/mfa/enable, /auth/mfa/disable	TOTP + hashed backup codes (mandatory for SA/HM/BU/AD)	ALL
+
+6.2 Users, Roles, Permissions
+Unchanged: /users (CRUD, invite), /users/{uuid}/status, /users/{uuid}/roles, /roles, /permissions. SA/HM manage; AD excludes SA/HM.
+
+6.3 Students, Guardians, Staff
+Method
+Endpoint
+Description
+Access
+GET/POST	/students	List/create (admission_no auto; birth cert entry captured)	scoped
+GET/PATCH/DELETE	/students/{uuid}	Profile, update, withdraw	scoped
+GET	/students/{uuid}/overview	Attendance %, fee balance, latest results, house, leadership	scoped
+POST/DELETE	/students/{uuid}/guardians, /guardians/{uuid}/students	Link/unlink	AD, HM
+GET/POST/PATCH/DELETE	/guardians, /guardians/{uuid}	Guardian CRUD + portal invite	AD, HM
+POST	/students/promote	Bulk promotion per promotion_rules (transactional; supports "repeat")	HM, AD
+POST	/students/{uuid}/transfer	Move class/section mid‑term	HM, AD
+GET/POST/PATCH/DELETE	/employees, /departments, /employees/{uuid}/subjects	Staff CRUD, departments, specialisations	SA, HM, AD
+GET/POST/DELETE	/students/{uuid}/subjects	Subject registration; validates per‑phase min/max subjects, A‑Level combination rules (3 A‑Level subjects + General Paper), duplicates → COMBINATION_INVALID	HOD, AD, HM
+GET/POST/DELETE	/students/{uuid}/leadership	Prefects/SRC/house captains	HM, AD
+
+6.4 Academic Setup
+Method
+Endpoint
+Description
+Access
+CRUD	/academics/sessions + /{id}/set-current	Calendar‑year sessions	SA, HM, AD
+CRUD	/academics/terms + /{id}/set-current	T1–T3 with MoPSE dates	SA, HM, AD
+CRUD	/academics/classes, /academics/sections	Phases/levels/combinations; form teachers	SA, HM, AD
+CRUD	/academics/subjects, /{id}/phases	Subjects + board codes + per‑phase core flag & scale	SA, HM, AD
+CRUD	/academics/class-subjects	Map subject→class + teacher	SA, HM, AD
+CRUD	/academics/periods, /academics/rooms	Timetable primitives	AD
+GET/POST/PATCH/DELETE	/enrollments	Enrollments incl. house assignment	AD, HM
+CRUD	/academics/promotion-rules	Promotion config	SA, HM
+
+6.5 Attendance
+Method
+Endpoint
+Description
+Access
+POST	/attendance/student/bulk	Idempotent upsert {section_id, date, session, records[]} (offline‑safe)	TC (own), BM, AD
+GET	/attendance/student , /{uuid}/summary	Registers & per‑term percentages	scoped
+PATCH	/attendance/student/{id}	Admin correction (audited)	HM, AD
+POST	/attendance/staff/clock-in, /clock-out	Staff attendance	Staff
+GET	/attendance/staff	Daily staff register	HM, DH, AD
+GET/POST/PATCH	/leaves, /{id}, /{id}/review	Leave workflow	Staff / HM, DH
+
+6.6 Timetable — unchanged (PUT bulk save with teacher/room conflict detection → 409; publish notifies).
+6.7 Schemes of Work & Lesson Plans (new)
+Method
+Endpoint
+Description
+Access
+GET/POST/PATCH	/schemes, /schemes/{id}	Create/update per class‑subject+term	TC (own)
+POST	/schemes/{id}/submit	draft → submitted	TC
+POST	/schemes/{id}/review	approve / return with notes	HOD (dept)
+GET	/schemes?teacher=&term=&status=	Lists (Head inspection view)	HM, DH, HOD
+GET/POST/PATCH	/lesson-plans, /{id} , /{id}/submit, /{id}/review	Weekly plans + record of work (taught_on, remarks)	TC, HOD, HM, DH
+
+6.8 CA, Internal Exams & Results
+Method
+Endpoint
+Description
+Access
+CRUD	/exams, /exams/{id}/schedules	Lifecycle draft→active→marks_entry→published→archived	HM, AD
+CRUD	/exams/{id}/components	Components per class‑subject; weights must total 100	HOD, HM
+POST	/exams/{id}/marks	Bulk component marks `{component_id, marks:[{student_id, mark	is_absent}]}`; window enforced; offline‑safe upsert
+POST	/exams/{id}/compute	Weighted totals → results, grades, points (idempotent)	HOD, HM
+POST	/exams/{id}/publish	Report cards + ranks; maker‑checker if configured	HM
+POST	/exams/{id}/release	Separate release gate to ST/PA portals (RESULTS_NOT_RELEASED before)	HM
+GET	/results/student/{uuid}?exam=, /results/class?exam=&class_subject_id=	Scoped result views	scoped
+GET	/exams/{id}/points-summary?level=o_level	Best‑6 (O) / best‑3 (A) points tables, pass lists	HM, HOD, TC²
+GET	/report-cards/{studentUuid}/{examId}/pdf	Watermarked PDF (name + timestamp)	scoped
+GET	/students/{uuid}/transcript	Full history incl. board results (imported grades/points)	scoped, HM, AD
+CRUD	/grading-scales	Scales + ranges + points	SA, HM
+CRUD	/assignments, /{id}/submissions, /submissions/{id}/grade	Homework	TC, ST
+
+6.9 Exam Board Entries (ZIMSEC / Cambridge)
+Method
+Endpoint
+Description
+Access
+CRUD	/exam-entries	Registration cycles: board, level, sitting, centre no, windows	AD, HM
+POST	/exam-entries/{uuid}/candidates	Bulk add eligible cohort (Form 4 / Form 6 / Grade 7) with validation	AD
+GET/POST/PATCH/DELETE	/exam-entries/{uuid}/candidates/{id}/subjects	Per‑candidate subject entries + paper options	AD, HOD²
+POST	/exam-entries/{uuid}/assign-candidate-numbers	Sequential candidate numbers against centre no (immutable once set)	AD
+POST	/exam-entries/{uuid}/invoice	Auto‑generate exam‑fee invoices (per subject + registration fee)	BU, AD
+POST	/exam-entries/{uuid}/submit	Lock entries; maker‑checker approval; Idempotency‑Key	HM (approve), AD (request)
+GET	/exam-entries/{uuid}/export?format=csv	Board entry file (column mapping configurable)	AD, HM
+GET	/exam-entries/{uuid}/sba-export	SBA/CA marks file for eligible subjects	HOD, AD
+POST	/exam-entries/{uuid}/results-import	CSV import of board results; dry‑run validation, row‑level error report, transactional, file hash logged	AD, HM (maker‑checker)
+GET	/students/{uuid}/exam-entries, /students/{uuid}/statement-of-results/pdf	Entry status; statement of results	scoped
+POST	/exam-entries/{uuid}/release-results	Set/honour results_release_at embargo	HM
+
+6.10 Fees, Payments & Reconciliation
+Method
+Endpoint
+Description
+Access
+CRUD	/finance/currencies, /finance/exchange-rates	USD/ZWG setup, FX history (immutable)	SA, BU
+CRUD	/fees/structures, /fees/items	Fee setup incl. SDA levy, boarding, per‑subject exam fees; activation maker‑checked	BU
+POST	/fees/invoices/generate	Bulk per {session, term, class[]}; idempotent batch key	BU
+GET	/fees/invoices, /{uuid}	Invoices + items + payments	BU, scoped
+POST	/fees/invoices/{uuid}/discount	Apply (approval recorded)	BU, HM
+POST	/fees/invoices/{uuid}/payments	Record/initialize payment; currency + FX snapshot on non‑base; gateway init (e.g., Paynow/EcoCash); append‑only ledger; Idempotency‑Key	BU, PA, ST
+POST	/payments/{uuid}/reverse	Reversal row; maker‑checker	BU (request), HM/SA (approve)
+GET	/payments/{uuid}/receipt/pdf, /fees/students/{uuid}/ledger	Receipts & ledger	scoped
+POST	/finance/bank-statements/import	CSV import (hash recorded)	BU
+GET/POST	/finance/bank-statements/{id}/suggestions, /{id}/match	Auto‑match by reference/amount/date; confirm matches	BU
+GET	/finance/reports/collections, /outstanding, /debtors-aging?currency=	Reports + CSV; base‑currency consolidated with FX snapshots	BU, HM, SA
+CRUD	/finance/expenses	Expenses (multi‑currency)	BU
+POST	/fees/fines/run	Overdue fines per settings (scheduled)	System/BU
+
+6.11 Library, Transport — unchanged from v1 (roles LB/AD; loans enforce limits/fines).
+6.12 Boarding: Houses & Exeat (new)
+Method
+Endpoint
+Description
+Access
+CRUD	/houses, /houses/{id}/assign	Houses + student assignment	BM, AD
+GET/POST	/houses/points, /houses/{id}/points	Inter‑house points	BM, HM
+POST	/exeats	Request exeat (BM/PA; guardian SMS auto on approval)	BM, PA
+POST	`/exeats/{id}/approve	reject	check-out
+GET	/exeats?student=&status=	Lists	BM, HM, PA(O)
+CRUD	/hostels, /hostel/rooms, /hostel/allocations, /{id}/vacate	As v1	AD, BM
+
+6.13 Communication & Calendar — unchanged (audience targeting; notification channels per settings matrix; WhatsApp/SMS gateway adapters).
+6.14 Health, Counselling, Discipline, Documents, Admissions
+Method
+Endpoint
+Description
+Access
+GET/PATCH	/health/{studentUuid}, /health/{studentUuid}/visits	Clinic module; auto‑notify guardian	NU, scoped
+GET/POST	/counselling/sessions?student=	Counselling log (notes 🔒; every read audited)	GC
+GET	/counselling/sessions/{id}	Own sessions; student sees summary only	GC, ST(S)
+CRUD	/disciplinary-records	Positive‑discipline actions only (no corporal punishment options)	HM, DH, HOD, TC(create), GC(R)
+POST/GET/DELETE	/documents, /{uuid}/download (signed URL 5 min, access‑logged)	Private storage, AV scan, 10 MB, whitelist	scoped
+POST	/admissions/apply	Public application + reference	Public
+GET	/admissions/status?ref=&phone4=	Public status (last 4 phone digits)	Public
+GET/PATCH	/admissions/applications, /{uuid}/status	Pipeline (review_notes 🔒)	AD, HM
+POST	/admissions/applications/{uuid}/enroll	Convert → student + enrollment + guardian invite (transactional)	AD, HM
+
+6.15 Dashboards, Reports, EMIS, Settings, Audit, Privacy
+Method
+Endpoint
+Description
+Access
+GET	/dashboard	Role‑aware: enrollment, attendance today, fee due, exam countdown, boarding occupancy	ALL
+GET	/reports/attendance, /enrollment, /results, /financial-summary	Standard reports + CSV/PDF	scoped
+GET	/reports/statutory/admission-register, /attendance-register?class=&month=	Printable statutory registers (with signatures column)	HM, AD
+GET	/reports/emis/enrolment?session=	Enrolment by phase/grade/sex (ECD→Upper 6), including repeats	HM, DH, AD
+GET	/reports/emis/staffing	Staff establishment: posts, qualifications, subjects	HM, AD
+POST	/statutory-returns	Snapshot a return (file + hash + submit date)	HM, AD
+GET/PATCH	/settings, /settings/{group}	School identity (MoPSE reg no, EMIS centre code, ZIMSEC centre no), phases offered, grading/points config, notification matrix	SA, HM
+GET	/audit-logs?... + CSV export	Immutable trail (incl. health/counselling reads, marks corrections, entry submissions)	SA, HM
+GET/POST	/privacy/my-data, /privacy/erase	Data subject access & erasure (CDPA)	ALL
+GET	/approvals?status=pending, POST `/{id}/approve	reject`	Maker‑checker queue
+
+7. Frontend Pages (React PWA — offline‑capable for attendance & marks)
+Public: / · /admissions · /admissions/apply · /admissions/status · /login · /2fa · /forgot-password · /reset-password/:token · /verify-email
+
+Shared (authenticated): /profile · /settings/security (password, MFA, sessions) · /notifications · /messages · /calendar · /announcements
+
+Admin & Head — /admin/*: /admin/dashboard · /admin/users (+/new, /:id) · /admin/roles · /admin/students (+/new, /:id, /promote, /:id/subjects) · /admin/guardians · /admin/staff (+/:id) · /admin/departments · /admin/academics/sessions|terms|classes|sections|subjects|class-subjects|promotion-rules · /admin/enrollments · /admin/timetable/:sectionId · /admin/attendance (corrections) · /admin/leaves · /admin/exams (+/:id/schedule, /:id/components, /:id/results, /:id/points-summary, /grading-scales) · /admin/exam-entries (+/:id candidates, /:id/import) · /admin/admissions (kanban) · /admin/library · /admin/transport · /admin/boarding (houses, hostels, exeats) · /admin/announcements · /admin/calendar · /admin/reports (+/emis, /registers) · /admin/approvals (maker‑checker queue) · /admin/audit-logs · /admin/settings
+
+Teacher — /teacher/*: /teacher/dashboard · /teacher/classes · /teacher/attendance/:sectionId (offline grid) · /teacher/timetable · /teacher/schemes (+/:id) · /teacher/lesson-plans (+/new) · /teacher/assignments (+/new, /:id/grade) · /teacher/marks-entry (exam → subject → component tabs; offline) · /teacher/students/:id · /teacher/leaves
+
+Bursar — /finance/*: /finance/dashboard · /finance/fee-structures · /finance/invoices (+/:id) · /finance/payments · /finance/reconciliation (statement import + match) · /finance/expenses · /finance/currencies · /finance/reports (+/aging)
+
+HOD: reuses admin components scoped to department: /hod/dashboard · /hod/schemes-approval · /hod/lesson-plans · /hod/marks-monitor · /hod/subjects-registration
+
+Student — /student/*: /student/dashboard · /student/timetable · /student/attendance · /student/results · /student/report-cards · /student/assignments · /student/fees · /student/library · /student/subjects (registered subjects/combinations) · /student/exam-entries (entry status + exam timetable) · /student/statement-of-results
+
+Parent — /parent/*: /parent/dashboard (child switcher) · /parent/children/:id (tabs: attendance, results, fees, timetable, assignments, health, boarding/exeat, exam entries) · /parent/fees/pay · /parent/exeats
+
+Boarding — /boarding/*: /boarding/dashboard (occupancy, today's exeats) · /boarding/allocations · /boarding/exeats · /boarding/houses · /boarding/attendance
+
+Health/Guidance: /health/dashboard · /health/students/:id · /guidance/sessions · /guidance/students/:id
+
+Errors/utilities: 403, 404, offline banner + sync status, loading/empty/error states. Responsive; low‑bandwidth mode (reduced payloads) for rural deployments.
+
+8. Security Requirements
+All v1 requirements apply (TLS 1.2+/1.3 + HSTS; Argon2id; MFA mandatory for SA/HM/BU/AD; refresh‑rotation with reuse detection; brute‑force lockouts; AES‑256‑GCM field encryption for 🔒 columns with vault‑held keys; parameterized queries + CSP + CSRF + SameSite=Strict; upload whitelist/AV/private buckets; deny‑by‑default RBAC + row‑level policies; UUIDs + 404‑on‑foreign‑resources; append‑only audit with least‑privilege DB grants; dependency scanning + security headers; automated security tests as a deploy gate). Zimbabwe‑specific additions:
+
+Cyber and Data Protection Act [Chapter 12:07] (POTRAZ): document the school as data controller; appoint a DPO (configurable contact surfaced in privacy pages); lawful basis + guardian consent captured at admission for minors; data subject access/erasure endpoints (§6.15); documented breach procedure with notification workflow; cross‑border transfer safeguards (prefer in‑country/regional hosting; encrypt backups wherever stored).
+Examination data confidentiality: ZIMSEC entries, candidate numbers, SBA marks, and imported board results are classified confidential — access logged, bulk exports require maker‑checker approval, exports are watermarked, and no third‑party analytics may process them.
+Results embargo: entry_results and published report cards are hidden from ST/PA until release_at; server returns RESULTS_NOT_RELEASED; PDF stamps are watermarked with holder name and timestamp.
+Maker‑checker: results publish/release, entry submission, results import, payment reversal, invoice voiding, fee‑structure activation require two distinct users; approvals rows are immutable and audited.
+PII hygiene: no PII in logs/URLs/analytics; masking in all list endpoints (full values on detail view only, with audit); Zimbabwean national IDs and birth certificate entries treated as sensitive identifiers.
+9. Data Integrity Requirements
+All v1 rules apply (constraints first; transactions around enrollment/promotion/invoice generation/payment posting/result publishing/admission conversion; optimistic locking with 409 STALE_VERSION; idempotency keys; referential safety with soft delete; nightly consistency jobs; whitelisted state machines). Additions:
+
+Multi‑currency ledger: every payment stores currency_id, fx_rate, and amount_base at transaction time; FX rows are immutable; nightly reconciliation recomputes base‑currency totals and alerts on drift (never auto‑mutates).
+Component weights: server rejects exam activation unless each (exam, class‑subject) has components summing to exactly 100; weighted totals computed server‑side only; publish is idempotent and freezes results.
+Points/grade computation: pure, unit‑tested functions per scale (O‑Level best‑6 with mandatory‑include rules; A‑Level best‑3 + General Paper; deterministic tie‑breaking for ranks — config: sum of best marks, then alphabetical).
+Board results import: file hash stored; dry‑run mode reports row‑level errors (unknown candidate/subject, duplicate, invalid grade); commit is all‑or‑nothing per import batch; duplicates blocked by UNIQUE constraints; import is reversible only via compensating rows, never silent edits.
+Candidate numbers: unique per entry; immutable after submission; any change requires a new revision row.
+Exeat↔attendance consistency: a student checked out cannot be marked present for that period; nightly job flags conflicts for the boarding office.
+Fee structures: versioned (retired rows retained); invoices copy item amounts at generation time so later edits never mutate issued invoices.
+10. Compliance & Statutory Reporting (Zimbabwe)
+MoPSE/EMIS: one‑click generation of the core returns — enrolment by phase/grade/sex (ECD A → Upper 6, including repeaters), staff establishment (posts, qualifications, subject specialisations) — as CSV/PDF; snapshot + submission tracking in statutory_returns.
+Statutory registers: printable Admission Register (chronological, permanent) and daily Attendance Registers per class/month with signature column.
+Teacher professional requirements: schemes of work and lesson plans per class‑subject‑term with HOD approval and record‑of‑work capture; inspection‑ready export pack per teacher/department.
+Discipline: no corporal punishment anywhere in the data model or UI; suspension/expulsion workflows reference MoPSE procedures; counselling referrals recorded and tracked by GC.
+Governance: SDA levy line items labelled as such; fee‑structure activation recorded with approver (supports SDC/SDA consultation records).
+Retention: pupil academic records & admission register permanent; audit logs 7 years; login attempts 90 days; counselling notes 5 years post‑leaving; rejected applications 2 years; board entry files 7 years.
+11. Non‑Functional Requirements (Zimbabwe context)
+Performance: p95 < 300 ms reads / < 500 ms writes; Redis caching for dashboards/timetables; queued jobs for SMS/email/PDF/imports with retries + alerts.
+Offline-first PWA: attendance and marks entry work offline (IndexedDB queue + idempotent replay); explicit sync status UI; conflict surfacing.
+Low bandwidth: gzip/brotli, paginated payloads, image compression, reduced‑payload mode.
+Messaging: SMS as the primary parent channel (pluggable gateway adapter — e.g., local aggregators or Twilio/Africa's Talking), email secondary, WhatsApp optional; per‑event channel matrix in settings.
+Payments: gateway adapter interface with reference implementations for Paynow and EcoCash merchant flows; all others via manual capture + bank‑statement reconciliation.
+Backups/DR: encrypted daily full + hourly binlog, 30‑day retention, quarterly restore drills; hosting in‑country or regional with documented cross‑transfer safeguards.
+Observability: structured JSON logs with request IDs; Sentry; queue/DB dashboards; uptime checks.
+i18n: UI locales en, sn, nd; timezone Africa/Harati? — Africa/Harare; date format DD/MM/YYYY; number/currency formatting per locale.
+CI/CD: lint → unit (≥80% services; points/FX/weighted‑marks functions at 100%) → integration (≥70%) → e2e happy paths → migration dry‑run → deploy behind flags.
+12. Seed Data
+Sessions/terms: current year + 2 prior; MoPSE‑style term dates (editable).
+Grading scales: ZIMSEC_O (A1…U6, pass=C default), ZIMSEC_A (A10…U0 + alt 5‑point), PRIMARY_PCT bands, ECD_CHECKLIST, CAMBRIDGE_IGCSE, CAMBRIDGE_A.
+Subjects: the representative list in §2.3 (codes are school aliases; board_code left NULL for the school to capture from current syllabi).
+Currencies: USD (base) + ZWG (ZiG); sample FX rate row.
+Houses: Kudu, Sable, Impala, Buffalo. Departments: Sciences, Mathematics, Languages, Humanities, Commercials, Technical/Vocational, Primary, Guidance & Counselling.
+Demo school: "Sekai Academy (Harare)" — ECD A to Upper 6, day + boarding, 3 houses active, ~700 students, 45 staff, full‑year attendance/results/fees, one closed O‑Level entry cycle with imported results, one open A‑Level entry cycle.
+Fee structures: tuition/SDA levy/building fund per phase; boarding fee; ZIMSEC exam fee per subject entry (O‑Level and A‑Level amounts configurable).
+13. Deliverables & Acceptance Criteria
+Repo with migrations, seeders (§12), OpenAPI 3.1 spec, ERD, README (setup, env, deployment), and a ZIMSEC configuration guide (centre number, syllabus codes, entry file column mapping, SBA subjects).
+Every endpoint implemented with stated scopes, validation, error codes, pagination, and maker‑checker where specified — covered by automated tests.
+Every page implemented per role with route guards (unauthorized → 403).
+End‑to‑end acceptance scenarios (must pass):
+a. Public application → review → enrollment → guardian account + SMS invite.
+b. ECD pupil: checklist report card, no ranks, guardian portal view.
+c. Form 4 pupil: CA components entered → mock exam → report card (A–U + best‑6 points) → ZIMSEC O‑Level entry (subjects + candidate numbers + fee invoice) → EcoCash/Paynow payment → entry CSV export → Nov results import (with dry‑run error report) → transcript showing 5 O‑Level passes incl. English.
+d. Upper 6 pupil: combination registration (3 A‑Level + General Paper, HOD‑approved) → termly report (10‑point scale) → A‑Level entry → results import → best‑3 points computation.
+e. Scheme of work: teacher submits → HOD approves → lesson plans/record of work logged → Head inspection export.
+f. Boarding: weekend exeat → guardian SMS → Head approves → check‑out/check‑in → attendance reconciliation job flags mismatch.
+g. Finance: Term 2 invoices (USD) → parent pays ZWG equivalent via gateway at recorded FX → bank statement import matches POP → debtors aging → SDA levy line item visible.
+h. EMIS: January enrolment return generated by grade & sex; head "submits" snapshot; file hash recorded.
+i. Security: failed‑login lockout + MFA; audit trail with old/new values on a corrected mark; results embargo blocks parent view until release; maker‑checker blocks self‑approval of a payment reversal.
+Security checklist (§8) and integrity checklist (§9) signed off before delivery.

@@ -145,7 +145,7 @@ const Library = () => {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page library-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>

@@ -23,12 +23,20 @@ const Home = ({ preOpenLogin = false }) => {
   const [activeCurriculumTab, setActiveCurriculumTab] = useState('primary'); // 'primary' | 'secondary'
 
   const sessionExpired = searchParams.get('expired') === '1';
+  const [showSessionExpired, setShowSessionExpired] = useState(sessionExpired);
 
   useEffect(() => {
     if (preOpenLogin || searchParams.get('login') === '1') {
       setShowLogin(true);
     }
   }, [preOpenLogin, searchParams]);
+
+  useEffect(() => {
+    setShowSessionExpired(sessionExpired);
+    if (!sessionExpired) return undefined;
+    const timer = window.setTimeout(() => setShowSessionExpired(false), 60 * 1000);
+    return () => window.clearTimeout(timer);
+  }, [sessionExpired]);
 
   const handleCta = () => {
     if (user) {
@@ -321,26 +329,6 @@ const Home = ({ preOpenLogin = false }) => {
         </div>
       </section>
 
-      <section className="max-w-7xl mx-auto px-6 md:px-8 py-16 relative z-10">
-        <div className="glass-panel rounded-3xl p-10 md:p-14 bg-gradient-to-r from-teal-primary to-teal-dark text-paper border border-teal-primary/30 shadow-2xl relative overflow-hidden flex flex-col lg:flex-row items-center justify-between gap-8">
-          <div className="absolute top-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-3xl pointer-events-none" />
-          <div className="space-y-3 text-left max-w-2xl relative z-10">
-            <span className="text-[10px] font-mono font-bold uppercase tracking-widest px-3 py-1 bg-white/15 rounded-full text-paper">Ready For Live Deployment</span>
-            <h2 className="text-3xl sm:text-4xl font-display font-bold leading-tight">Access the SchoolBase Portal</h2>
-            <p className="text-xs sm:text-sm text-paper/85 font-sans leading-relaxed">
-              Enter your administrative credentials to securely access your school's cockpit.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowLogin(true)}
-            className="px-8 py-4 bg-paper hover:bg-white text-teal-dark font-bold text-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all cursor-pointer relative z-10 shrink-0 flex items-center space-x-2"
-          >
-            <LogIn className="w-4 h-4 text-teal-primary" />
-            <span>Sign In to Portal</span>
-          </button>
-        </div>
-      </section>
-
       <footer className="border-t border-line-border/30 bg-white py-10 text-xs font-sans text-ink/50 relative z-10">
         <div className="max-w-7xl mx-auto px-6 md:px-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="flex items-center space-x-2">
@@ -357,22 +345,38 @@ const Home = ({ preOpenLogin = false }) => {
       </footer>
 
       {showLogin && (
-        <div className="fixed inset-0 bg-ink/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="w-full max-w-md glass-panel rounded-3xl shadow-2xl p-8 border border-line-border/40 bg-white relative">
+        <div className="fixed inset-0 bg-ink/70 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fadeIn">
+          <div className="w-full max-w-3xl glass-panel rounded-2xl shadow-2xl overflow-hidden border border-line-border/50 relative grid md:grid-cols-[0.82fr_1.18fr]">
+            <aside className="hidden md:flex bg-ink text-paper p-8 flex-col justify-between min-h-[500px]">
+              <div>
+                <div className="w-11 h-11 rounded-xl bg-teal-primary/20 border border-teal-primary/30 flex items-center justify-center mb-8">
+                  <Shield className="w-5 h-5 text-teal-light" />
+                </div>
+                <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-teal-light/80 mb-3">SchoolBase access</p>
+                <h2 className="text-3xl font-display font-bold leading-tight">One secure doorway for every school operation.</h2>
+                <p className="text-sm text-paper/65 mt-4 leading-relaxed">Your role determines the workspace, data, and actions available after sign in.</p>
+              </div>
+              <div className="space-y-3 text-xs text-paper/60">
+                <div className="flex items-center gap-2"><Lock className="w-3.5 h-3.5 text-teal-light" /><span>Encrypted account session</span></div>
+                <div className="flex items-center gap-2"><Shield className="w-3.5 h-3.5 text-teal-light" /><span>Role-based school access</span></div>
+              </div>
+            </aside>
+            <div className="p-7 sm:p-9 bg-surface relative">
             <button
               onClick={() => setShowLogin(false)}
-              className="absolute right-5 top-5 p-2 text-ink/50 hover:text-ink hover:bg-sage/10 rounded-full transition-colors cursor-pointer"
+              className="absolute right-5 top-5 p-2 text-ink/45 hover:text-ink hover:bg-sage rounded-lg transition-colors cursor-pointer"
+              aria-label="Close sign in"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="text-left space-y-1 border-b border-line-border/20 pb-4 mb-5">
-              <span className="text-[10px] font-mono font-bold text-teal-primary uppercase tracking-wider">Client Sign In</span>
-              <h3 className="text-2xl font-display font-bold text-ink">Access School Cockpit</h3>
-              <p className="text-xs text-ink/60 font-sans">Enter your login details to access the system.</p>
+            <div className="text-left space-y-2 border-b border-line-border/60 pb-5 mb-6 pr-8">
+              <span className="text-[10px] font-mono font-bold text-teal-primary uppercase tracking-[0.16em]">Secure sign in</span>
+              <h3 className="text-2xl font-display font-bold text-ink">Welcome back</h3>
+              <p className="text-sm text-ink/60 font-sans">Sign in to continue to your SchoolBase workspace.</p>
             </div>
 
-            {sessionExpired && (
+            {showSessionExpired && (
               <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 text-xs flex items-center space-x-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>Your session has expired. Please sign in again.</span>
@@ -386,27 +390,34 @@ const Home = ({ preOpenLogin = false }) => {
               </div>
             )}
 
-            <form onSubmit={handleLoginSubmit} className="space-y-4 text-left font-sans">
+            <form onSubmit={handleLoginSubmit} className="space-y-5 text-left font-sans">
               <div>
-                <label className="block text-xs font-bold text-ink/75 mb-1">Username / Account Email *</label>
+                <label className="block text-xs font-semibold text-ink/75 mb-2">Username or email</label>
                 <input
                   type="text"
                   required
-                  placeholder="Enter username"
-                  className="w-full glass-input rounded-xl text-xs"
+                  autoComplete="username"
+                  placeholder="name@school.org"
+                  className="w-full glass-input rounded-lg text-sm py-3"
                   value={username}
                   onChange={e => setUsername(e.target.value)}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-ink/75 mb-1">Password *</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-semibold text-ink/75">Password</label>
+                  <Link to="/forgot-password" className="text-[11px] font-semibold text-teal-primary hover:text-teal-dark transition-colors">
+                    Forgot password?
+                  </Link>
+                </div>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     placeholder="••••••••"
-                    className="w-full glass-input rounded-xl text-xs pr-10"
+                    className="w-full glass-input rounded-lg text-sm pr-10 py-3"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                   />
@@ -414,6 +425,7 @@ const Home = ({ preOpenLogin = false }) => {
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -423,12 +435,13 @@ const Home = ({ preOpenLogin = false }) => {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper font-bold text-xs rounded-xl shadow-lg transition-colors cursor-pointer flex items-center justify-center space-x-2 mt-2"
+                className="w-full py-3.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper font-bold text-sm rounded-lg shadow-lg transition-colors cursor-pointer flex items-center justify-center gap-2 mt-2"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                <span>Sign In to School Cockpit</span>
+                <span>Continue to workspace</span>
               </button>
             </form>
+            </div>
           </div>
         </div>
       )}

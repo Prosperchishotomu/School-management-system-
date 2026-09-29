@@ -4,7 +4,7 @@ import { Shield, Loader2, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-re
 import { api } from '../utils/api';
 
 const ForgotPassword = () => {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -12,8 +12,8 @@ const ForgotPassword = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!username.trim()) {
-      setError('Please enter your username.');
+    if (!email.trim()) {
+      setError('Please enter your email address.');
       return;
     }
 
@@ -23,14 +23,13 @@ const ForgotPassword = () => {
     setLoading(true);
 
     try {
-      const res = await api.post('/auth/forgot-password', { username });
+      const res = await api.post('/auth/forgot-password', { email: email.trim() });
       setLoading(false);
       
-      if (res.data?.success) {
-        setSuccessMsg(res.data.message || 'Reset link generated successfully.');
-        if (res.data.reset_link) {
-          setResetLink(res.data.reset_link);
-        }
+      if (res.data?.message) {
+        setSuccessMsg(res.data.message);
+        const token = res.data.reset_link || (res.data.reset_token_dev ? `/reset-password?token=${res.data.reset_token_dev}` : '');
+        setResetLink(token);
       } else {
         setError(res.error?.message || 'Could not process request.');
       }
@@ -89,16 +88,17 @@ const ForgotPassword = () => {
         {!successMsg && (
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-xs font-sans font-semibold text-ink/75 uppercase tracking-wider mb-2" htmlFor="username">
-                Your Username
+              <label className="block text-xs font-sans font-semibold text-ink/75 uppercase tracking-wider mb-2" htmlFor="email">
+                Account Email
               </label>
               <input
-                id="username"
-                type="text"
+                id="email"
+                type="email"
+                autoComplete="email"
                 className="w-full px-4 py-3 rounded-xl glass-input text-ink font-sans text-sm focus:outline-none focus:ring-1 focus:ring-teal-primary"
-                placeholder="e.g. schooladmin"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                placeholder="name@school.org"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 disabled={loading}
                 required
                 autoFocus

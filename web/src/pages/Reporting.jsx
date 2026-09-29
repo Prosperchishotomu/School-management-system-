@@ -115,7 +115,7 @@ const Reporting = () => {
     const totalSchools = schools.length;
 
     return (
-      <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
+      <div className="module-page reporting-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
         <div className="flex justify-between items-center border-b border-line-border/30 pb-4 non-printable">
           <div>
             <h2 className="text-3xl font-display font-bold text-ink">System Reporting Desk</h2>
@@ -290,7 +290,7 @@ const Reporting = () => {
   const staffActivity = schoolStats?.staff_activity || [];
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
+    <div className="module-page reporting-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4 non-printable">
         <div>

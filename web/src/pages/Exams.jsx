@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { Calendar, Plus, X, Loader2, Clock, MapPin, User } from 'lucide-react';
+import { Calendar, Plus, X, Loader2, Clock, MapPin, User, BarChart3 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+
 
 const getCurrentTermCode = () => {
   const d = new Date();
@@ -90,12 +92,12 @@ const Exams = () => {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page exams-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Exam Scheduling</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">Plan assessments, assign invigilators, and schedule rooms for final exams.</p>
+          <h2 className="module-title text-3xl font-display font-bold text-ink">Exam Schedule</h2>
+          <p className="module-subtitle text-sm font-sans text-ink/60 mt-1">Plan assessment sessions, rooms, and invigilation across the school.</p>
         </div>
         <div className="flex items-center space-x-3">
           <select
@@ -119,6 +121,59 @@ const Exams = () => {
       </div>
 
       {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm font-sans">{error}</div>}
+
+      {/* Stats Panel */}
+      {exams.length > 0 && (() => {
+        const today = new Date().toISOString().split('T')[0];
+        const upcoming = exams.filter(e => e.exam_date >= today).length;
+        const past = exams.filter(e => e.exam_date < today).length;
+        const byClass = classes.map(c => ({
+          name: c.name,
+          exams: exams.filter(e => String(e.class_id) === String(c.id)).length
+        })).filter(d => d.exams > 0);
+
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Summary cards */}
+            <div className="glass-card rounded-2xl p-4 border border-line-border/30 space-y-3">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-teal-primary" />
+                <h3 className="text-xs font-bold text-ink/70 uppercase tracking-wider">Term Overview</h3>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'Scheduled', value: exams.length, color: 'text-teal-primary' },
+                  { label: 'Upcoming', value: upcoming, color: 'text-amber-600' },
+                  { label: 'Completed', value: past, color: 'text-ink/50' },
+                ].map(stat => (
+                  <div key={stat.label} className="text-center p-2 bg-sage/10 rounded-xl">
+                    <div className={`text-2xl font-display font-bold ${stat.color}`}>{stat.value}</div>
+                    <div className="text-[9px] text-ink/50 font-bold uppercase tracking-wider mt-0.5">{stat.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Exams by class bar chart */}
+            <div className="glass-card rounded-2xl p-4 border border-line-border/30 col-span-1 md:col-span-2">
+              <div className="flex items-center gap-2 mb-3">
+                <Calendar className="w-4 h-4 text-teal-primary" />
+                <h3 className="text-xs font-bold text-ink/70 uppercase tracking-wider">Exams by Class</h3>
+              </div>
+              <ResponsiveContainer width="100%" height={110}>
+                <BarChart data={byClass} margin={{ top: 0, right: 0, left: -25, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="name" tick={{ fontSize: 9 }} />
+                  <YAxis tick={{ fontSize: 9 }} allowDecimals={false} />
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                  <Bar dataKey="exams" fill="#356AE6" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        );
+      })()}
+
 
       {/* Grid or Table list */}
       <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">

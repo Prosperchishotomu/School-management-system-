@@ -25,6 +25,7 @@ import {
   KeyRound,
   FileBarChart2,
   Bell,
+  MessageSquare,
   Loader2,
   X,
   Package,
@@ -85,47 +86,51 @@ const Sidebar = ({ isOpen, onClose }) => {
     
     // Category 1: Main Overview
     const overviewItems = role === 'parent' 
-      ? [{ path: '/parent-portal', label: 'Parent Portal', icon: LayoutDashboard }]
-      : [{ path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }];
-    overviewItems.push({ path: '/notifications', label: 'Notifications & Feed', icon: Bell });
+      ? [{ path: '/parent-portal', label: 'Family Workspace', icon: LayoutDashboard }]
+      : [{ path: '/dashboard', label: 'Dashboard Overview', icon: LayoutDashboard }];
+    overviewItems.push({ path: '/notifications', label: 'Alerts & Updates', icon: Bell });
+    overviewItems.push({ path: '/messages', label: 'Secure Messages', icon: MessageSquare });
 
     // Category 2: People Directory (Students, Staff, Parents/Guardians, Admissions, Users)
     const peopleItems = [];
     if (role !== 'parent') {
-      peopleItems.push({ path: '/students', label: 'Students Directory', icon: Users });
+      peopleItems.push({ path: '/students', label: 'Student Directory', icon: Users });
     }
     if (role === 'school_admin' || role === 'super_admin') {
-      peopleItems.push({ path: '/staff', label: 'Staff Roster', icon: UserCheck });
+      peopleItems.push({ path: '/staff', label: 'Staff Directory', icon: UserCheck });
       if (role === 'super_admin') {
-        peopleItems.push({ path: '/user-management', label: 'User Logins', icon: KeyRound });
+        peopleItems.push({ path: '/user-management', label: 'User Access', icon: KeyRound });
       }
     }
 
     // Category 3: School Activities & Operations (Attendance, Absence, Discipline, Health, Timetable, Announcements)
     const operationsItems = [];
     if (role !== 'parent') {
-      operationsItems.push({ path: '/attendance', label: 'Attendance Check', icon: CalendarCheck });
-      operationsItems.push({ path: '/leave-requests', label: 'Absence & Leave', icon: CalendarCheck });
+      operationsItems.push({ path: '/attendance', label: 'Attendance Register', icon: CalendarCheck });
+      operationsItems.push({ path: '/leave-requests', label: 'Leave & Exceptions', icon: CalendarCheck });
     } else {
       operationsItems.push({ path: '/leave-requests', label: 'Absence Notices', icon: CalendarCheck });
     }
     if (role === 'school_admin' || role === 'teacher' || role === 'super_admin') {
-      operationsItems.push({ path: '/health-records', label: 'Health Files', icon: HeartPulse });
-      operationsItems.push({ path: '/discipline', label: 'Discipline Log', icon: AlertTriangle });
+      operationsItems.push({ path: '/health-records', label: 'Health Services', icon: HeartPulse });
+      operationsItems.push({ path: '/discipline', label: 'Conduct & Support', icon: AlertTriangle });
     }
-    operationsItems.push({ path: '/timetable', label: 'School Timetable', icon: Grid3X3 });
+    operationsItems.push({ path: '/timetable', label: 'Timetable', icon: Grid3X3 });
     operationsItems.push({ path: '/announcements', label: 'Announcements', icon: Megaphone });
 
     // Category 4: Academics & Curriculum (Classes, Subjects, Lesson Planner, Grades, Results, Exams)
     const academicItems = [];
     if (role === 'school_admin' || role === 'super_admin') {
+      academicItems.push({ path: '/academics/setup', label: 'Academic Configuration', icon: Settings });
       academicItems.push({ path: '/classes', label: 'Classes & Subjects', icon: Grid3X3 });
+      academicItems.push({ path: '/zimsec/portal', label: 'Exam Board Desk', icon: GraduationCap });
     }
-    if (role === 'teacher' || role === 'school_admin' || role === 'super_admin') {
-      academicItems.push({ path: '/tasks', label: 'Lesson Planner', icon: Calendar });
-      academicItems.push({ path: '/grades', label: 'Grades Sheets', icon: GraduationCap });
+    if (role === 'teacher' || role === 'school_admin' || role === 'super_admin' || role === 'hod') {
+      academicItems.push({ path: '/academics/schemes', label: 'Schemes & Lesson Plans', icon: FileText });
+      academicItems.push({ path: '/tasks', label: 'Work Planner', icon: Calendar });
+      academicItems.push({ path: '/grades', label: 'Gradebook', icon: GraduationCap });
       academicItems.push({ path: '/results', label: 'Results Ledger', icon: FileText });
-      academicItems.push({ path: '/exams', label: 'Exams Scheduling', icon: Calendar });
+      academicItems.push({ path: '/exams', label: 'Examinations', icon: Calendar });
     }
     if (role === 'parent') {
       academicItems.push({ path: '/results', label: 'Report Cards', icon: FileText });
@@ -135,16 +140,17 @@ const Sidebar = ({ isOpen, onClose }) => {
     const financeItems = [];
     if (role === 'school_admin' || role === 'super_admin') {
       financeItems.push({ path: '/fees', label: 'Fees & Billing', icon: CreditCard });
-      financeItems.push({ path: '/expenses', label: 'OpEx Expenses', icon: DollarSign });
+      financeItems.push({ path: '/expenses', label: 'Operating Expenses', icon: DollarSign });
     } else if (role === 'parent') {
       financeItems.push({ path: '/fees', label: 'Fees & Payments', icon: CreditCard });
     }
 
     // Category 6: Campus & Resources (Hostels, Assets, Library)
     const facilityItems = [];
-    if (role === 'school_admin' || role === 'super_admin') {
+    if (role === 'school_admin' || role === 'super_admin' || role === 'boarding_master') {
+      facilityItems.push({ path: '/boarding/exeats', label: 'Boarding & Exeats', icon: Building2 });
       facilityItems.push({ path: '/hostels', label: 'Hostels & Housing', icon: Building2 });
-      facilityItems.push({ path: '/assets', label: 'Asset Register', icon: Package });
+      facilityItems.push({ path: '/assets', label: 'Assets & Inventory', icon: Package });
     }
     facilityItems.push({ path: '/library', label: 'Library Catalog', icon: BookOpen });
 
@@ -155,10 +161,11 @@ const Sidebar = ({ isOpen, onClose }) => {
       governanceItems.push({ path: '/admin/system-administration', label: 'System Administration', icon: Settings });
       governanceItems.push({ path: '/admin/licenses', label: 'License Desk', icon: FileLock });
       governanceItems.push({ path: '/admin/alerts', label: 'System Alerts', icon: AlertTriangle });
-      governanceItems.push({ path: '/audit-log', label: 'Platform Audits', icon: ShieldCheck });
+      governanceItems.push({ path: '/audit-log', label: 'Audit Trail', icon: ShieldCheck });
     }
-    if (role === 'school_admin' || role === 'super_admin') {
-      governanceItems.push({ path: '/reporting', label: 'Reporting & KPIs', icon: FileBarChart2 });
+    if (role === 'school_admin' || role === 'super_admin' || role === 'head' || role === 'deputy_head') {
+      governanceItems.push({ path: '/reports/emis', label: 'EMIS & Approvals', icon: FileBarChart2 });
+      governanceItems.push({ path: '/reporting', label: 'Performance Reporting', icon: FileBarChart2 });
       governanceItems.push({ path: '/school-admin/license', label: 'License Status', icon: FileLock });
     }
 
@@ -241,7 +248,7 @@ const Sidebar = ({ isOpen, onClose }) => {
   return (
     <>
       {/* Sidebar Navigation */}
-      <div className={`fixed top-0 bottom-0 left-0 w-64 bg-ink text-paper p-5 z-30 transition-transform duration-300 md:translate-x-0 ${
+      <div className={`app-sidebar fixed top-0 bottom-0 left-0 w-64 bg-ink text-paper p-5 z-30 transition-transform duration-300 md:translate-x-0 ${
         isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
       } flex flex-col border-r border-paper/10`}>
 
@@ -338,7 +345,7 @@ const Sidebar = ({ isOpen, onClose }) => {
                               }`
                             }
                           >
-                            <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                            <Icon className="nav-icon w-3.5 h-3.5 flex-shrink-0" />
                             <span className="truncate">{link.label}</span>
                           </NavLink>
                         );

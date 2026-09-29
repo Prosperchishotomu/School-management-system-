@@ -3,6 +3,8 @@ const router = express.Router();
 const crypto = require('crypto');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
+const { requireIdempotencyKey, idempotencyMiddleware } = require('../utils/idempotency');
+const { initializePayment } = require('../services/payments');
 
 const getTermFromDate = (dateVal = new Date()) => {
   const d = new Date(dateVal);
@@ -17,6 +19,8 @@ router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
     const { class_id, term } = req.query;
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const perPage = Math.min(100, Math.max(1, Number.parseInt(req.query.per_page || req.query.limit, 10) || 50));
 
     let sql = `
       SELECT f.*, c.name as class_name, st.first_name, st.last_name, st.admission_number
@@ -36,10 +40,12 @@ router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
       params.push(term);
     }
 
-    sql += ' ORDER BY st.first_name ASC, f.created_at DESC';
+    const offset = (page - 1) * perPage;
+    sql += ` ORDER BY st.first_name ASC, f.created_at DESC LIMIT ${perPage} OFFSET ${offset}`;
 
     const fees = await query(sql, params);
-    return res.json({ data: fees });
+    const totalRow = await queryOne('SELECT COUNT(*) AS total FROM fees f JOIN students st ON f.student_id = st.id WHERE f.school_id = ?', [schoolId]);
+    return res.json({ data: fees, meta: { page, per_page: perPage, total: Number(totalRow?.total || 0), request_id: req.requestId } });
   } catch (err) {
     console.error('Get fees error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch fee ledgers.' } });
@@ -73,7 +79,7 @@ router.post('/schools/:schoolId/fees', authenticateToken, requireRoles('school_a
 
 
 // POST /schools/:schoolId/fees/:feeId/payments
-router.post('/schools/:schoolId/fees/:feeId/payments', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
+router.post('/schools/:schoolId/fees/:feeId/payments', authenticateToken, requireIdempotencyKey, idempotencyMiddleware, requireRoles('bursar', 'school_admin', 'parent', 'student', 'super_admin'), async (req, res) => {
   try {
     const { schoolId, feeId } = req.params;
     const { amount_paid, payment_method, reference, notes } = req.body;
@@ -232,7 +238,7 @@ router.get('/schools/:schoolId/fee-payments', authenticateToken, async (req, res
 });
 
 // POST /schools/:schoolId/fees/:feeId/pay-online
-router.post('/schools/:schoolId/fees/:feeId/pay-online', authenticateToken, async (req, res) => {
+router.post('/schools/:schoolId/fees/:feeId/pay-online', authenticateToken, requireIdempotencyKey, idempotencyMiddleware, async (req, res) => {
   try {
     const { schoolId, feeId } = req.params;
     const { amount_paid, currency, method, idempotency_key } = req.body;
@@ -243,47 +249,35 @@ router.post('/schools/:schoolId/fees/:feeId/pay-online', authenticateToken, asyn
     }
 
     const payAmount = parseFloat(amount_paid || 0);
-    const newPaid = parseFloat(fee.amount_paid || 0) + payAmount;
-    const dueAmount = parseFloat(fee.amount_due || 0);
-
-    let newStatus = 'unpaid';
-    if (newPaid >= dueAmount) {
-      newStatus = 'paid';
-    } else if (newPaid > 0) {
-      newStatus = 'partially_paid';
-    }
-
     const paymentId = 'PAY' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
     const paymentDate = new Date().toISOString().slice(0, 10);
     const reference = 'PAY-ONLINE-' + Date.now().toString(36).toUpperCase();
+    const gateway = await initializePayment({ provider: method, amount: payAmount, currency: currency || 'USD', reference, callbackUrl: `${process.env.PUBLIC_API_URL || ''}/api/v1/payments/webhooks/${method}` });
 
     try {
       await query(
-        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, reference, notes, payment_date, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [paymentId, schoolId, feeId, fee.student_id, payAmount, method || 'online', reference, `Online Payment (${currency || 'USD'})`, paymentDate, req.user.id]
+        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, requested_amount, payment_method, reference, notes, payment_date, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, schoolId, feeId, fee.student_id, 0, payAmount, method || 'online', reference, `Payment initiated (${currency || 'USD'})`, paymentDate, req.user.id]
       );
     } catch (e) {
       await query(
-        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, reference, notes, payment_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [paymentId, schoolId, feeId, fee.student_id, payAmount, method || 'online', reference, `Online Payment (${currency || 'USD'})`, paymentDate]
+        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, requested_amount, payment_method, reference, notes, payment_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, schoolId, feeId, fee.student_id, 0, payAmount, method || 'online', reference, `Payment initiated (${currency || 'USD'})`, paymentDate]
       );
     }
 
-    await query(
-      `UPDATE fees SET amount_paid = ?, status = ? WHERE id = ?`,
-      [newPaid, newStatus, feeId]
-    );
-
-    return res.status(201).json({
+    return res.status(202).json({
       data: {
         id: paymentId,
         fee_id: feeId,
         amount_paid: payAmount,
         currency: currency || 'USD',
         reference: reference,
-        status: 'success'
+        status: gateway.status,
+        gateway: gateway.gateway || null,
+        message: gateway.message || 'Payment is awaiting gateway confirmation.'
       }
     });
   } catch (err) {

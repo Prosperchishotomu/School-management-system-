@@ -3,20 +3,40 @@ const { queryOne } = require('../config/db');
 
 const crypto = require('crypto');
 
-let JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
+let JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY;
+let JWT_PUBLIC_KEY = process.env.JWT_PUBLIC_KEY;
+if (!JWT_PRIVATE_KEY || !JWT_PUBLIC_KEY) {
   if (process.env.NODE_ENV === 'production') {
-    console.error('CRITICAL CONFIGURATION ERROR: process.env.JWT_SECRET is missing in production. Application will exit.');
+    console.error('CRITICAL CONFIGURATION ERROR: JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are required in production. Application will exit.');
     process.exit(1);
   } else {
-    console.warn('WARNING: process.env.JWT_SECRET is missing in development. Generating a secure dynamic session fallback key.');
-    JWT_SECRET = crypto.randomBytes(32).toString('hex');
+    console.warn('WARNING: JWT key pair is missing in development. Generating an ephemeral RS256 key pair.');
+    const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    JWT_PRIVATE_KEY = pair.privateKey.export({ type: 'pkcs8', format: 'pem' });
+    JWT_PUBLIC_KEY = pair.publicKey.export({ type: 'spki', format: 'pem' });
   }
 }
 
 
 function generateToken(userPayload) {
-  return jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign(userPayload, JWT_PRIVATE_KEY, { algorithm: 'RS256', expiresIn: '15m' });
+}
+
+function verifyAccessToken(token) {
+  return jwt.verify(token, JWT_PUBLIC_KEY, { algorithms: ['RS256'] });
+}
+
+async function resolveRole(userId, legacyRole) {
+  try {
+    const role = await queryOne(
+      `SELECT r.name FROM user_roles ur
+       INNER JOIN roles r ON r.id = ur.role_id
+       WHERE ur.user_id = ? ORDER BY r.id LIMIT 1`,
+      [userId]
+    );
+    if (role?.name) return role.name;
+  } catch (_) {}
+  return legacyRole || null;
 }
 
 async function authenticateToken(req, res, next) {
@@ -30,15 +50,20 @@ async function authenticateToken(req, res, next) {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_PUBLIC_KEY, { algorithms: ['RS256'] });
     
     // Fetch fresh status and role from DB
-    const user = await queryOne('SELECT u.id, u.school_id, u.username, u.role, u.status, s.name as school_name FROM users u LEFT JOIN schools s ON u.school_id = s.id WHERE u.id = ?', [decoded.id]);
+    const user = await queryOne('SELECT u.*, s.name as school_name FROM users u LEFT JOIN schools s ON u.school_id = s.id WHERE u.id = ?', [decoded.id]);
     
     if (!user || user.status !== 'active') {
       return res.status(401).json({
         error: { code: 'UNAUTHORIZED', message: 'User account is inactive or disabled.' }
       });
+    }
+
+    user.role = await resolveRole(user.id, user.role || decoded.role);
+    if (!user.role) {
+      return res.status(403).json({ error: { code: 'ACCESS_DENIED', message: 'No role is assigned to this account.' } });
     }
 
     // License Enforcement Policy
@@ -97,6 +122,8 @@ function requireRoles(...allowedRoles) {
 
 module.exports = {
   generateToken,
+  verifyAccessToken,
   authenticateToken,
-  requireRoles
+  requireRoles,
+  resolveRole
 };

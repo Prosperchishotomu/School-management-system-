@@ -6,6 +6,10 @@ import {
   Users, Calendar, GraduationCap, CreditCard, ChevronRight,
   Loader2, CheckCircle2, AlertTriangle, MessageSquare, DollarSign, X
 } from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend
+} from 'recharts';
 
 const ParentPortal = () => {
   const { activeSchoolId } = useAuth();
@@ -169,8 +173,28 @@ const ParentPortal = () => {
     return 'bg-brick-critical/15 text-brick-critical';
   };
 
+  const childGrades = childProfile?.grades || childProfile?.gradesSummary || [];
+  const subjectScores = Object.values(childGrades.reduce((acc, grade) => {
+    const subject = grade.subject_name || grade.subject || 'Unspecified';
+    const score = Number(grade.grade_value ?? grade.average);
+    if (!Number.isFinite(score)) return acc;
+    if (!acc[subject]) acc[subject] = { subject, total: 0, count: 0 };
+    acc[subject].total += score;
+    acc[subject].count += 1;
+    return acc;
+  }, {})).map(item => ({ subject: item.subject, average: Number((item.total / item.count).toFixed(1)) }));
+  const attendanceData = [
+    { name: 'Present', value: Number(childProfile?.attendanceSummary?.present || 0), color: '#16827a' },
+    { name: 'Late', value: Number(childProfile?.attendanceSummary?.late || 0), color: '#c77b18' },
+    { name: 'Absent', value: Number(childProfile?.attendanceSummary?.absent || 0), color: '#c73a4a' }
+  ].filter(item => item.value > 0);
+  const feeData = [
+    { name: 'Paid', value: Number(childProfile?.feeSummary?.amount_paid || 0), color: '#16827a' },
+    { name: 'Balance', value: Math.max(0, Number(childProfile?.feeSummary?.amount_due || 0) - Number(childProfile?.feeSummary?.amount_paid || 0)), color: '#c77b18' }
+  ].filter(item => item.value > 0);
+
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
+    <div className="module-page parent-page p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
       {/* Header */}
       <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line-border/30 pb-4">
         <div>
@@ -387,6 +411,51 @@ const ParentPortal = () => {
                 <h3 className="text-sm font-sans font-bold text-ink">Academic Assessment Sheets</h3>
               </div>
 
+              {(subjectScores.length > 0 || attendanceData.length > 0 || feeData.length > 0) && (
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  {subjectScores.length > 0 && (
+                    <div className="border border-line-border/25 rounded-xl p-4 bg-paper">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50 mb-3">Average by subject</p>
+                      <ResponsiveContainer width="100%" height={210}>
+                        <BarChart data={subjectScores} margin={{ top: 4, right: 8, left: -20, bottom: 30 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#dbe4e8" />
+                          <XAxis dataKey="subject" angle={-25} textAnchor="end" interval={0} tick={{ fontSize: 10 }} />
+                          <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                          <Tooltip />
+                          <Bar dataKey="average" fill="#356ae6" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  {attendanceData.length > 0 && (
+                    <div className="border border-line-border/25 rounded-xl p-4 bg-paper">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50 mb-3">Attendance distribution</p>
+                      <ResponsiveContainer width="100%" height={210}>
+                        <PieChart>
+                          <Pie data={attendanceData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={74} paddingAngle={3}>
+                            {attendanceData.map(item => <Cell key={item.name} fill={item.color} />)}
+                          </Pie>
+                          <Tooltip /><Legend wrapperStyle={{ fontSize: 10 }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                  {feeData.length > 0 && (
+                    <div className="border border-line-border/25 rounded-xl p-4 bg-paper">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50 mb-3">Fee position</p>
+                      <ResponsiveContainer width="100%" height={210}>
+                        <PieChart>
+                          <Pie data={feeData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={74} paddingAngle={3}>
+                            {feeData.map(item => <Cell key={item.name} fill={item.color} />)}
+                          </Pie>
+                          <Tooltip formatter={value => `$${Number(value).toFixed(2)}`} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="overflow-x-auto max-h-[500px] overflow-y-auto border border-line-border/30 rounded-xl">
                 <table className="w-full text-left border-collapse text-xs font-sans text-ink">
                   <thead className="bg-ink/5 border-b border-line-border/30 sticky top-0">
@@ -398,7 +467,7 @@ const ParentPortal = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line-border/20">
-                    {(childProfile.gradesSummary || []).map((grade, index) => (
+                    {childGrades.map((grade, index) => (
                       <tr key={index} className="hover:bg-sage/5 transition-colors">
                         <td className="py-3 px-4 font-bold text-ink">{grade.subject}</td>
                         <td className="py-3 px-4 text-ink/55 font-mono">{grade.term}</td>
@@ -410,7 +479,7 @@ const ParentPortal = () => {
                         </td>
                       </tr>
                     ))}
-                    {(!childProfile.gradesSummary || childProfile.gradesSummary.length === 0) && (
+                    {childGrades.length === 0 && (
                       <tr>
                         <td colSpan={4} className="py-12 text-center text-ink/40 italic">
                           No assessment grades posted for this student yet.

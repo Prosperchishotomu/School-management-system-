@@ -318,7 +318,7 @@ const Assets = () => {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn font-sans">
+    <div className="module-page assets-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn font-sans">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center border-b border-line-border/30 pb-5 gap-4">
         <div>

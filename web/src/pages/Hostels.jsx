@@ -144,7 +144,7 @@ const Hostels = () => {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
+    <div className="module-page hostels-page p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>

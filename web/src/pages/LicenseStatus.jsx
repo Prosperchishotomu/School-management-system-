@@ -292,7 +292,7 @@ const LicenseStatus = () => {
             </div>
             <div className="flex items-center space-x-2.5 text-ink/70">
               <Phone className="w-4 h-4 text-teal-primary" />
-              <span>+263 (242) 777-888</span>
+              <span>+263 775 876 012</span>
             </div>
           </div>
         </div>

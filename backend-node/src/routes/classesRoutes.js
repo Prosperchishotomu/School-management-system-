@@ -313,14 +313,26 @@ router.get('/classes/:classId/results/export', authenticateToken, async (req, re
   try {
     const { schoolId, classId } = req.params;
     const { term } = req.query;
+    if (['parent', 'student', 'guardian'].includes(req.user.role)) {
+      const released = await queryOne("SELECT id FROM result_publications WHERE school_id = ? AND class_id = ? AND term = ? AND status IN ('published', 'released') AND (status = 'released' OR (release_at IS NOT NULL AND release_at <= NOW()))", [schoolId, classId, term || '2026-T1']);
+      if (!released) return res.status(403).json({ error: { code: 'RESULTS_NOT_RELEASED', message: 'Results have not been released for this class and term.' } });
+    }
 
-    const students = await query(
-      `SELECT id as student_id, first_name, last_name, admission_number
+    let studentSql = `SELECT id as student_id, first_name, last_name, admission_number
        FROM students
-       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
-       ORDER BY first_name ASC`,
-      [schoolId, classId]
-    );
+       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')`;
+    const studentParams = [schoolId, classId];
+    if (['parent', 'student', 'guardian'].includes(req.user.role)) {
+      const guardian = await queryOne(
+        'SELECT id FROM guardians WHERE school_id = ? AND (email = ? OR user_id = ?) LIMIT 1',
+        [schoolId, req.user.email || '', req.user.id]
+      );
+      if (!guardian) return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'No guardian link is associated with this account.' } });
+      studentSql += ' AND id IN (SELECT student_id FROM student_guardians WHERE guardian_id = ?)';
+      studentParams.push(guardian.id);
+    }
+    studentSql += ' ORDER BY first_name ASC';
+    const students = await query(studentSql, studentParams);
 
     const studentResults = [];
     for (const st of students) {
@@ -381,23 +393,34 @@ router.get('/classes/:classId/results', authenticateToken, async (req, res) => {
     const { schoolId, classId } = req.params;
     const { term } = req.query;
 
-    const students = await query(
-      `SELECT id as student_id, first_name, last_name, admission_number
+    let studentSql = `SELECT id as student_id, first_name, last_name, admission_number
        FROM students
-       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
-       ORDER BY first_name ASC`,
-      [schoolId, classId]
-    );
+       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')`;
+    const studentParams = [schoolId, classId];
+    if (['parent', 'student', 'guardian'].includes(req.user.role)) {
+      const guardian = await queryOne(
+        'SELECT id FROM guardians WHERE school_id = ? AND (email = ? OR user_id = ?) LIMIT 1',
+        [schoolId, req.user.email || '', req.user.id]
+      );
+      if (!guardian) return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'No guardian link is associated with this account.' } });
+      studentSql += ' AND id IN (SELECT student_id FROM student_guardians WHERE guardian_id = ?)';
+      studentParams.push(guardian.id);
+    }
+    studentSql += ' ORDER BY first_name ASC';
+    const students = await query(studentSql, studentParams);
 
     let isPublished = false;
     try {
       const pubRes = await queryOne(
-        `SELECT * FROM results WHERE school_id = ? AND class_id = ? AND term = ?`,
+        `SELECT * FROM result_publications WHERE school_id = ? AND class_id = ? AND term = ? AND status IN ('published', 'released') AND (status = 'released' OR (release_at IS NOT NULL AND release_at <= NOW()))`,
         [schoolId, classId, term || '2026-T1']
       );
       if (pubRes) isPublished = true;
     } catch (e) {}
 
+    if (['parent', 'student', 'guardian'].includes(req.user.role) && !isPublished) {
+      return res.status(403).json({ error: { code: 'RESULTS_NOT_RELEASED', message: 'Results have not been released for this class and term.' } });
+    }
     const studentResults = [];
     for (const st of students) {
       let sql = `

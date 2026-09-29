@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
 import {
@@ -183,7 +184,7 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
               <div>
                 <div className="flex justify-between text-xs font-semibold text-ink/75 mb-1.5">
                   <span>Tuition Collection Rate</span>
-                  <span>Benchmark: ${parseFloat(activeSchool?.tuition_fee_benchmark || 500).toFixed(2)}</span>
+                  <span>Benchmark: {activeSchool?.tuition_fee_benchmark != null ? `$${parseFloat(activeSchool.tuition_fee_benchmark).toFixed(2)}` : '—'}</span>
                 </div>
                 <div className="w-full h-2.5 bg-ink/5 rounded-full overflow-hidden">
                   <div 
@@ -459,7 +460,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
     name: '', 
     code: '', 
     status: 'active', 
-    tuition_fee_benchmark: 500.00,
+    tuition_fee_benchmark: '',
     school_type: 'primary',
     head_title: 'Headmaster',
     admin_username: '',
@@ -472,7 +473,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
   // School edit states
   const [showEdit, setShowEdit]   = useState(false);
   const [editSchool, setEditSchool] = useState(null);
-  const [editForm, setEditForm]     = useState({ name: '', tuition_fee_benchmark: 500.00 });
+  const [editForm, setEditForm]     = useState({ name: '', tuition_fee_benchmark: '' });
   const [editSaving, setEditSaving] = useState(false);
 
   // Nested Manage School Console State
@@ -645,22 +646,15 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
     }
   }, [manageSubTab, selectedClass, fetchTimetableEntries]);
 
-  // Load class specific timeslots from localstorage or fallbacks
+  // Derive periods from persisted timetable rows; do not invent school hours.
   useEffect(() => {
     if (!selectedManageSchool || !selectedClass) return;
-    const key = `schoolbase_periods_${selectedManageSchool.id}_${selectedClass}`;
-    const saved = localStorage.getItem(key);
-    if (saved) {
-      try {
-        setPeriodsList(JSON.parse(saved));
-      } catch (e) {
-        // Fallback
-      }
-    } else {
-      setPeriodsList([
-        '07:30–08:10', '08:10–08:50', '08:50–09:30', '09:30–10:10', 'BREAK', '10:30–11:10', '11:10–11:50', '11:50–12:30', '12:30–13:10'
-      ]);
-    }
+    api.get(`/schools/${selectedManageSchool.id}/timetable?class_id=${selectedClass}`)
+      .then(res => {
+        const rows = Array.isArray(res.data) ? res.data : [];
+        setPeriodsList([...new Set(rows.map(row => row.period).filter(Boolean))]);
+      })
+      .catch(() => setPeriodsList([]));
   }, [selectedManageSchool, selectedClass]);
 
   const handleCreate = async (e) => {
@@ -672,7 +666,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         name: '', 
         code: '', 
         status: 'active', 
-        tuition_fee_benchmark: 500.00,
+        tuition_fee_benchmark: '',
         school_type: 'primary',
         head_title: 'Headmaster',
         admin_username: '',
@@ -1038,21 +1032,12 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
       toast.warning('Period slot already exists.');
       return;
     }
-    const updated = [...periodsList, p].sort((a, b) => {
-      if (a === 'BREAK') return -1;
-      if (b === 'BREAK') return 1;
-      return a.localeCompare(b);
-    });
-    setPeriodsList(updated);
-    localStorage.setItem(`schoolbase_periods_${selectedManageSchool.id}_${selectedClass}`, JSON.stringify(updated));
-    setNewPeriodName('');
+    toast.info('Create a scheduled lesson to add a persisted timetable period.');
   };
 
   const handleDeletePeriod = (periodToDelete) => {
     if (!window.confirm(`Delete the slot "${periodToDelete}"? scheduled classes in this slot will remain in DB but hidden.`)) return;
-    const updated = periodsList.filter(p => p !== periodToDelete);
-    setPeriodsList(updated);
-    localStorage.setItem(`schoolbase_periods_${selectedManageSchool.id}_${selectedClass}`, JSON.stringify(updated));
+    toast.info('Periods are removed when their scheduled lessons are deleted.');
   };
 
   // Master: If a school is selected for config management, render the nested school admin view
@@ -1127,7 +1112,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 pt-4">
                 <div className="glass-card rounded-2xl p-5">
                   <span className="text-[10px] font-bold text-ink/40 uppercase block">Benchmark Tuition Fee</span>
-                  <span className="text-xl font-bold text-teal-dark mt-2 block">${parseFloat(selectedManageSchool.tuition_fee_benchmark).toFixed(2)}</span>
+                  <span className="text-xl font-bold text-teal-dark mt-2 block">{selectedManageSchool.tuition_fee_benchmark != null ? `$${parseFloat(selectedManageSchool.tuition_fee_benchmark).toFixed(2)}` : '—'}</span>
                 </div>
                 <div className="glass-card rounded-2xl p-5">
                   <span className="text-[10px] font-bold text-ink/40 uppercase block">License Key Expiry</span>
@@ -1938,7 +1923,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 <tr key={s.id} className="hover:bg-sage/5 transition-colors">
                   <td className="px-5 py-3.5 font-semibold text-ink">{s.name}</td>
                   <td className="px-5 py-3.5 font-mono text-[10px] text-ink/55">{s.code}</td>
-                  <td className="px-5 py-3.5 font-mono font-semibold text-teal-primary text-xs">${parseFloat(s.tuition_fee_benchmark || 500).toFixed(2)}</td>
+                  <td className="px-5 py-3.5 font-mono font-semibold text-teal-primary text-xs">{s.tuition_fee_benchmark != null ? `$${parseFloat(s.tuition_fee_benchmark).toFixed(2)}` : '—'}</td>
                   <td className="px-5 py-3.5">
                     <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${
                       s.status === 'active' ? 'bg-sage/40 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'
@@ -1964,7 +1949,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                         <span>Drill-In</span><ChevronRight className="w-3 h-3" />
                       </button>
                       <button
-                        onClick={() => { setEditSchool(s); setEditForm({ name: s.name, tuition_fee_benchmark: parseFloat(s.tuition_fee_benchmark || 500) }); setShowEdit(true); }}
+                        onClick={() => { setEditSchool(s); setEditForm({ name: s.name, tuition_fee_benchmark: s.tuition_fee_benchmark ?? '' }); setShowEdit(true); }}
                         className="px-2.5 py-1.5 bg-paper hover:bg-sage/10 text-ink border border-line-border/30 text-[10px] font-semibold rounded-lg transition-all cursor-pointer flex items-center space-x-1"
                       >
                         <Edit3 className="w-3 h-3" /><span>Edit</span>
@@ -2027,7 +2012,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-ink/70 mb-1">Fees Benchmark ($)</label>
-                  <input required type="number" min="0" step="0.01" className="w-full glass-input rounded-xl text-sm numeric-data" placeholder="500.00" value={form.tuition_fee_benchmark} onChange={e => setForm({...form, tuition_fee_benchmark: e.target.value})} />
+                  <input required type="number" min="0" step="0.01" className="w-full glass-input rounded-xl text-sm numeric-data" placeholder="Enter benchmark" value={form.tuition_fee_benchmark} onChange={e => setForm({...form, tuition_fee_benchmark: e.target.value})} />
                 </div>
               </div>
 
@@ -3066,7 +3051,9 @@ const HealthTab = ({ alerts, auditLogs = [], onRefresh }) => {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const CommandCenter = ({ defaultTab = 'overview' }) => {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState(requestedTab || defaultTab);
   const [schools,   setSchools]   = useState([]);
   const [alerts,    setAlerts]    = useState([]);
   const [licenses,  setLicenses]  = useState([]);
@@ -3076,8 +3063,10 @@ const CommandCenter = ({ defaultTab = 'overview' }) => {
   const [error,     setError]     = useState('');
 
   useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab]);
+    const nextTab = TABS.some((tab) => tab.id === requestedTab) ? requestedTab : defaultTab;
+    setActiveTab(nextTab);
+    if (!requestedTab && defaultTab !== 'overview') setSearchParams({ tab: defaultTab }, { replace: true });
+  }, [defaultTab, requestedTab, setSearchParams]);
 
   const fetchAll = useCallback(() => {
     setLoading(true);
@@ -3102,12 +3091,12 @@ const CommandCenter = ({ defaultTab = 'overview' }) => {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   return (
-    <div className="min-h-screen p-6 md:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="module-page command-center-page min-h-screen p-6 md:p-8 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line-border/30 pb-5">
         <div>
-          <h1 className="text-3xl font-display font-bold text-ink">Super Admin Command Center</h1>
-          <p className="text-sm font-sans text-ink/55 mt-1">Full platform control - tenants, licenses, curriculum &amp; system health.</p>
+          <h1 className="module-title text-3xl font-display font-bold text-ink">Platform Command Center</h1>
+          <p className="module-subtitle text-sm font-sans text-ink/55 mt-1">Manage schools, access, billing, configuration, and platform health.</p>
         </div>
         <button onClick={fetchAll} className="flex items-center space-x-1.5 px-3.5 py-2 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 transition-colors cursor-pointer">
           <RefreshCw className="w-3.5 h-3.5 text-teal-primary"/>
@@ -3120,13 +3109,16 @@ const CommandCenter = ({ defaultTab = 'overview' }) => {
       )}
 
       {/* Tab Navigation */}
-      <div className="flex overflow-x-auto gap-1 p-1 bg-ink/5 rounded-2xl flex-shrink-0">
+      <div className="module-tabs flex overflow-x-auto gap-1 p-1 bg-ink/5 rounded-2xl flex-shrink-0">
         {TABS.map(tab => {
           const Icon = tab.icon;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                setSearchParams({ tab: tab.id }, { replace: true });
+              }}
               className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer flex-shrink-0 ${
                 activeTab === tab.id
                   ? 'bg-white shadow-sm text-teal-primary border border-line-border/30'

@@ -172,7 +172,7 @@ const Tasks = () => {
   };
 
   return (
-    <div className="min-h-screen p-6 md:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="module-page tasks-page min-h-screen p-6 md:p-8 max-w-7xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line-border/30 pb-5">
         <div>

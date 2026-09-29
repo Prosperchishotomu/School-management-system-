@@ -158,7 +158,7 @@ const AttendanceReports = ({ schoolId }) => {
   const insightsList = generateInsights();
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page attendance-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-line-border/30 pb-5 gap-4">
         <div>
@@ -521,7 +521,7 @@ const AttendanceRegister = () => {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page attendance-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>
@@ -599,7 +599,7 @@ const AttendanceRegister = () => {
                 ) : (
                   students.map((student) => (
                     <tr key={student.student_id} className="hover:bg-sage/5 transition-colors">
-                      <td className="py-4 px-6 font-bold">{student.student_name || `Student #${student.student_id}`}</td>
+                      <td className="py-4 px-6 font-bold">{student.student_name || student.student_id || '—'}</td>
                       <td className="py-4 px-6 text-center">
                         <div className="inline-flex rounded-xl bg-sage/25 p-1 border border-line-border/40">
                           {['present', 'absent', 'late', 'excused'].map((status) => (
@@ -722,7 +722,7 @@ const ParentAttendanceView = ({ schoolId }) => {
     `${kids.find(k => String(k.id) === String(selectedKidId)).first_name} ${kids.find(k => String(k.id) === String(selectedKidId)).last_name}` : '';
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page attendance-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
         <div>

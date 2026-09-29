@@ -6,7 +6,7 @@ import {
   Users, CheckCircle, AlertCircle, DollarSign, Calendar, BookOpen,
   Shield, MessageSquare, Clock, TrendingUp, TrendingDown, Loader2,
   ChevronRight, ChevronDown, Send, AlertTriangle, Activity, Bell,
-  UserCheck, UserX, FileText, Star, Flag, X, Search, GraduationCap, Eye
+  UserCheck, UserX, FileText, Star, Flag, X, Search, GraduationCap, Eye, MapPin, UserRound
 } from 'lucide-react';
 import { MiniBarChart } from '../components/charts/MiniBarChart';
 import { MiniDonutChart } from '../components/charts/MiniDonutChart';
@@ -618,8 +618,8 @@ const ExamsSection = ({ data, schoolId, onCommentPosted }) => {
                   <h4 className="font-sans font-bold text-sm text-ink">{exam.subject} - {exam.class_name}</h4>
                   <div className="text-[10px] text-ink/50 mt-0.5 space-y-0.5">
                     <p>{exam.start_time} – {exam.end_time} {exam.exam_type && <span className="capitalize ml-1 font-semibold text-ink/60">({exam.exam_type})</span>}</p>
-                    {exam.venue && <p>📍 <span className="font-medium">{exam.venue}</span></p>}
-                    {exam.invigilator && <p>👤 Invigilator: <span className="font-medium">{exam.invigilator}</span></p>}
+                    {exam.venue && <p className="flex items-center gap-1"><MapPin className="w-3 h-3 text-teal-primary" /><span className="font-medium">{exam.venue}</span></p>}
+                    {exam.invigilator && <p className="flex items-center gap-1"><UserRound className="w-3 h-3 text-teal-primary" /><span>Invigilator: <span className="font-medium">{exam.invigilator}</span></span></p>}
                   </div>
                 </div>
               </div>
@@ -1096,7 +1096,7 @@ const StudentPerformanceBreakdown = ({ schoolId, defaultClassId = null }) => {
                   {(drillStudent.grades || []).map((grade) => (
                     <tr key={grade.id} className="hover:bg-sage/5 transition-colors">
                       <td className="py-3 px-4 font-bold text-ink">{grade.subject}</td>
-                      <td className="py-3 px-4 text-ink/70 font-semibold">{grade.assessment_name || 'Test 1'}</td>
+                      <td className="py-3 px-4 text-ink/70 font-semibold">{grade.assessment_name || '—'}</td>
                       <td className="py-3 px-4 capitalize text-ink/50">{grade.assessment_type}</td>
                       <td className="py-3 px-4 text-center font-mono text-ink/50">x{grade.weight}</td>
                       <td className="py-3 px-4 text-right pr-4">
@@ -1308,7 +1308,7 @@ const TeacherDashboardView = ({ schoolId }) => {
             {cls?.teacher_name ? `Welcome ${cls.teacher_name}` : 'Welcome back, Instructor'}
           </h2>
           <p className="text-sm font-sans text-ink/65 mt-1">
-            {cls ? `Active Class: ${cls.name} (${cls.grade_level})` : 'Select an assigned class to view student roster & subjects.'}
+            {cls ? `Active Class:  (${cls.grade_level})` : 'Select an assigned class to view student roster & subjects.'}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -2067,7 +2067,7 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen px-6 md:px-8 py-8 max-w-7xl mx-auto space-y-10 animate-fadeIn">
+    <div className="module-page dashboard-page min-h-screen px-6 md:px-8 py-8 max-w-7xl mx-auto space-y-10 animate-fadeIn">
       {/* Page Header */}
       <div className="flex flex-wrap gap-4 justify-between items-start border-b border-line-border/30 pb-6">
         <div>

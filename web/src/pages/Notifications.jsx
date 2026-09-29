@@ -308,7 +308,7 @@ const Notifications = () => {
   };
 
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page notifications-page p-8 max-w-6xl mx-auto space-y-8 animate-fadeIn">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-line-border/30 pb-5 gap-4">
         <div>

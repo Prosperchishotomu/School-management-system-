@@ -145,7 +145,7 @@ const StudentProfile = () => {
   const isAdmin = user?.role === 'school_admin' || user?.role === 'super_admin';
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
+    <div className="module-page student-profile-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
       {/* Back button and profile header */}
       <div className="space-y-4">
         <button
