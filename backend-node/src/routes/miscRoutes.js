@@ -56,23 +56,30 @@ router.get('/schools/:schoolId/attendance', authenticateToken, async (req, res) 
 router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { date, entries } = req.body;
+    const { date, session, entries, synced_at } = req.body;
     if (!entries || !Array.isArray(entries)) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Attendance entries array is required.' } });
     }
 
     const recordDate = date || new Date().toISOString().slice(0, 10);
+    const conflicts = [];
     for (const entry of entries) {
       if (entry.student_id) {
         const attId = 'ATT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-        await query(
-          `INSERT INTO attendance (id, school_id, student_id, date, status, remarks, recorded_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE status = VALUES(status), remarks = VALUES(remarks)`,
-          [attId, schoolId, entry.student_id, recordDate, entry.status || 'present', entry.remarks || null, req.user.id]
-        );
+        const existing = await queryOne('SELECT id, version FROM attendance WHERE school_id = ? AND student_id = ? AND date = ? AND COALESCE(session, \'full_day\') = ?', [schoolId, entry.student_id, recordDate, session || entry.session || 'full_day']);
+        const expectedVersion = entry.expected_version == null ? null : Number(entry.expected_version);
+        if (existing && expectedVersion !== null && Number(existing.version || 1) !== expectedVersion) {
+          conflicts.push({ student_id: entry.student_id, server_version: Number(existing.version || 1), client_version: expectedVersion });
+          continue;
+        }
+        if (existing) {
+          await query('UPDATE attendance SET status = ?, remarks = ?, recorded_by = ?, version = version + 1, synced_at = ? WHERE id = ?', [entry.status || 'present', entry.remarks || null, req.user.id, synced_at || new Date(), existing.id]);
+        } else {
+          await query(`INSERT INTO attendance (id, school_id, student_id, date, session, status, remarks, recorded_by, client_uuid, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [attId, schoolId, entry.student_id, recordDate, session || entry.session || 'full_day', entry.status || 'present', entry.remarks || null, req.user.id, entry.client_uuid || null, synced_at || new Date()]);
+        }
       }
     }
+    if (conflicts.length) return res.status(409).json({ error: { code: 'STALE_VERSION', message: 'Some attendance records changed before synchronization.', fields: { conflicts } }, request_id: req.requestId });
     return res.json({ data: { message: `Attendance saved for ${entries.length} students.` } });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save attendance.' } });
@@ -258,13 +265,13 @@ router.get('/schools/:schoolId/dashboard/extended', authenticateToken, async (re
 
     let totalStudents = 0;
     try {
-      const resSt = await query("SELECT COUNT(*) as cnt FROM students WHERE school_id = ? AND status IN ('active', 'enrolled')", [schoolId]);
+      const resSt = await query("SELECT COUNT(*) as cnt FROM students WHERE school_id = ? AND status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')", [schoolId]);
       totalStudents = resSt[0]?.cnt || 0;
     } catch (e) {}
 
     let totalStaff = 0;
     try {
-      const resStf = await query("SELECT COUNT(*) as cnt FROM staff WHERE school_id = ? AND (status IS NULL OR status IN ('active', 'enrolled'))", [schoolId]);
+      const resStf = await query("SELECT COUNT(*) as cnt FROM staff WHERE school_id = ?", [schoolId]);
       totalStaff = resStf[0]?.cnt || 0;
     } catch (e) {}
 
@@ -319,16 +326,16 @@ router.get('/schools/:schoolId/dashboard/extended', authenticateToken, async (re
     let classesAttendance = [];
     try {
       classesAttendance = await query(
-        `SELECT c.id, c.name, COALESCE(c.level, 'Primary') as grade_level,
+        `SELECT c.id, c.name, COALESCE(c.grade_level, 'Primary') as grade_level,
                 IF(COUNT(a.id) > 0, 'submitted', 'pending') as status,
                 COALESCE(COUNT(CASE WHEN a.status = 'present' THEN 1 END), 0) as present,
                 COALESCE(COUNT(CASE WHEN a.status = 'absent' THEN 1 END), 0) as absent,
                 COALESCE(ROUND(COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 0), 0) as pct
          FROM classes c
-         LEFT JOIN students st ON c.id = st.class_id AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
+         LEFT JOIN students st ON c.id = st.class_id AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
          LEFT JOIN attendance a ON st.id = a.student_id AND a.date = ?
          WHERE c.school_id = ?
-         GROUP BY c.id, c.name, c.level`,
+         GROUP BY c.id, c.name, c.grade_level`,
         [today, schoolId]
       );
     } catch (e) {}

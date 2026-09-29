@@ -102,7 +102,9 @@ router.post('/',
       guardian_national_id, guardian_relation,
       // Accept alternate field names from multi-section form
       date_of_birth, home_address, nationality, religion, previous_school, medical_notes,
-      middle_name
+      middle_name,
+      // Manual parent credentials (admin-supplied)
+      parent_username, parent_password
     } = req.body;
 
     // Validate: guardian name is required
@@ -116,6 +118,25 @@ router.post('/',
     if (!guardian_phone && !guardian_email) {
       return res.status(400).json({
         error: { code: 'VALIDATION_ERROR', message: 'Guardian contact is required. Please provide at least a phone number or email address.' }
+      });
+    }
+
+    // Validate: parent credentials must be provided by admin
+    if (!parent_username || !parent_username.trim()) {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Parent login username is required. Please set a username for the parent account in Section 5.' }
+      });
+    }
+    if (!parent_password || !parent_password.trim()) {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Parent login password is required. Please set a password for the parent account in Section 5.' }
+      });
+    }
+    // Check username uniqueness
+    const existingUsername = await queryOne('SELECT id FROM users WHERE username = ?', [parent_username.trim().toLowerCase()]);
+    if (existingUsername) {
+      return res.status(409).json({
+        error: { code: 'DUPLICATE_USERNAME', message: `Username '${parent_username.trim()}' is already taken. Please choose a different username for the parent.` }
       });
     }
 
@@ -170,41 +191,42 @@ router.post('/',
 
     if (existingGuardian) {
       guardianId = existingGuardian.id;
-      // If guardian exists but doesn't have a linked user account, create one
+      // If guardian exists but doesn't have a linked user account, create one using admin-supplied credentials
       if (!existingGuardian.user_id) {
-        const parentUsername = 'p_' + finalAdmNumber.toLowerCase();
-        const parentPassword = 'PRN' + Math.floor(1000 + Math.random() * 9000);
-        const passHash = bcrypt.hashSync(parentPassword, 10);
+        const finalParentUsername = parent_username.trim().toLowerCase();
+        const finalParentPassword = parent_password.trim();
+        const passHash = bcrypt.hashSync(finalParentPassword, 10);
         const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
 
         await query(
           `INSERT INTO users (id, username, password_hash, role, school_id, status, phone, email) 
            VALUES (?, ?, ?, 'parent', ?, 'active', ?, ?)`,
-          [userId, parentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
+          [userId, finalParentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
         );
 
         await query('UPDATE guardians SET user_id = ? WHERE id = ?', [userId, guardianId]);
         
-        const hasEmailConfig = !!(process.env.SMTP_HOST || process.env.SMTP_USER);
         parentCredentials = { 
-          username: parentUsername, 
-          password: parentPassword,
-          delivery_status: hasEmailConfig ? 'Sent successfully' : 'Not sent (No email configuration found)'
+          username: finalParentUsername,
+          password: finalParentPassword
         };
+      } else {
+        // Guardian already has an account — just link the student, no new credentials needed
+        parentCredentials = null;
       }
     } else {
       guardianId = 'GDN' + Math.random().toString(36).substr(2, 5).toUpperCase();
       
-      // Auto-create parent user credentials
-      const parentUsername = 'p_' + finalAdmNumber.toLowerCase();
-      const parentPassword = 'PRN' + Math.floor(1000 + Math.random() * 9000);
-      const passHash = bcrypt.hashSync(parentPassword, 10);
+      // Use admin-supplied parent credentials
+      const finalParentUsername = parent_username.trim().toLowerCase();
+      const finalParentPassword = parent_password.trim();
+      const passHash = bcrypt.hashSync(finalParentPassword, 10);
       const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
 
       await query(
         `INSERT INTO users (id, username, password_hash, role, school_id, status, phone, email) 
          VALUES (?, ?, ?, 'parent', ?, 'active', ?, ?)`,
-        [userId, parentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
+        [userId, finalParentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
       );
 
       await query(
@@ -212,11 +234,9 @@ router.post('/',
         [guardianId, schoolId, guardian_name.trim(), guardian_phone || null, guardian_email || null, guardian_national_id || null, guardian_relation || 'Parent', userId]
       );
 
-      const hasEmailConfig = !!(process.env.SMTP_HOST || process.env.SMTP_USER);
       parentCredentials = { 
-        username: parentUsername, 
-        password: parentPassword,
-        delivery_status: hasEmailConfig ? 'Sent successfully' : 'Not sent (No email configuration found)'
+        username: finalParentUsername,
+        password: finalParentPassword
       };
     }
 
@@ -255,14 +275,15 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
         'SELECT g.id FROM guardians g WHERE g.email = ? OR g.user_id = ? LIMIT 1',
         [req.user.email || '', req.user.id]
       );
-      if (guardian) {
-        const link = await queryOne(
-          'SELECT student_id FROM student_guardians WHERE guardian_id = ? AND student_id = ?',
-          [guardian.id, id]
-        );
-        if (!link) {
-          return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not authorised to view this student profile.' } });
-        }
+      if (!guardian) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'No guardian link is associated with this account.' } });
+      }
+      const link = await queryOne(
+        'SELECT student_id FROM student_guardians WHERE guardian_id = ? AND student_id = ?',
+        [guardian.id, id]
+      );
+      if (!link) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not authorised to view this student profile.' } });
       }
     }
 
@@ -372,7 +393,7 @@ router.patch('/:id',
   validate.run({
     first_name: { required: false, minLen: 2, maxLen: 80  },
     last_name:  { required: false, minLen: 2, maxLen: 80  },
-    status:     { required: false, enum: ['active','inactive','graduated','suspended','expelled','enrolled','withdrawn','transferred','dropped_out'] },
+    status:     { required: false, enum: ['enrolled','suspended','withdrawn','graduated','transferred','dropped_out'] },
     gender:     { required: false, enum: ['male','female','other'] },
   }),
   async (req, res) => {

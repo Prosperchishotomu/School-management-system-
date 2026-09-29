@@ -4,6 +4,29 @@ const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 
+const MESSAGE_STAFF_ROLES = new Set([
+  'super_admin', 'school_admin', 'head', 'head_teacher', 'deputy_head', 'hod',
+  'teacher', 'bursar', 'librarian', 'nurse', 'counsellor', 'guidance_counsellor',
+  'boarding_master', 'boarding_mistress'
+]);
+const MESSAGE_ADMIN_ROLES = new Set(['super_admin', 'school_admin', 'head', 'head_teacher']);
+const MESSAGE_PARENT_ROLES = new Set(['parent', 'guardian']);
+
+async function messageSchoolId(req, schoolId) {
+  const requested = String(schoolId || '');
+  if (!requested) return null;
+  if (req.user.role !== 'super_admin' && String(req.user.school_id) !== requested) return null;
+  const school = await queryOne('SELECT id FROM schools WHERE id = ?', [requested]);
+  return school ? requested : null;
+}
+
+function canMessageUser(senderRole, recipientRole) {
+  if (MESSAGE_ADMIN_ROLES.has(senderRole)) return true;
+  if (MESSAGE_PARENT_ROLES.has(senderRole)) return MESSAGE_STAFF_ROLES.has(recipientRole);
+  if (senderRole === 'teacher' || senderRole === 'hod') return MESSAGE_STAFF_ROLES.has(recipientRole) || MESSAGE_PARENT_ROLES.has(recipientRole);
+  return MESSAGE_STAFF_ROLES.has(recipientRole) || MESSAGE_PARENT_ROLES.has(recipientRole);
+}
+
 // Schema Migration Helper for schools table
 async function ensureSchoolsSchema() {
   try {
@@ -67,11 +90,59 @@ router.get('/subjects', authenticateToken, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STAFF SUBJECTS (teacher-to-subject many-to-many)
+// GET  /schools/:schoolId/staff/:staffId/subjects
+// PUT  /schools/:schoolId/staff/:staffId/subjects  (replace all)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/schools/:schoolId/staff/:staffId/subjects', authenticateToken, async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const rows = await query(
+      `SELECT ss.subject_id as id, sub.name, sub.code
+       FROM staff_subjects ss
+       JOIN subjects sub ON ss.subject_id = sub.id
+       WHERE ss.staff_id = ?
+       ORDER BY sub.name ASC`,
+      [staffId]
+    );
+    return res.json({ data: rows });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch staff subjects.' } });
+  }
+});
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GUARDIANS
-// GET /schools/:schoolId/guardians
-// ─────────────────────────────────────────────────────────────────────────────
+router.put('/schools/:schoolId/staff/:staffId/subjects', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, staffId } = req.params;
+    const { subject_ids } = req.body;
+
+    // Delete existing
+    await query('DELETE FROM staff_subjects WHERE staff_id = ? AND school_id = ?', [staffId, schoolId]);
+
+    // Insert new
+    if (Array.isArray(subject_ids) && subject_ids.length > 0) {
+      for (const subId of subject_ids) {
+        await query(
+          `INSERT IGNORE INTO staff_subjects (staff_id, school_id, subject_id) VALUES (?, ?, ?)`,
+          [staffId, schoolId, subId]
+        );
+      }
+    }
+
+    const updated = await query(
+      `SELECT ss.subject_id as id, sub.name, sub.code
+       FROM staff_subjects ss JOIN subjects sub ON ss.subject_id = sub.id
+       WHERE ss.staff_id = ?`,
+      [staffId]
+    );
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update staff subjects.' } });
+  }
+});
+
+
 router.get('/schools/:schoolId/guardians', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
@@ -167,8 +238,10 @@ router.delete('/schools/:schoolId/teaching-assignments/:id', authenticateToken, 
 router.get('/schools/:schoolId/teacher-messages', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
+    const scopedSchool = await messageSchoolId(req, schoolId);
+    if (!scopedSchool) return res.status(403).json({ error: { code: 'SCHOOL_SCOPE_DENIED', message: 'You cannot access communication for this school.' } });
     const userId = req.user.id;
-    const isAdmin = ['school_admin', 'super_admin'].includes(req.user.role);
+    const isAdmin = MESSAGE_ADMIN_ROLES.has(req.user.role);
 
     let msgs;
     if (isAdmin) {
@@ -179,7 +252,7 @@ router.get('/schools/:schoolId/teacher-messages', authenticateToken, async (req,
          LEFT JOIN staff st ON u.id = st.user_id
          WHERE tm.school_id = ?
          ORDER BY tm.sent_at DESC LIMIT 50`,
-        [schoolId]
+        [scopedSchool]
       );
     } else {
       msgs = await query(
@@ -189,7 +262,7 @@ router.get('/schools/:schoolId/teacher-messages', authenticateToken, async (req,
          LEFT JOIN staff st ON u.id = st.user_id
          WHERE tm.school_id = ? AND (tm.recipient_id = ? OR tm.sender_id = ? OR tm.recipient_id IS NULL)
          ORDER BY tm.sent_at DESC LIMIT 50`,
-        [schoolId, userId, userId]
+        [scopedSchool, userId, userId]
       );
     }
     return res.json({ data: msgs });
@@ -203,27 +276,40 @@ router.post('/schools/:schoolId/teacher-messages', authenticateToken, async (req
   try {
     const { schoolId } = req.params;
     const { recipient_id, subject, message, body, content, text } = req.body;
+    const scopedSchool = await messageSchoolId(req, schoolId);
+    if (!scopedSchool) return res.status(403).json({ error: { code: 'SCHOOL_SCOPE_DENIED', message: 'You cannot send communication for this school.' } });
     const msgText = message || body || content || text || subject;
     if (!msgText) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Message content is required.' } });
+    }
+    if (!recipient_id && !MESSAGE_ADMIN_ROLES.has(req.user.role)) {
+      return res.status(403).json({ error: { code: 'COMMUNICATION_SCOPE_DENIED', message: 'Only school administrators can send an unaddressed broadcast.' } });
+    }
+    if (recipient_id) {
+      const recipient = await queryOne(
+        `SELECT id, role FROM users WHERE id = ? AND school_id = ? AND status = 'active'`,
+        [recipient_id, scopedSchool]
+      );
+      if (!recipient) return res.status(404).json({ error: { code: 'RECIPIENT_NOT_FOUND', message: 'Recipient is not active in this school.' } });
+      if (!canMessageUser(req.user.role, recipient.role)) return res.status(403).json({ error: { code: 'COMMUNICATION_SCOPE_DENIED', message: 'Your role cannot message this recipient.' } });
     }
     const id = 'MSG' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
     const userId = req.user && req.user.id ? req.user.id : 'SYS00001';
     try {
       await query(
         `INSERT INTO teacher_messages (id, school_id, sender_id, recipient_id, subject, body, message) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, schoolId, userId, recipient_id || null, subject || 'Lecture Completion Report', msgText, msgText]
+        [id, scopedSchool, userId, recipient_id || null, subject || 'Lecture Completion Report', msgText, msgText]
       );
     } catch (e1) {
       try {
         await query(
           `INSERT INTO teacher_messages (id, school_id, sender_id, recipient_id, subject, body) VALUES (?, ?, ?, ?, ?, ?)`,
-          [id, schoolId, userId, recipient_id || null, subject || 'Lecture Completion Report', msgText]
+          [id, scopedSchool, userId, recipient_id || null, subject || 'Lecture Completion Report', msgText]
         );
       } catch (e2) {
         await query(
           `INSERT INTO teacher_messages (id, school_id, sender_id, recipient_id, subject, message) VALUES (?, ?, ?, ?, ?, ?)`,
-          [id, schoolId, userId, recipient_id || null, subject || 'Lecture Completion Report', msgText]
+          [id, scopedSchool, userId, recipient_id || null, subject || 'Lecture Completion Report', msgText]
         );
       }
     }
@@ -569,7 +655,7 @@ router.post('/schools/:schoolId/comments', authenticateToken, requireRoles('scho
 // RESULTS PUBLISH
 // POST /schools/:schoolId/results/publish
 // ─────────────────────────────────────────────────────────────────────────────
-router.post('/schools/:schoolId/results/publish', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.post('/schools/:schoolId/results/publish', authenticateToken, requireRoles('head', 'school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
     const { class_id, term } = req.body;
@@ -577,22 +663,33 @@ router.post('/schools/:schoolId/results/publish', authenticateToken, requireRole
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class ID and term are required.' } });
     }
     const id = 'RES' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-    try {
-      await query(
-        `INSERT INTO results (id, school_id, class_id, term, published_by, published_at) VALUES (?, ?, ?, ?, ?, NOW())
-         ON DUPLICATE KEY UPDATE published_at = NOW(), published_by = VALUES(published_by)`,
-        [id, schoolId, class_id, term, req.user.id]
-      );
-    } catch (e) {
+    const existing = await queryOne('SELECT id, status FROM result_publications WHERE school_id = ? AND class_id = ? AND term = ?', [schoolId, class_id, term]);
+    if (existing?.status === 'published' || existing?.status === 'released') return res.status(409).json({ error: { code: 'ALREADY_PUBLISHED', message: 'Results are already published.' } });
+    const publicationId = existing?.id || id;
+    if (!existing) await query('INSERT INTO result_publications (id, school_id, class_id, term, status) VALUES (?, ?, ?, ?, ?)', [publicationId, schoolId, class_id, term, 'pending_approval']);
+    const approvalId = 'APP' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+    await query(`INSERT INTO approvals (uuid, school_id, action, action_type, entity_type, entity_id, requested_by, payload, status) VALUES (?, ?, 'publish', 'RESULTS_PUBLISH', 'result_publications', ?, ?, ?, 'pending')`, [approvalId, schoolId, publicationId, req.user.id, JSON.stringify({ class_id, term })]);
+    return res.status(202).json({ data: { message: 'Results submitted for maker-checker approval.', approval_id: approvalId, class_id, term } });
       // results table may have different schema — proceed gracefully
-    }
-    return res.json({ data: { message: `Results published for ${term}.`, class_id, term } });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to publish results.' } });
   }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+router.post('/schools/:schoolId/results/release', authenticateToken, requireRoles('head', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { class_id, term, release_at } = req.body || {};
+    if (!class_id || !term) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class ID and term are required.' } });
+    const publication = await queryOne('SELECT * FROM result_publications WHERE school_id = ? AND class_id = ? AND term = ? AND status = \'published\'', [schoolId, class_id, term]);
+    if (!publication) return res.status(409).json({ error: { code: 'APPROVAL_REQUIRED', message: 'Results must be approved and published before release.' } });
+    const approvalId = 'APP' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+    await query(`INSERT INTO approvals (uuid, school_id, action, action_type, entity_type, entity_id, requested_by, payload, status) VALUES (?, ?, 'release', 'RESULTS_RELEASE', 'result_publications', ?, ?, ?, 'pending')`, [approvalId, schoolId, publication.id, req.user.id, JSON.stringify({ release_at: release_at || new Date().toISOString() })]);
+    return res.status(202).json({ data: { message: 'Results submitted for release approval.', approval_id: approvalId } });
+  } catch (err) { return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to request results release.' } }); }
+});
+
 // ATTENDANCE WEEKLY REPORTS
 // GET /schools/:schoolId/attendance/weekly-reports
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1601,14 +1698,14 @@ router.get('/admin/stats', authenticateToken, requireRoles('super_admin'), async
   try {
     const [schoolCount]  = await query("SELECT COUNT(*) as cnt FROM schools WHERE status = 'active'");
     const [totalSchools] = await query("SELECT COUNT(*) as cnt FROM schools");
-    const [studentCount] = await query("SELECT COUNT(*) as cnt FROM students WHERE (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')");
-    const [staffCount]   = await query("SELECT COUNT(*) as cnt FROM staff WHERE (status IN ('active', 'enrolled') OR status IS NULL OR status != 'deactivated')");
+    const [studentCount] = await query("SELECT COUNT(*) as cnt FROM students WHERE status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')");
+    const [staffCount]   = await query("SELECT COUNT(*) as cnt FROM staff");
 
     // Students per school
     const studentsPerSchool = await query(`
       SELECT s.name as school_name, COUNT(st.id) as student_count
       FROM schools s
-      LEFT JOIN students st ON s.id = st.school_id AND (st.status IN ('active', 'enrolled') OR st.status IS NULL OR st.status != 'transferred')
+      LEFT JOIN students st ON s.id = st.school_id AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
       GROUP BY s.id, s.name
       ORDER BY s.name ASC
     `);
@@ -1639,7 +1736,7 @@ router.get('/admin/stats', authenticateToken, requireRoles('super_admin'), async
     let alertCount = 0;
     const emptySchools = await query(`
       SELECT s.id FROM schools s
-      LEFT JOIN students st ON s.id = st.school_id AND st.status = 'active'
+      LEFT JOIN students st ON s.id = st.school_id AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
       WHERE s.status = 'active'
       GROUP BY s.id HAVING COUNT(st.id) = 0
     `);
@@ -2372,9 +2469,45 @@ router.post('/schools/:schoolId/grade-thresholds', authenticateToken, requireRol
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ADMIN SUBJECTS DELETE
-// DELETE /admin/subjects/:id
+// ADMIN SUBJECTS
+// GET/POST/DELETE /admin/subjects
 // ─────────────────────────────────────────────────────────────────────────────
+router.get('/admin/subjects', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const subjects = await query(
+      `SELECT s.*, eb.name as board_name
+       FROM subjects s
+       LEFT JOIN exam_boards eb ON eb.id = s.board_id
+       ORDER BY s.name ASC`
+    );
+    return res.json({ data: subjects });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to load subjects.' } });
+  }
+});
+
+router.post('/admin/subjects', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const { code, name, category, board_code } = req.body;
+    if (!code || !name) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subject code and name are required.' } });
+    }
+    const subjectUuid = require('crypto').randomUUID();
+    const result = await query(
+      `INSERT INTO subjects (uuid, code, name, category, board_code)
+       VALUES (?, ?, ?, ?, ?)`,
+      [subjectUuid, String(code).trim().toUpperCase(), String(name).trim(), category || 'general_studies', board_code || null]
+    );
+    const subject = await queryOne('SELECT * FROM subjects WHERE id = ?', [result.insertId]);
+    return res.status(201).json({ data: subject });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: { code: 'DUPLICATE_SUBJECT', message: 'A subject with that code already exists.' } });
+    }
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create subject.' } });
+  }
+});
+
 router.delete('/admin/subjects/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
     const { id } = req.params;
