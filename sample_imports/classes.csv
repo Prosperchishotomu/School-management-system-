@@ -1,0 +1,17 @@
+name,level,grade_level,stream,capacity
+Grade 1 Blue,Primary,Grade 1,Blue,35
+Grade 2 Gold,Primary,Grade 2,Gold,35
+Grade 5 Red,Primary,Grade 5,Red,40
+Grade 6 Green,Primary,Grade 6,Green,40
+Grade 7 East,Primary,Grade 7,East,42
+Grade 7 West,Primary,Grade 7,West,42
+Form 1A,Secondary,Form 1,A,45
+Form 1B,Secondary,Form 1,B,45
+Form 2 East,Secondary,Form 2,East,45
+Form 2 West,Secondary,Form 2,West,45
+Form 3 Sciences,Secondary,Form 3,Sciences,40
+Form 3 Commercials,Secondary,Form 3,Commercials,40
+Form 4 Arts,Secondary,Form 4,Arts,40
+Form 4 Sciences,Secondary,Form 4,Sciences,40
+Lower 6 Sciences,Secondary,Lower 6,Sciences,30
+Upper 6 Arts,Secondary,Upper 6,Arts,30

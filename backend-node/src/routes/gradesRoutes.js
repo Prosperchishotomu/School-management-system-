@@ -2,7 +2,15 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
-const { calculatePrimaryUnits, calculateALevelPoints } = require('../utils/gradeCalculator');
+const {
+  calculatePrimaryUnits,
+  calculateECDGrade,
+  calculateZimsecOGrade,
+  calculateZimsecAGrade,
+  determineLevelCategory,
+  processStudentSubjects,
+  rankStudentResults
+} = require('../utils/gradeCalculator');
 
 const getTermFromDate = (dateVal = new Date()) => {
   const d = new Date(dateVal);
@@ -12,12 +20,17 @@ const getTermFromDate = (dateVal = new Date()) => {
   return 'Term 3';
 };
 
-
 // GET /schools/:schoolId/classes/:classId/grades
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { schoolId, classId } = req.params;
     const { subject, term } = req.query;
+
+    const cls = await queryOne(
+      'SELECT c.*, s.school_type FROM classes c LEFT JOIN schools s ON c.school_id = s.id WHERE c.id = ? AND c.school_id = ?',
+      [classId, schoolId]
+    );
+    const levelCategory = determineLevelCategory(cls?.name, cls?.level, cls?.school_type);
 
     let sql = `
       SELECT g.*, st.first_name, st.last_name, st.admission_number, g.subject as subject_name
@@ -39,6 +52,72 @@ router.get('/', authenticateToken, async (req, res) => {
     sql += ' ORDER BY st.first_name ASC, g.assessment_type ASC';
 
     const grades = await query(sql, params);
+
+    // Subject & Student Scoping:
+    // If subject is selected, fetch students taking this subject
+    let studentFilterSql = `
+      SELECT id, first_name, last_name, admission_number, gender
+      FROM students
+      WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
+    `;
+    const studentFilterParams = [schoolId, classId];
+
+    if (subject) {
+      // Check if student_subjects has enrollments for this class and subject
+      const enrolledStudentIds = await query(
+        `SELECT ss.student_id
+         FROM student_subjects ss
+         LEFT JOIN subjects sub ON ss.subject_id = sub.id
+         WHERE ss.school_id = ? AND (ss.class_id = ? OR ss.class_id IS NULL)
+           AND (ss.subject_id = ? OR LOWER(sub.name) = LOWER(?) OR LOWER(sub.code) = LOWER(?))
+           AND ss.status = 'active'`,
+        [schoolId, classId, subject, subject, subject]
+      );
+
+      if (enrolledStudentIds.length > 0) {
+        const idPlaceholders = enrolledStudentIds.map(() => '?').join(',');
+        studentFilterSql += ` AND id IN (${idPlaceholders})`;
+        studentFilterParams.push(...enrolledStudentIds.map(e => e.student_id));
+      }
+    }
+    studentFilterSql += ' ORDER BY first_name ASC';
+    const scopedStudents = await query(studentFilterSql, studentFilterParams);
+
+    // Teacher Allocation Scoping:
+    let allocatedSubjects = [];
+    let isClassTeacher = false;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    const isAdmin = ['school_admin', 'super_admin', 'principal', 'head', 'headmaster', 'deputy_head', 'admin'].includes(userRole);
+
+    if (isAdmin) {
+      allocatedSubjects = await query('SELECT id, name, code FROM subjects WHERE school_id = ? OR school_id IS NULL ORDER BY name ASC', [schoolId]);
+      isClassTeacher = true;
+    } else {
+      // Check if class teacher / form master
+      if (cls?.form_master_id === userId) isClassTeacher = true;
+      const staffRecord = await queryOne('SELECT class_id FROM staff WHERE user_id = ? OR id = ?', [userId, userId]);
+      if (staffRecord?.class_id === classId) isClassTeacher = true;
+
+      // Check teaching assignments for this class
+      const teacherAssignments = await query(
+        `SELECT sub.id, sub.name, sub.code
+         FROM teaching_assignments ta
+         JOIN subjects sub ON ta.subject_id = sub.id
+         WHERE ta.school_id = ? AND ta.class_id = ? AND (
+           ta.teacher_id = ? OR ta.teacher_id IN (SELECT id FROM staff WHERE user_id = ?)
+         )
+         ORDER BY sub.name ASC`,
+        [schoolId, classId, userId, userId]
+      );
+
+      if (isClassTeacher && (!cls?.level || cls.level.toLowerCase().includes('primary') || (cls.name || '').toLowerCase().includes('grade'))) {
+        // Primary class teacher teaches all subjects
+        allocatedSubjects = await query('SELECT id, name, code FROM subjects WHERE school_id = ? OR school_id IS NULL ORDER BY name ASC', [schoolId]);
+      } else {
+        allocatedSubjects = teacherAssignments;
+      }
+    }
 
     const grouped = {};
     grades.forEach(g => {
@@ -67,19 +146,50 @@ router.get('/', authenticateToken, async (req, res) => {
 
     const averagedGrades = Object.values(grouped).map(item => {
       const avgMark = item.total_weight > 0 ? (item.total_weighted_mark / item.total_weight) : 0;
-      const calc = calculatePrimaryUnits(avgMark);
+      let letterGrade = '';
+      let unitValue = null;
+      let pointsValue = null;
+      let descriptor = '';
+
+      if (levelCategory === 'primary_g4_g7') {
+        const calc = calculatePrimaryUnits(avgMark);
+        letterGrade = calc.grade;
+        unitValue = calc.units;
+        descriptor = calc.descriptor;
+      } else if (levelCategory === 'ecd_to_g3') {
+        const calc = calculateECDGrade(avgMark);
+        letterGrade = calc.grade;
+        descriptor = calc.descriptor;
+      } else if (levelCategory === 'a_level') {
+        const calc = calculateZimsecAGrade(avgMark, '5_point');
+        letterGrade = calc.grade;
+        pointsValue = calc.points;
+        descriptor = calc.remark;
+      } else {
+        const calc = calculateZimsecOGrade(avgMark);
+        letterGrade = calc.grade;
+        descriptor = calc.remark;
+      }
+
       return {
         ...item,
         unified_average: parseFloat(avgMark.toFixed(1)),
-        letter_grade: calc.grade,
-        unit_value: calc.units
+        letter_grade: letterGrade,
+        unit_value: unitValue,
+        points: pointsValue,
+        descriptor,
+        level_category: levelCategory
       };
     });
 
     return res.json({
       data: {
         raw_grades: grades,
-        averaged_grades: averagedGrades
+        averaged_grades: averagedGrades,
+        level_category: levelCategory,
+        students: scopedStudents,
+        allocated_subjects: allocatedSubjects,
+        is_class_teacher: isClassTeacher
       }
     });
   } catch (err) {
@@ -88,120 +198,162 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Helper for saving batch or single grades
+async function saveGradeEntry(schoolId, targetClassId, body) {
+  const { student_id, subject, grade_value, assessment_type, term, weight, scores } = body;
+  const resolvedTerm = term || getTermFromDate();
+  const resolvedType = assessment_type || 'test';
+  const resolvedSubject = subject || body.subject_id;
+
+  if (scores && typeof scores === 'object') {
+    // Batch scores save: { [student_id]: { ca1: 20, exam: 50 } } OR { [student_id]: 75 }
+    const saved = [];
+    for (const [stId, sVal] of Object.entries(scores)) {
+      if (typeof sVal === 'object' && sVal !== null) {
+        for (const [colName, val] of Object.entries(sVal)) {
+          const num = parseFloat(val);
+          if (!isNaN(num)) {
+            const existing = await queryOne(
+              'SELECT id FROM grades WHERE school_id = ? AND student_id = ? AND class_id = ? AND subject = ? AND term = ? AND assessment_name = ?',
+              [schoolId, stId, targetClassId, resolvedSubject, resolvedTerm, colName]
+            );
+            if (existing) {
+              await query('UPDATE grades SET grade_value = ?, synced_at = NOW() WHERE id = ?', [num, existing.id]);
+              saved.push(existing.id);
+            } else {
+              const gid = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+              await query(
+                'INSERT INTO grades (id, school_id, student_id, class_id, subject, assessment_type, assessment_name, grade_value, weight, term) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [gid, schoolId, stId, targetClassId, resolvedSubject, resolvedType, colName, num, 1.0, resolvedTerm]
+              );
+              saved.push(gid);
+            }
+          }
+        }
+      } else {
+        const num = parseFloat(sVal);
+        if (!isNaN(num)) {
+          const existing = await queryOne(
+            'SELECT id FROM grades WHERE school_id = ? AND student_id = ? AND class_id = ? AND subject = ? AND term = ? AND assessment_name = ?',
+            [schoolId, stId, targetClassId, resolvedSubject, resolvedTerm, 'Total']
+          );
+          if (existing) {
+            await query('UPDATE grades SET grade_value = ?, synced_at = NOW() WHERE id = ?', [num, existing.id]);
+            saved.push(existing.id);
+          } else {
+            const gid = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+            await query(
+              'INSERT INTO grades (id, school_id, student_id, class_id, subject, assessment_type, assessment_name, grade_value, weight, term) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+              [gid, schoolId, stId, targetClassId, resolvedSubject, resolvedType, 'Total', num, 1.0, resolvedTerm]
+            );
+            saved.push(gid);
+          }
+        }
+      }
+    }
+    return { count: saved.length, message: 'Grades saved successfully.' };
+  }
+
+  // Single grade save
+  if (!student_id || !resolvedSubject || grade_value === undefined) {
+    throw new Error('Student ID, Subject, and Grade Value are required.');
+  }
+
+  const mark = parseFloat(grade_value);
+  const resolvedWeight = weight !== undefined ? parseFloat(weight) : 1.0;
+  const gradeId = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+
+  await query(
+    `INSERT INTO grades (id, school_id, student_id, class_id, subject, assessment_type, assessment_name, grade_value, weight, term)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [gradeId, schoolId, student_id, targetClassId, resolvedSubject, resolvedType, body.assessment_name || 'Test 1', mark, resolvedWeight, resolvedTerm]
+  );
+  return await queryOne('SELECT * FROM grades WHERE id = ?', [gradeId]);
+}
+
 // POST /schools/:schoolId/classes/:classId/grades
 router.post('/', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId, classId } = req.params;
-    const { student_id, subject, grade_value, assessment_type, term, weight } = req.body;
+    const targetClassId = classId || req.body.class_id;
+    const result = await saveGradeEntry(schoolId, targetClassId, req.body);
+    return res.status(201).json({ data: result });
+  } catch (err) {
+    console.error('Create grade entry error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message || 'Failed to record grade.' } });
+  }
+});
 
-    if (!student_id || (!subject && !req.body.subject_id) || grade_value === undefined) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Student ID, Subject, and Grade Value are required.' } });
-    }
-
-        const gradeId = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
-    const mark = parseFloat(grade_value);
-    const subjName = subject || req.body.subject_id;
+// PUT /schools/:schoolId/classes/:classId/grades/:id
+router.put('/:id', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { grade_value, assessment_type, weight, term } = req.body;
 
     await query(
-      `INSERT INTO grades (id, school_id, student_id, class_id, subject, grade_value, assessment_type, term, weight)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [gradeId, schoolId, student_id, classId, subjName, mark, assessment_type || 'test', term || getTermFromDate(), parseFloat(weight || 1.0)]
+      `UPDATE grades SET
+         grade_value     = COALESCE(?, grade_value),
+         assessment_type = COALESCE(?, assessment_type),
+         weight          = COALESCE(?, weight),
+         term            = COALESCE(?, term)
+       WHERE id = ? AND school_id = ?`,
+      [
+        grade_value !== undefined ? parseFloat(grade_value) : null,
+        assessment_type,
+        weight !== undefined ? parseFloat(weight) : null,
+        term,
+        id,
+        schoolId
+      ]
     );
 
-    const created = await queryOne('SELECT * FROM grades WHERE id = ?', [gradeId]);
-    return res.status(201).json({ data: created });
+    const updated = await queryOne('SELECT * FROM grades WHERE id = ?', [id]);
+    if (!updated) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Grade record not found.' } });
+    return res.json({ data: updated });
   } catch (err) {
-    console.error('Post grade error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to record grade.' } });
+    console.error('Update grade error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update grade.' } });
   }
 });
 
-// POST /schools/:schoolId/classes/:classId/grades/batch
-router.post('/batch', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
+// DELETE /schools/:schoolId/classes/:classId/grades/:id
+router.delete('/:id', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
   try {
-    const { schoolId, classId } = req.params;
-    const { subject, subject_id, assessment_type, term, weight, entries } = req.body;
-    const subjName = subject || subject_id;
-
-    if (!subjName || !entries || !Array.isArray(entries)) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subject and grade entries array are required.' } });
-    }
-
-    // Normalize assessment_type to valid ENUM ('test', 'exam', 'coursework')
-    const rawType = (assessment_type || 'test').toString().toLowerCase();
-    let validAssType = 'test';
-    if (['exam', 'final', 'midterm'].includes(rawType)) validAssType = 'exam';
-    else if (['coursework', 'assignment', 'project', 'homework'].includes(rawType)) validAssType = 'coursework';
-
-    const currentTerm = term || getTermFromDate();
-    const numWeight = parseFloat(weight || 1.0);
-
-    let savedCount = 0;
-    const conflicts = [];
-    for (const entry of entries) {
-      const studentId = entry.student_id || entry.id;
-      if (studentId && entry.grade_value !== undefined && entry.grade_value !== '' && entry.grade_value !== null) {
-        const mark = parseFloat(entry.grade_value);
-        if (isNaN(mark)) continue;
-
-        try {
-          // Check if existing grade entry exists
-          const existing = await queryOne(
-            `SELECT id, version, grade_value, weight FROM grades WHERE school_id = ? AND student_id = ? AND class_id = ? AND subject = ? AND term = ? AND assessment_type = ?`,
-            [schoolId, studentId, classId, subjName, currentTerm, validAssType]
-          );
-
-          if (existing) {
-            const expectedVersion = entry.expected_version == null ? null : Number(entry.expected_version);
-            if (expectedVersion !== null && Number(existing.version || 1) !== expectedVersion) {
-              conflicts.push({ student_id: studentId, server_version: Number(existing.version || 1), client_version: expectedVersion });
-              continue;
-            }
-            await query(
-              `UPDATE grades SET grade_value = ?, weight = ?, version = version + 1, synced_at = ? WHERE id = ?`,
-              [mark, numWeight, new Date(), existing.id]
-            );
-            try { await query('INSERT INTO audit_logs (id, school_id, user_id, action, entity_type, entity_id, description) VALUES (?,?,?,?,?,?,?)', ['LOG' + Date.now().toString(36), schoolId, req.user.id, 'MARK_CORRECTED', 'grades', existing.id, JSON.stringify({ student_id: studentId, subject: subjName, old_mark: existing.grade_value, old_weight: existing.weight, new_mark: mark, new_weight: numWeight })]); } catch (_) {}
-          } else {
-            const gradeId = 'GRD' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
-            await query(
-              `INSERT INTO grades (id, school_id, student_id, class_id, subject, grade_value, assessment_type, term, weight, client_uuid, synced_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [gradeId, schoolId, studentId, classId, subjName, mark, validAssType, currentTerm, numWeight, entry.client_uuid || null, new Date()]
-            );
-          }
-          savedCount++;
-        } catch (entryErr) {
-          console.warn(`Error saving grade for student ${studentId}:`, entryErr.message);
-        }
-      }
-    }
-
-    if (conflicts.length) return res.status(409).json({ error: { code: 'STALE_VERSION', message: 'Some marks changed before synchronization.', fields: { conflicts } }, data: { saved_count: savedCount } });
-    return res.json({ data: { message: `Recorded ${savedCount} grades successfully.` } });
+    const { schoolId, id } = req.params;
+    await query('DELETE FROM grades WHERE id = ? AND school_id = ?', [id, schoolId]);
+    return res.json({ data: { message: 'Grade deleted successfully.' } });
   } catch (err) {
-    console.error('Batch grades error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to record batch grades.' } });
+    console.error('Delete grade error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete grade.' } });
   }
 });
 
-// GET /schools/:schoolId/classes/:classId/results
+// GET /schools/:schoolId/classes/:classId/results (ledger)
 router.get('/results', authenticateToken, async (req, res) => {
   try {
     const { schoolId, classId } = req.params;
     const { term } = req.query;
 
-    const students = await query('SELECT id, first_name, last_name, admission_number FROM students WHERE school_id = ? AND class_id = ? AND (status IN ("active", "enrolled") OR status IS NULL OR status != "transferred") ORDER BY first_name ASC', [schoolId, classId]);
-    
-    const results = [];
+    const cls = await queryOne(
+      'SELECT c.*, s.school_type FROM classes c LEFT JOIN schools s ON c.school_id = s.id WHERE c.id = ? AND c.school_id = ?',
+      [classId, schoolId]
+    );
+    const levelCategory = determineLevelCategory(cls?.name, cls?.level, cls?.school_type);
+
+    const students = await query(
+      'SELECT id, first_name, last_name, admission_number FROM students WHERE school_id = ? AND class_id = ? AND (status IN ("active", "enrolled") OR status IS NULL OR status != "transferred") ORDER BY first_name ASC',
+      [schoolId, classId]
+    );
+
+    const studentResults = [];
     for (const st of students) {
       let sql = `
         SELECT g.subject as subject_id, g.subject as subject_name,
                SUM(g.grade_value * COALESCE(g.weight, 1.0)) / NULLIF(SUM(COALESCE(g.weight, 1.0)), 0) as subject_avg
         FROM grades g
-        WHERE g.student_id = ?
+        WHERE g.school_id = ? AND g.student_id = ?
       `;
-      const params = [st.id];
+      const params = [schoolId, st.id];
 
       if (term) {
         sql += ' AND g.term = ?';
@@ -211,70 +363,173 @@ router.get('/results', authenticateToken, async (req, res) => {
       sql += ' GROUP BY g.subject';
 
       const subjectResults = await query(sql, params);
+      const processed = processStudentSubjects(subjectResults, levelCategory);
 
-      let totalUnits = 0;
-      const formattedSubjects = subjectResults.map(sub => {
-        const avg = parseFloat(sub.subject_avg || 0);
-        const calc = calculatePrimaryUnits(avg);
-        totalUnits += calc.units;
-        return {
-          subject_id: sub.subject_id,
-          subject_name: sub.subject_name,
-          average: parseFloat(avg.toFixed(1)),
-          grade: calc.grade,
-          units: calc.units
-        };
-      });
-
-      results.push({
+      studentResults.push({
         student: st,
-        subjects: formattedSubjects,
-        total_units: totalUnits
+        student_id: st.id,
+        admission_number: st.admission_number,
+        student_name: `${st.first_name} ${st.last_name}`,
+        subjects: processed.formattedSubjects,
+        counted_subjects: processed.countedSubjects,
+        overall_percentage: processed.overallPercentage,
+        total_units: processed.totalUnits,
+        total_marks: processed.totalMarks,
+        total_points: processed.totalPoints,
+        passes_count: processed.passesCount,
+        grade: processed.grade,
+        pass_status: processed.passStatus,
+        level_category: levelCategory
       });
     }
 
-    return res.json({ data: results });
+    const ranked = rankStudentResults(studentResults, levelCategory);
+    return res.json({ data: ranked, level_category: levelCategory });
   } catch (err) {
     console.error('Get results ledger error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to generate results ledger.' } });
   }
 });
 
-// GET /schools/:schoolId/grade-thresholds  (school-level route — mounted separately in app.js)
-// Returns the grading scale thresholds for display and grade calculation
+// GET /schools/:schoolId/grade-thresholds
 const thresholdsRouter = express.Router({ mergeParams: true });
 
 thresholdsRouter.get('/', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
-    // Check if the school has custom thresholds stored
+    const school = await queryOne('SELECT id, school_type FROM schools WHERE id = ?', [schoolId]);
+    const schoolType = school?.school_type || 'primary';
+
     let thresholds = [];
     try {
       thresholds = await query(
         'SELECT * FROM grade_thresholds WHERE school_id = ? ORDER BY min_score DESC',
         [schoolId]
       );
-    } catch (e) {
-      // Table may not exist — return system defaults
-    }
+    } catch (e) {}
 
     if (!thresholds || thresholds.length === 0) {
-      // Default Zimbabwe ZIMSEC Primary grading scale
-      thresholds = [
-        { grade: 'A', label: 'Distinction',  min_score: 75, max_score: 100, points: 1, color: '#0d9488' },
-        { grade: 'B', label: 'Merit',         min_score: 65, max_score: 74,  points: 2, color: '#3b82f6' },
-        { grade: 'C', label: 'Credit',        min_score: 55, max_score: 64,  points: 3, color: '#6366f1' },
-        { grade: 'D', label: 'Pass',          min_score: 45, max_score: 54,  points: 4, color: '#f59e0b' },
-        { grade: 'E', label: 'Borderline',    min_score: 40, max_score: 44,  points: 5, color: '#f97316' },
-        { grade: 'U', label: 'Ungraded',      min_score: 0,  max_score: 39,  points: 9, color: '#ef4444' },
-      ];
+      if (schoolType === 'primary') {
+        // Primary Units 1 to 9 (Grade 4 to 7)
+        thresholds = [
+          { grade: '1', grade_symbol: '1', label: 'Distinction',       min_score: 80, max_score: 100, min_mark: 80, max_mark: 100, points: 1, is_pass: 1, color: '#0d9488' },
+          { grade: '2', grade_symbol: '2', label: 'Merit',             min_score: 70, max_score: 79.99, min_mark: 70, max_mark: 79.99, points: 2, is_pass: 1, color: '#0284c7' },
+          { grade: '3', grade_symbol: '3', label: 'Credit',            min_score: 60, max_score: 69.99, min_mark: 60, max_mark: 69.99, points: 3, is_pass: 1, color: '#2563eb' },
+          { grade: '4', grade_symbol: '4', label: 'Satisfactory',      min_score: 50, max_score: 59.99, min_mark: 50, max_mark: 59.99, points: 4, is_pass: 1, color: '#4f46e5' },
+          { grade: '5', grade_symbol: '5', label: 'Marginal Pass',     min_score: 45, max_score: 49.99, min_mark: 45, max_mark: 49.99, points: 5, is_pass: 1, color: '#ca8a04' },
+          { grade: '6', grade_symbol: '6', label: 'Bare Pass',         min_score: 40, max_score: 44.99, min_mark: 40, max_mark: 44.99, points: 6, is_pass: 1, color: '#ea580c' },
+          { grade: '7', grade_symbol: '7', label: 'Unsatisfactory',    min_score: 35, max_score: 39.99, min_mark: 35, max_mark: 39.99, points: 7, is_pass: 0, color: '#e11d48' },
+          { grade: '8', grade_symbol: '8', label: 'Poor',              min_score: 30, max_score: 34.99, min_mark: 30, max_mark: 34.99, points: 8, is_pass: 0, color: '#dc2626' },
+          { grade: '9', grade_symbol: '9', label: 'Very Poor',         min_score: 0,  max_score: 29.99, min_mark: 0,  max_mark: 29.99, points: 9, is_pass: 0, color: '#991b1b' },
+        ];
+      } else if (schoolType === 'high_school' || schoolType === 'combined') {
+        // High School: Ordinary Level + A-Level Points Scale (A=5, B=4, C=3, D=2, E=1, O=0, F=0)
+        thresholds = [
+          // A-Level scale
+          { grade: 'A', grade_symbol: 'A', label: 'A-Level Distinction (5 Pts)', min_score: 70, max_score: 100, min_mark: 70, max_mark: 100, points: 5, is_pass: 1, color: '#0d9488' },
+          { grade: 'B', grade_symbol: 'B', label: 'A-Level Merit (4 Pts)',       min_score: 60, max_score: 69.99, min_mark: 60, max_mark: 69.99, points: 4, is_pass: 1, color: '#0284c7' },
+          { grade: 'C', grade_symbol: 'C', label: 'A-Level Credit (3 Pts)',      min_score: 50, max_score: 59.99, min_mark: 50, max_mark: 59.99, points: 3, is_pass: 1, color: '#2563eb' },
+          { grade: 'D', grade_symbol: 'D', label: 'A-Level Sub-Pass (2 Pts)',    min_score: 45, max_score: 49.99, min_mark: 45, max_mark: 49.99, points: 2, is_pass: 1, color: '#ca8a04' },
+          { grade: 'E', grade_symbol: 'E', label: 'A-Level Pass (1 Pt)',         min_score: 40, max_score: 44.99, min_mark: 40, max_mark: 44.99, points: 1, is_pass: 1, color: '#ea580c' },
+          { grade: 'O', grade_symbol: 'O', label: 'A-Level Subsidiary (0 Pts)', min_score: 35, max_score: 39.99, min_mark: 35, max_mark: 39.99, points: 0, is_pass: 0, color: '#e11d48' },
+          { grade: 'F', grade_symbol: 'F', label: 'A-Level Fail (0 Pts)',       min_score: 0,  max_score: 34.99, min_mark: 0,  max_mark: 34.99, points: 0, is_pass: 0, color: '#991b1b' },
+          // O-Level scale symbols
+          { grade: 'A_OL', grade_symbol: 'A', label: 'O-Level Distinction', min_score: 75, max_score: 100, min_mark: 75, max_mark: 100, points: 1, is_pass: 1, color: '#0d9488' },
+          { grade: 'B_OL', grade_symbol: 'B', label: 'O-Level Merit',       min_score: 65, max_score: 74.99, min_mark: 65, max_mark: 74.99, points: 2, is_pass: 1, color: '#0284c7' },
+          { grade: 'C_OL', grade_symbol: 'C', label: 'O-Level Credit Pass', min_score: 50, max_score: 64.99, min_mark: 50, max_mark: 64.99, points: 3, is_pass: 1, color: '#2563eb' },
+          { grade: 'D_OL', grade_symbol: 'D', label: 'O-Level Sub-Credit',  min_score: 45, max_score: 49.99, min_mark: 45, max_mark: 49.99, points: 4, is_pass: 0, color: '#ca8a04' },
+          { grade: 'E_OL', grade_symbol: 'E', label: 'O-Level Poor',        min_score: 40, max_score: 44.99, min_mark: 40, max_mark: 44.99, points: 5, is_pass: 0, color: '#ea580c' },
+          { grade: 'U_OL', grade_symbol: 'U', label: 'O-Level Ungraded',    min_score: 0,  max_score: 39.99, min_mark: 0,  max_mark: 39.99, points: 6, is_pass: 0, color: '#991b1b' }
+        ];
+      } else {
+        // Secondary: O-Level Symbols A, B, C, D, E, U
+        thresholds = [
+          { grade: 'A', grade_symbol: 'A', label: 'Distinction', min_score: 75, max_score: 100, min_mark: 75, max_mark: 100, points: 1, is_pass: 1, color: '#0d9488' },
+          { grade: 'B', grade_symbol: 'B', label: 'Merit',       min_score: 65, max_score: 74.99, min_mark: 65, max_mark: 74.99, points: 2, is_pass: 1, color: '#0284c7' },
+          { grade: 'C', grade_symbol: 'C', label: 'Credit Pass', min_score: 50, max_score: 64.99, min_mark: 50, max_mark: 64.99, points: 3, is_pass: 1, color: '#2563eb' },
+          { grade: 'D', grade_symbol: 'D', label: 'Sub-credit',  min_score: 45, max_score: 49.99, min_mark: 45, max_mark: 49.99, points: 4, is_pass: 0, color: '#ca8a04' },
+          { grade: 'E', grade_symbol: 'E', label: 'Poor',        min_score: 40, max_score: 44.99, min_mark: 40, max_mark: 44.99, points: 5, is_pass: 0, color: '#ea580c' },
+          { grade: 'U', grade_symbol: 'U', label: 'Ungraded',    min_score: 0,  max_score: 39.99, min_mark: 0,  max_mark: 39.99, points: 6, is_pass: 0, color: '#991b1b' },
+        ];
+      }
     }
 
-    return res.json({ data: thresholds });
+    return res.json({
+      data: {
+        thresholds,
+        school_type: schoolType
+      }
+    });
   } catch (err) {
     console.error('Get grade thresholds error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch grade thresholds.' } });
   }
 });
 
-module.exports = { router, thresholdsRouter };
+// POST /schools/:schoolId/grade-thresholds
+thresholdsRouter.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { thresholds, school_type } = req.body;
+
+    if (school_type) {
+      await query('UPDATE schools SET school_type = ? WHERE id = ?', [school_type, schoolId]);
+    }
+
+    try {
+      await query(`
+        CREATE TABLE IF NOT EXISTS grade_thresholds (
+          id VARCHAR(50) PRIMARY KEY,
+          school_id VARCHAR(50) NOT NULL,
+          grade VARCHAR(10) NOT NULL,
+          label VARCHAR(50) NULL,
+          min_score DECIMAL(5,2) NOT NULL,
+          max_score DECIMAL(5,2) NOT NULL,
+          points INT NULL,
+          color VARCHAR(20) NULL,
+          is_pass TINYINT(1) DEFAULT 1
+        )
+      `);
+    } catch (_) {}
+
+    if (Array.isArray(thresholds)) {
+      await query('DELETE FROM grade_thresholds WHERE school_id = ?', [schoolId]);
+      for (const t of thresholds) {
+        const tId = 'GT' + Math.random().toString(36).substr(2, 6).toUpperCase();
+        const gradeSymbol = t.grade_symbol || t.grade || '';
+        const minVal = parseFloat(t.min_score ?? t.min_mark ?? 0);
+        const maxVal = parseFloat(t.max_score ?? t.max_mark ?? 100);
+        const points = t.points !== undefined ? t.points : 0;
+        const isPass = t.is_pass !== undefined ? (t.is_pass ? 1 : 0) : 1;
+        await query(
+          `INSERT INTO grade_thresholds (id, school_id, grade, grade_symbol, label, min_score, min_mark, max_score, max_mark, points, color, is_pass)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [tId, schoolId, gradeSymbol, gradeSymbol, t.label || '', minVal, minVal, maxVal, maxVal, points, t.color || '#0d9488', isPass]
+        );
+      }
+    }
+
+    return res.json({ data: { message: 'Grade thresholds saved successfully.' } });
+  } catch (err) {
+    console.error('Save grade thresholds error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update grade thresholds.' } });
+  }
+});
+
+const schoolGradesRouter = express.Router({ mergeParams: true });
+schoolGradesRouter.post('/', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const targetClassId = req.body.class_id;
+    if (!targetClassId) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class ID is required.' } });
+    }
+    const result = await saveGradeEntry(schoolId, targetClassId, req.body);
+    return res.status(201).json({ data: result });
+  } catch (err) {
+    console.error('Save grades batch error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message || 'Failed to record grades.' } });
+  }
+});
+
+module.exports = { router, thresholdsRouter, schoolGradesRouter, saveGradeEntry };

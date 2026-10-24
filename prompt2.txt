@@ -1,0 +1,113 @@
+for primary students maybe from grade 4 to 7, they have a maximum of 6 subjects, making a total of 54 units. the marks for each subject ranges from 1 to 9 units. This means the best student scores 6 units and the worst student scores 54 units. For ecd to grade 3, the grading system is different. Just calculate total marks for all the subjects and the positions are ranked in descending order. Also these rankings apply to all other grades and forms as well, in the sense that the best student in grade 1 will be ranked position 1, the best student in grade 2 will be ranked position 1 and so on, same for form 1 to 4 and all other grades and forms.
+for Ordinary students, form 1 to 4, they have no maximu number of subjects just like Advanced level, but their grading differs. O-level have the symbols:A,B,C,D,E and U. For A-level, A corresponds to 5 points, B corresponds to 4 points, C corresponds to 3 points, D corresponds to 2 points, E corresponds to 1 point and O and F corresponds to 0 points.
+So when a school is created, it should be able to have these grading systems based on the school type. If its a primary school, use the primary grading system, if its a secondary school use the O-level grading system, and if its a high school use Ordinary and advanced level systems respectively.
+Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+:5000/api/v1/notifications:1  Failed to load resource: the server responded with a status of 400 (Bad Request)
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)
+request @ api.js:145
+api.js:76  GET http://localhost:5000/api/v1/notifications 400 (Bad Request)
+request @ api.js:76
+(anonymous) @ api.js:151
+(anonymous) @ TopBar.jsx:90
+api.js:145 API Error on /notifications: Error: Select a valid school context before viewing communication.
+    at request (api.js:109:28)

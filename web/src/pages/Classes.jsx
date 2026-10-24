@@ -1,984 +1,1032 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../utils/api';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data';
 import {
-  Grid, BookOpen, User, Plus, Trash2, CheckCircle2,
-  AlertTriangle, Loader2, Sparkles, BookMarked, UserCheck,
-  Eye, Edit2, Ban, X
+  PageHeader, KpiStrip, StatCard, Card, DataTable, StatusPill,
+  Avatar, Modal, Drawer, EmptyState, ConfirmDialog, Tabs, ProgressRing
+} from '../components/ui';
+import {
+  Layers, BookOpen, Users, UserCheck, Plus, Trash2, Edit3,
+  AlertTriangle, CheckCircle2, ArrowRight, ShieldAlert, Sparkles, Filter, Upload
 } from 'lucide-react';
+import ImportModal from '../components/ImportModal';
 
-const Classes = () => {
-  const { activeSchoolId } = useAuth();
+export default function Classes() {
+  const { activeSchoolId, user } = useAuth();
   const toast = useToast();
 
-  const [schoolInfo, setSchoolInfo] = useState(null);
-  
-  // Tabs: 'classes' | 'subjects' | 'assignments'
-  const [activeTab, setActiveTab] = useState('classes');
-  
-  // Core states
-  const [classes, setClasses] = useState([]);
-  const [staff, setStaff] = useState([]);
-  const [subjects, setSubjects] = useState([]);
-  const [assignments, setAssignments] = useState([]);
-  
-  // Loadings & messages
-  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState('classes'); // 'classes' | 'matrix' | 'subjects' | 'promotion'
+  const [selectedClassId, setSelectedClassId] = useState(null);
+  const [showClassModal, setShowClassModal] = useState(false);
+  const [showSubjectModal, setShowSubjectModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [importSubjectsModal, setImportSubjectsModal] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [deleteType, setDeleteType] = useState(null);
+
+  // Forms
+  const [classForm, setClassForm] = useState({ name: '', grade_level: 'Form 1', stream: 'North', capacity: 40, form_master_id: '' });
+  const [subjectForm, setSubjectForm] = useState({ name: '', code: '', level: 'all', department: 'General' });
+  const [assignForm, setAssignForm] = useState({ class_id: '', subject_id: '', teacher_id: '' });
   const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState({ type: '', text: '' });
 
-  // Promotions Tab state
-  const [fromClassId, setFromClassId] = useState('');
-  const [toClassId, setToClassId] = useState('');
-  const [promoStudents, setPromoStudents] = useState([]);
-  const [loadingPromoStudents, setLoadingPromoStudents] = useState(false);
-  const [fromClassTeacher, setFromClassTeacher] = useState('');
-  const [toClassTeacher, setToClassTeacher] = useState('');
-  const [promoSubmitting, setPromoSubmitting] = useState(false);
+  // Promotion state
+  const [promoFromClass, setPromoFromClass] = useState('');
+  const [promoToClass, setPromoToClass] = useState('');
+  const [promoSelectedIds, setPromoSelectedIds] = useState([]);
+  const [promoLoading, setPromoLoading] = useState(false);
 
-  
-  // Create Class Form
-  const [classForm, setClassForm] = useState({
-    name: '',
-    grade_level: 'Grade 1',
-    stream: '',
-    form_master_id: ''
-  });
+  // Data fetching via unified hooks
+  const { data: classesData, loading: loadingClasses } = useApi(
+    `classes_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/classes`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  // Create Subject Form
-  const [subjectForm, setSubjectForm] = useState({
-    name: '',
-    code: '',
-    level: 'all'
-  });
+  const { data: staffData } = useApi(
+    `staff_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/staff`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  // Create Assignment Form
-  const [assignForm, setAssignForm] = useState({
-    class_id: '',
-    subject_id: '',
-    teacher_id: ''
-  });
+  const { data: subjectsData } = useApi(
+    `subjects_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/subjects`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  useEffect(() => {
-    if (!activeSchoolId) return;
-    api.get(`/schools/${activeSchoolId}`)
-      .then(res => {
-        if (res.data) {
-          setSchoolInfo(res.data);
-          const defaultLvl = res.data.school_type === 'secondary' ? 'Form 1' : 'ECD A';
-          setClassForm(prev => ({ ...prev, grade_level: defaultLvl }));
-        }
-      })
-      .catch(err => console.error('Error fetching school details:', err));
-  }, [activeSchoolId]);
+  const { data: assignmentsData } = useApi(
+    `teaching_assignments_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/teaching-assignments`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  const getGradeLevels = () => {
-    if (!schoolInfo) return ['Grade 1'];
-    if (schoolInfo.school_type === 'secondary') {
-      const hasALevel = schoolInfo.has_alevel === undefined || schoolInfo.has_alevel === 1 || schoolInfo.has_alevel === true || schoolInfo.has_alevel === '1';
-      return hasALevel
-        ? ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Form 5', 'Form 6']
-        : ['Form 1', 'Form 2', 'Form 3', 'Form 4'];
-    } else {
-      return ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'];
-    }
-  };
+  const { data: schoolInfo } = useApi(
+    `school_info_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}`).then(r => r.data || {}),
+    { deps: [activeSchoolId] }
+  );
 
-  const fetchData = async () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-    setMessage({ type: '', text: '' });
-    try {
-      const [classesRes, staffRes, subjectsRes, assignmentsRes] = await Promise.all([
-        api.get(`/schools/${activeSchoolId}/classes`).catch(() => ({ data: [] })),
-        api.get(`/schools/${activeSchoolId}/staff`).catch(() => ({ data: [] })),
-        api.get(`/schools/${activeSchoolId}/subjects`).catch(() => ({ data: [] })),
-        api.get(`/schools/${activeSchoolId}/teaching-assignments`).catch(() => ({ data: [] }))
-      ]);
+  const classes = classesData || [];
+  const staff = staffData || [];
+  const subjects = subjectsData || [];
+  const assignments = assignmentsData || [];
 
-      const cls = classesRes.data || [];
-      const stf = staffRes.data || [];
-      const sub = subjectsRes.data || [];
-      const ass = assignmentsRes.data || [];
+  // Selected class for master-detail
+  const activeClass = useMemo(() => {
+    if (!selectedClassId && classes.length > 0) return classes[0];
+    return classes.find(c => String(c.id) === String(selectedClassId)) || classes[0];
+  }, [classes, selectedClassId]);
 
-      setClasses(cls);
-      setStaff(stf);
-      setSubjects(sub);
-      setAssignments(ass);
+  // Fetch students for the active class or promotion source
+  const { data: classStudentsData, loading: loadingStudents } = useApi(
+    `class_students_${activeClass?.id}`,
+    () => activeClass ? api.get(`/schools/${activeSchoolId}/students?class_id=${activeClass.id}`).then(r => r.data?.students || r.data || []) : Promise.resolve([]),
+    { deps: [activeClass?.id] }
+  );
 
-      if (cls.length > 0 && !assignForm.class_id) {
-        setAssignForm(prev => ({ ...prev, class_id: cls[0].id }));
-      }
-      if (sub.length > 0 && !assignForm.subject_id) {
-        setAssignForm(prev => ({ ...prev, subject_id: sub[0].id }));
-      }
-      if (stf.length > 0 && !assignForm.teacher_id) {
-        setAssignForm(prev => ({ ...prev, teacher_id: stf[0].user_id || stf[0].id }));
-      }
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Failed to load class configuration.' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: promoStudentsData } = useApi(
+    `promo_students_${promoFromClass}`,
+    () => promoFromClass ? api.get(`/schools/${activeSchoolId}/students?class_id=${promoFromClass}`).then(r => r.data?.students || r.data || []) : Promise.resolve([]),
+    { deps: [promoFromClass] }
+  );
 
-  useEffect(() => {
-    fetchData();
-  }, [activeSchoolId]);
+  const classStudents = Array.isArray(classStudentsData) ? classStudentsData : [];
+  const promoStudents = Array.isArray(promoStudentsData) ? promoStudentsData : [];
 
-  useEffect(() => {
-    if (!activeSchoolId || !fromClassId) {
-      setPromoStudents([]);
-      setFromClassTeacher('');
-      return;
-    }
-
-    // Find the Class Teacher for source class
-    const sourceClass = classes.find(c => String(c.id) === String(fromClassId));
-    setFromClassTeacher(sourceClass?.form_master_id || '');
-
-    const levelStr = (sourceClass?.level || sourceClass?.grade_level || '').trim().toLowerCase();
-    // Students finish at Grade 7, Form 4 and 6
-    const isTerminal = ['grade 7', 'form 4', 'form 6'].some(termLvl => levelStr.includes(termLvl.toLowerCase()));
-
-    setLoadingPromoStudents(true);
-    api.get(`/schools/${activeSchoolId}/students?class_id=${fromClassId}`)
-      .then(res => {
-        const list = (res.data || []).map(s => {
-          const status = (s.status || '').toLowerCase();
-          // By default all students must be promoted, except for those suspended, finished or transferred.
-          const isExcluded = ['suspended', 'transferred', 'withdrawn', 'dropped_out', 'graduated'].includes(status);
-          
-          let defaultAction = 'promote';
-          if (isExcluded) {
-            defaultAction = 'repeat';
-          } else if (isTerminal) {
-            defaultAction = 'graduate';
-          }
-
-          return {
-            id: s.id,
-            first_name: s.first_name,
-            last_name: s.last_name,
-            admission_number: s.admission_number,
-            status: s.status,
-            action: defaultAction
-          };
-        });
-        setPromoStudents(list);
-      })
-      .catch(err => console.error('Error fetching students for promotion:', err))
-      .finally(() => setLoadingPromoStudents(false));
-  }, [fromClassId, activeSchoolId, classes]);
-
-
-  useEffect(() => {
-    if (!toClassId) {
-      setToClassTeacher('');
-      return;
-    }
-    const targetClass = classes.find(c => String(c.id) === String(toClassId));
-    setToClassTeacher(targetClass?.form_master_id || '');
-  }, [toClassId, classes]);
-
-  const handleProcessPromotions = async (e) => {
-    e.preventDefault();
-    if (!fromClassId || !toClassId) {
-      setMessage({ type: 'error', text: 'Please select both source and destination classes.' });
-      return;
-    }
-    if (fromClassId === toClassId) {
-      setMessage({ type: 'error', text: 'Source and Destination classes must be different.' });
-      return;
-    }
-    if (promoStudents.length === 0) {
-      setMessage({ type: 'error', text: 'No students in the source class to promote.' });
-      return;
-    }
-
-    setPromoSubmitting(true);
-    setMessage({ type: '', text: '' });
-
-    try {
-      // 1. Process student promotions (API expects new_class_id for each, even repeaters who get fromClassId)
-      const payload = promoStudents.map(s => ({
-        student_id: s.id,
-        new_class_id: s.action === 'promote' ? toClassId : fromClassId,
-        action: s.action
-      }));
-
-      const promoRes = await api.post(`/schools/${activeSchoolId}/promote-students/promote`, { promotions: payload });
-
-      // 2. Reassign teachers if they are modified
-      const sourceClass = classes.find(c => String(c.id) === String(fromClassId));
-      const targetClass = classes.find(c => String(c.id) === String(toClassId));
-
-      if (sourceClass && String(sourceClass.form_master_id || '') !== String(fromClassTeacher)) {
-        await api.patch(`/schools/${activeSchoolId}/classes/${fromClassId}`, {
-          form_master_id: fromClassTeacher || null
+  // Clash detection in teaching assignments
+  const clashWarnings = useMemo(() => {
+    const warnings = [];
+    // Identify teachers assigned to excessive subjects or duplicate combinations
+    const map = new Map();
+    assignments.forEach(a => {
+      const key = `${a.class_id}_${a.subject_id}`;
+      if (map.has(key)) {
+        const cls = classes.find(c => String(c.id) === String(a.class_id));
+        const sub = subjects.find(s => String(s.id) === String(a.subject_id));
+        warnings.push({
+          type: 'duplicate',
+          message: `Multiple teachers assigned to ${sub?.name || 'Subject'} in ${cls?.name || 'Class'}`
         });
       }
+      map.set(key, true);
+    });
+    return warnings;
+  }, [assignments, classes, subjects]);
 
-      if (targetClass && String(targetClass.form_master_id || '') !== String(toClassTeacher)) {
-        await api.patch(`/schools/${activeSchoolId}/classes/${toClassId}`, {
-          form_master_id: toClassTeacher || null
-        });
-      }
+  // Total enrolled across all classes
+  const totalStudents = useMemo(() => {
+    return classes.reduce((acc, c) => acc + (c.student_count || c.total_students || 0), 0);
+  }, [classes]);
 
-      setMessage({
-        type: 'success',
-        text: `Promotions processed successfully! ${promoRes.data?.message || ''}`
-      });
+  const totalCapacity = useMemo(() => {
+    return classes.reduce((acc, c) => acc + (c.capacity || 40), 0);
+  }, [classes]);
 
-      // Refresh data
-      fetchData();
-      // Reset selectors
-      setFromClassId('');
-      setToClassId('');
-    } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to complete promotions.' });
-    } finally {
-      setPromoSubmitting(false);
-    }
-  };
+  const avgUtilization = totalCapacity > 0 ? Math.round((totalStudents / totalCapacity) * 100) : 0;
 
-
+  // Handlers
   const handleCreateClass = async (e) => {
     e.preventDefault();
-    if (!classForm.name.trim()) return;
     setSubmitting(true);
-    setMessage({ type: '', text: '' });
-
     try {
       await api.post(`/schools/${activeSchoolId}/classes`, classForm);
-      setMessage({ type: 'success', text: `Classroom "${classForm.name}" created successfully!` });
-      setClassForm({ name: '', grade_level: getGradeLevels()[0], stream: '', form_master_id: '' });
-      fetchData();
+      toast.success(`Class ${classForm.name} created successfully.`);
+      setShowClassModal(false);
+      setClassForm({ name: '', grade_level: 'Form 1', stream: 'North', capacity: 40, form_master_id: '' });
+      invalidate(`classes_${activeSchoolId}`);
     } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to create classroom.' });
+      toast.error(err.response?.data?.message || 'Failed to create class.');
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleDeleteClass = async (classId) => {
-    if (!window.confirm('Are you sure you want to delete this classroom? All student links will be unassigned.')) return;
-    try {
-      await api.delete(`/schools/${activeSchoolId}/classes/${classId}`);
-      setMessage({ type: 'success', text: 'Classroom deleted successfully.' });
-      fetchData();
-    } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to delete classroom.' });
     }
   };
 
   const handleCreateSubject = async (e) => {
     e.preventDefault();
-    if (!subjectForm.name.trim() || !subjectForm.code.trim()) return;
     setSubmitting(true);
-    setMessage({ type: '', text: '' });
-
     try {
       await api.post(`/schools/${activeSchoolId}/subjects`, subjectForm);
-      setMessage({ type: 'success', text: `Subject "${subjectForm.name}" added successfully!` });
-      setSubjectForm({ name: '', code: '', level: 'all' });
-      fetchData();
+      toast.success(`Subject ${subjectForm.name} created.`);
+      setShowSubjectModal(false);
+      setSubjectForm({ name: '', code: '', level: 'all', department: 'General' });
+      invalidate(`subjects_${activeSchoolId}`);
     } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to add subject.' });
+      toast.error(err.response?.data?.message || 'Failed to create subject.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDeleteSubject = async (subjectId) => {
-    if (!window.confirm('Are you sure you want to delete this subject?')) return;
-    try {
-      await api.delete(`/schools/${activeSchoolId}/subjects/${subjectId}`);
-      setMessage({ type: 'success', text: 'Subject deleted successfully.' });
-      fetchData();
-    } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to delete subject.' });
-    }
-  };
-
-  const handleCreateAssignment = async (e) => {
+  const handleAssignTeacher = async (e) => {
     e.preventDefault();
-    if (!assignForm.class_id || !assignForm.subject_id || !assignForm.teacher_id) return;
     setSubmitting(true);
-    setMessage({ type: '', text: '' });
-
     try {
       await api.post(`/schools/${activeSchoolId}/teaching-assignments`, assignForm);
-      setMessage({ type: 'success', text: 'Teacher subject duty assigned successfully.' });
-      fetchData();
+      toast.success('Teaching assignment recorded.');
+      setShowAssignModal(false);
+      invalidate(`teaching_assignments_${activeSchoolId}`);
     } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to assign teacher duty.' });
+      toast.error(err.response?.data?.message || 'Failed to assign teacher.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleDeleteAssignment = async (assignmentId) => {
+  const handleDelete = async () => {
+    if (!deletingId || !deleteType) return;
     try {
-      await api.delete(`/schools/${activeSchoolId}/teaching-assignments/${assignmentId}`);
-      setMessage({ type: 'success', text: 'Teacher duty unassigned.' });
-      fetchData();
+      if (deleteType === 'class') {
+        await api.delete(`/schools/${activeSchoolId}/classes/${deletingId}`);
+        toast.success('Class removed.');
+        invalidate(`classes_${activeSchoolId}`);
+      } else if (deleteType === 'subject') {
+        await api.delete(`/schools/${activeSchoolId}/subjects/${deletingId}`);
+        toast.success('Subject removed.');
+        invalidate(`subjects_${activeSchoolId}`);
+      } else if (deleteType === 'assignment') {
+        await api.delete(`/schools/${activeSchoolId}/teaching-assignments/${deletingId}`);
+        toast.success('Assignment unlinked.');
+        invalidate(`teaching_assignments_${activeSchoolId}`);
+      }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message || 'Failed to remove assignment.' });
+      toast.error(err.response?.data?.message || 'Delete operation failed.');
+    } finally {
+      setDeletingId(null);
+      setDeleteType(null);
     }
   };
 
+  const handleBulkPromote = async () => {
+    if (!promoFromClass || !promoToClass) {
+      toast.error('Select both origin and target classes.');
+      return;
+    }
+    if (promoSelectedIds.length === 0) {
+      toast.error('Select at least one student to promote.');
+      return;
+    }
+    setPromoLoading(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/classes/bulk-promote`, {
+        from_class_id: promoFromClass,
+        to_class_id: promoToClass,
+        student_ids: promoSelectedIds
+      });
+      toast.success(`Successfully promoted ${promoSelectedIds.length} students.`);
+      setPromoSelectedIds([]);
+      invalidate(`classes_${activeSchoolId}`);
+      invalidate(`promo_students_${promoFromClass}`);
+      invalidate(`class_students_${promoToClass}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Bulk promotion failed.');
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  const schoolType = schoolInfo?.school_type || 'primary';
+  const isHighSchool = schoolType === 'high_school' || schoolType === 'combined';
+  const isSecondary = schoolType === 'secondary';
+  const gradeLevels = isHighSchool
+    ? ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6']
+    : isSecondary
+    ? ['Form 1', 'Form 2', 'Form 3', 'Form 4']
+    : ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'];
+
   return (
-    <div className="module-page classes-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      {/* Header */}
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
-        <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Classroom & Curriculum Management</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">Setup classes, subject offerings, form masters, and teacher subject duties.</p>
-        </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Classes & Academic Streams"
+        subtitle={`Academic directory for ${schoolInfo?.name || 'Harare Academy'}. Manage classes, teacher allocations, and student roll.`}
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setImportSubjectsModal(true)}
+              className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition shadow-xs flex items-center gap-1.5"
+            >
+              <Upload className="w-4 h-4 text-muted" />
+              Import Subjects
+            </button>
+            <button
+              onClick={() => setShowSubjectModal(true)}
+              className="px-4 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition shadow-xs flex items-center gap-1.5"
+            >
+              <BookOpen className="w-4 h-4 text-brand-500" />
+              New Subject
+            </button>
+            <button
+              onClick={() => setShowClassModal(true)}
+              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition shadow-xs flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              New Class
+            </button>
+          </div>
+        }
+      />
 
-        {/* Tab Switcher */}
-        <div className="flex bg-sage/10 p-1 rounded-xl border border-line-border/30">
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          label="Total Classes"
+          value={classes.length}
+          icon={Layers}
+          color="brand"
+          subtext={`${classes.filter(c => (c.student_count || 0) > 0).length} active streams`}
+        />
+        <StatCard
+          label="Total Students"
+          value={totalStudents}
+          icon={Users}
+          color="info"
+          subtext={`Across ${classes.length} classroom streams`}
+        />
+        <StatCard
+          label="Capacity Utilization"
+          value={`${avgUtilization}%`}
+          icon={UserCheck}
+          color={avgUtilization > 95 ? 'danger' : 'accent'}
+          subtext={`${totalStudents} / ${totalCapacity} available seats`}
+        />
+        <StatCard
+          label="Subjects Offered"
+          value={subjects.length}
+          icon={BookOpen}
+          color="violet"
+          subtext={`${assignments.length} teacher-class allocations`}
+        />
+      </KpiStrip>
+
+      {/* Clash alerts if any */}
+      {clashWarnings.length > 0 && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between text-amber-700 dark:text-amber-300">
+          <div className="flex items-center gap-3 text-xs">
+            <ShieldAlert className="w-5 h-5 text-accent shrink-0" />
+            <div>
+              <span className="font-bold">Schedule Clash Detected:</span> {clashWarnings[0].message}
+            </div>
+          </div>
           <button
-            onClick={() => setActiveTab('classes')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
-              activeTab === 'classes' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
-            }`}
+            onClick={() => setActiveTab('matrix')}
+            className="text-xs font-semibold underline underline-offset-4 hover:opacity-80"
           >
-            <Grid className="w-4 h-4" />
-            <span>Classrooms ({classes.length})</span>
+            Review Matrix
           </button>
-
-          <button
-            onClick={() => setActiveTab('subjects')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
-              activeTab === 'subjects' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
-            }`}
-          >
-            <BookMarked className="w-4 h-4" />
-            <span>Subjects Roster ({subjects.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('assignments')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
-              activeTab === 'assignments' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
-            }`}
-          >
-            <UserCheck className="w-4 h-4" />
-            <span>Teaching Assignments ({assignments.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('promotions')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
-              activeTab === 'promotions' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
-            }`}
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>End of Year Promotions</span>
-          </button>
-        </div>
-      </div>
-
-      {message.text && (
-        <div className={`p-4 rounded-xl text-sm font-sans flex items-center space-x-2 border ${
-          message.type === 'success' ? 'bg-sage/20 text-teal-dark border-teal-primary/20' : 'bg-brick-critical/10 text-brick-critical border-brick-critical/20'
-        }`}>
-          {message.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-teal-primary" /> : <AlertTriangle className="w-4 h-4" />}
-          <span>{message.text}</span>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center items-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-teal-primary" />
-        </div>
-      ) : (
-        <>
-          {/* TAB 1: CLASSES */}
-          {activeTab === 'classes' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Creator Form */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 h-fit space-y-4">
-                <h3 className="font-sans font-bold text-sm text-ink flex items-center space-x-2">
-                  <Sparkles className="w-4 h-4 text-teal-primary" />
-                  <span>Setup New Classroom</span>
-                </h3>
-                
-                <form onSubmit={handleCreateClass} className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Classroom Name *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Grade 1 Red or Form 1 A"
-                      className="w-full glass-input rounded-xl text-xs"
-                      value={classForm.name}
-                      onChange={e => setClassForm({ ...classForm, name: e.target.value })}
-                    />
-                  </div>
+      {/* Navigation Tabs */}
+      <Tabs
+        tabs={[
+          { id: 'classes', label: 'Class Master-Detail', count: classes.length },
+          { id: 'matrix', label: 'Teaching Matrix & Allocations', count: assignments.length },
+          { id: 'subjects', label: 'Subjects Directory', count: subjects.length },
+          { id: 'promotion', label: 'Bulk Promotion Desk' },
+        ]}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Grade Level</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={classForm.grade_level}
-                        onChange={e => setClassForm({ ...classForm, grade_level: e.target.value })}
-                      >
-                        {getGradeLevels().map(lvl => (
-                          <option key={lvl} value={lvl}>{lvl}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Stream / Color</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Blue"
-                        className="w-full glass-input rounded-xl text-xs"
-                        value={classForm.stream}
-                        onChange={e => setClassForm({ ...classForm, stream: e.target.value })}
-                      />
-                    </div>
-                  </div>
+      {/* TAB 1: Master-Detail Classes */}
+      {activeTab === 'classes' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left: Class List */}
+          <div className="lg:col-span-5 space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted">Streams ({classes.length})</span>
+              <span className="text-xs text-muted">Click to view roster & allocations</span>
+            </div>
 
-                  <div>
-                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Form Master / Mistress</label>
-                    <select
-                      className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                      value={classForm.form_master_id}
-                      onChange={e => setClassForm({ ...classForm, form_master_id: e.target.value })}
+            {classes.length === 0 ? (
+              <EmptyState
+                title="No Classes Configured"
+                description="Add your first classroom stream or grade level to populate the roll."
+                actionLabel="Create Class"
+                onAction={() => setShowClassModal(true)}
+              />
+            ) : (
+              <div className="space-y-2 max-h-[720px] overflow-y-auto pr-1">
+                {classes.map(cls => {
+                  const isSelected = activeClass?.id === cls.id;
+                  const capacity = cls.capacity || 40;
+                  const count = cls.student_count || 0;
+                  const pct = Math.min(100, Math.round((count / capacity) * 100));
+                  const formMaster = staff.find(s => s.id === cls.form_master_id || s.user_id === cls.form_master_id);
+
+                  return (
+                    <div
+                      key={cls.id}
+                      onClick={() => setSelectedClassId(cls.id)}
+                      className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-surface border-brand-500 shadow-sm ring-1 ring-brand-500/30'
+                          : 'bg-surface border-line hover:border-line hover:bg-canvas'
+                      }`}
                     >
-                      <option value="">No Designated Form Master</option>
-                      {staff.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.role_title || 'Staff'})</option>
-                      ))}
-                    </select>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-ink">{cls.name}</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-canvas border border-line text-muted font-medium">
+                              {cls.grade_level || 'Grade'}
+                            </span>
+                            {cls.stream && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 font-semibold border border-brand-100">
+                                {cls.stream}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-muted mt-1 flex items-center gap-1.5">
+                            <UserCheck className="w-3.5 h-3.5 text-brand-500" />
+                            <span>Form Master: {formMaster?.name || 'Unassigned'}</span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-mono font-bold text-ink">{count} / {capacity}</span>
+                          <span className="text-[10px] text-muted block">enrolled</span>
+                        </div>
+                      </div>
+
+                      {/* Capacity progress bar */}
+                      <div className="mt-3">
+                        <div className="w-full h-1.5 bg-canvas rounded-full overflow-hidden border border-line/50">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              pct >= 95 ? 'bg-danger' : pct >= 80 ? 'bg-accent' : 'bg-brand-500'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right: Selected Class Detail Roster */}
+          <div className="lg:col-span-7 space-y-6">
+            {activeClass ? (
+              <>
+                <Card
+                  title={`${activeClass.name} — Class Detail`}
+                  subtitle={`Form Master: ${staff.find(s => s.id === activeClass.form_master_id)?.name || 'Unassigned'} • Capacity: ${activeClass.student_count || 0}/${activeClass.capacity || 40}`}
+                  actions={
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setAssignForm(prev => ({ ...prev, class_id: activeClass.id }));
+                          setShowAssignModal(true);
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition"
+                      >
+                        Assign Subject
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDeletingId(activeClass.id);
+                          setDeleteType('class');
+                        }}
+                        className="p-1.5 rounded-lg text-danger hover:bg-danger/10 transition"
+                        title="Delete Class"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  }
+                >
+                  <div className="grid grid-cols-3 gap-3 mb-6">
+                    <div className="p-3 rounded-xl bg-canvas border border-line">
+                      <div className="text-[11px] text-muted font-medium">Class Roll</div>
+                      <div className="text-lg font-bold font-mono text-ink mt-0.5">{classStudents.length}</div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-canvas border border-line">
+                      <div className="text-[11px] text-muted font-medium">Free Desks</div>
+                      <div className="text-lg font-bold font-mono text-brand-500 mt-0.5">
+                        {Math.max(0, (activeClass.capacity || 40) - classStudents.length)}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-canvas border border-line">
+                      <div className="text-[11px] text-muted font-medium">Assigned Subjects</div>
+                      <div className="text-lg font-bold font-mono text-ink mt-0.5">
+                        {assignments.filter(a => String(a.class_id) === String(activeClass.id)).length}
+                      </div>
+                    </div>
                   </div>
 
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center justify-center space-x-2 cursor-pointer transition-colors"
-                  >
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    <span>Construct Classroom</span>
-                  </button>
-                </form>
-              </div>
+                  {/* Assigned Subjects in this class */}
+                  <div className="mb-6">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted mb-3">Teaching Allocations</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {assignments
+                        .filter(a => String(a.class_id) === String(activeClass.id))
+                        .map(a => {
+                          const sub = subjects.find(s => String(s.id) === String(a.subject_id));
+                          const tch = staff.find(s => String(s.id) === String(a.teacher_id) || String(s.user_id) === String(a.teacher_id));
+                          return (
+                            <div key={a.id} className="p-2.5 rounded-lg bg-canvas border border-line flex items-center justify-between text-xs">
+                              <div>
+                                <span className="font-bold text-ink">{sub?.name || 'Subject'}</span>
+                                <span className="text-muted block text-[11px]">{tch?.name || 'No Teacher'}</span>
+                              </div>
+                              <button
+                                onClick={() => {
+                                  setDeletingId(a.id);
+                                  setDeleteType('assignment');
+                                }}
+                                className="text-muted hover:text-danger p-1"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
 
-              {/* Classroom Cards Roster */}
-              <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Student Roll Table */}
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted mb-3">Enrolled Students ({classStudents.length})</h4>
+                  <DataTable
+                    columns={[
+                      {
+                        key: 'name',
+                        label: 'Student',
+                        render: (_, row) => (
+                          <div className="flex items-center gap-2">
+                            <Avatar name={`${row.first_name} ${row.last_name}`} size="sm" />
+                            <div>
+                              <div className="font-semibold text-ink">{row.first_name} {row.last_name}</div>
+                              <div className="text-[10px] font-mono text-muted">{row.admission_number || 'ADM-N/A'}</div>
+                            </div>
+                          </div>
+                        )
+                      },
+                      { key: 'gender', label: 'Gender', render: v => <span className="capitalize">{v || 'N/A'}</span> },
+                      {
+                        key: 'status',
+                        label: 'Status',
+                        render: v => <StatusPill status={v || 'active'} />
+                      }
+                    ]}
+                    data={classStudents}
+                    loading={loadingStudents}
+                    emptyTitle="No Students Enrolled"
+                    emptyMessage="Use the Students directory or Enrolment Wizard to place learners into this class."
+                    compact
+                  />
+                </Card>
+              </>
+            ) : (
+              <EmptyState
+                title="Select a Class"
+                description="Choose a stream from the left directory to view full details."
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: Teaching Matrix & Allocations */}
+      {activeTab === 'matrix' && (
+        <Card
+          title="Teaching Assignment Matrix"
+          subtitle="Cross-mapping of curriculum subjects, assigned teachers, and classes."
+          actions={
+            <button
+              onClick={() => setShowAssignModal(true)}
+              className="px-3.5 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+            >
+              <Plus className="w-4 h-4" />
+              Link Teacher to Class
+            </button>
+          }
+        >
+          <DataTable
+            columns={[
+              {
+                key: 'class_id',
+                label: 'Class Stream',
+                sortable: true,
+                render: v => {
+                  const c = classes.find(cl => String(cl.id) === String(v));
+                  return <span className="font-bold text-ink">{c?.name || `Class #${v}`}</span>;
+                }
+              },
+              {
+                key: 'subject_id',
+                label: 'Curriculum Subject',
+                sortable: true,
+                render: v => {
+                  const s = subjects.find(sub => String(sub.id) === String(v));
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-ink">{s?.name || 'Subject'}</span>
+                      {s?.code && <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-canvas border border-line">{s.code}</span>}
+                    </div>
+                  );
+                }
+              },
+              {
+                key: 'teacher_id',
+                label: 'Assigned Teacher',
+                sortable: true,
+                render: v => {
+                  const t = staff.find(st => String(st.id) === String(v) || String(st.user_id) === String(v));
+                  return (
+                    <div className="flex items-center gap-2">
+                      <Avatar name={t?.name || 'Teacher'} size="sm" />
+                      <div>
+                        <div className="font-medium text-ink">{t?.name || 'Staff Member'}</div>
+                        <div className="text-[10px] text-muted">{t?.role_title || 'Teacher'}</div>
+                      </div>
+                    </div>
+                  );
+                }
+              },
+              {
+                key: 'actions',
+                label: '',
+                render: (_, row) => (
+                  <button
+                    onClick={() => {
+                      setDeletingId(row.id);
+                      setDeleteType('assignment');
+                    }}
+                    className="p-1.5 text-muted hover:text-danger rounded-lg transition"
+                    title="Unlink Assignment"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )
+              }
+            ]}
+            data={assignments}
+            emptyTitle="No Teaching Assignments Found"
+            emptyMessage="Link educators to classes and subjects to generate the active academic master timetable."
+          />
+        </Card>
+      )}
+
+      {/* TAB 3: Subjects Directory */}
+      {activeTab === 'subjects' && (
+        <Card
+          title="Subjects Directory"
+          subtitle="Accredited subjects for ZIMSEC / Cambridge examinations and national curriculum."
+          actions={
+            <button
+              onClick={() => setShowSubjectModal(true)}
+              className="px-3.5 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+            >
+              <Plus className="w-4 h-4" />
+              Add Subject
+            </button>
+          }
+        >
+          <DataTable
+            columns={[
+              {
+                key: 'name',
+                label: 'Subject Name',
+                sortable: true,
+                render: (v, row) => (
+                  <div>
+                    <div className="font-bold text-ink">{v}</div>
+                    <div className="text-[11px] text-muted">{row.department || 'General Department'}</div>
+                  </div>
+                )
+              },
+              {
+                key: 'code',
+                label: 'ZIMSEC Code',
+                render: v => <span className="font-mono text-xs text-ink font-semibold">{v || 'N/A'}</span>
+              },
+              {
+                key: 'level',
+                label: 'Target Level',
+                render: v => <span className="capitalize text-xs text-muted">{v || 'All levels'}</span>
+              },
+              {
+                key: 'actions',
+                label: '',
+                render: (_, row) => (
+                  <button
+                    onClick={() => {
+                      setDeletingId(row.id);
+                      setDeleteType('subject');
+                    }}
+                    className="p-1.5 text-muted hover:text-danger rounded-lg transition"
+                    title="Delete Subject"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )
+              }
+            ]}
+            data={subjects}
+            emptyTitle="No Subjects Registered"
+            emptyMessage="Configure subjects to enable mark entry, timetables, and official report cards."
+          />
+        </Card>
+      )}
+
+      {/* TAB 4: Bulk Promotion Desk */}
+      {activeTab === 'promotion' && (
+        <Card
+          title="End of Term / Year Bulk Promotion Desk"
+          subtitle="Transition students across form levels, grade streams, or graduation cohorts."
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 rounded-xl bg-canvas border border-line mb-6">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1.5">Source Class (Current Roll)</label>
+              <select
+                value={promoFromClass}
+                onChange={e => {
+                  setPromoFromClass(e.target.value);
+                  setPromoSelectedIds([]);
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select origin class...</option>
                 {classes.map(c => (
-                  <div key={c.id} className="glass-panel p-5 rounded-2xl border border-line-border/30 hover:shadow-lg transition-all flex flex-col justify-between space-y-4">
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4 className="font-sans font-bold text-base text-ink">{c.name}</h4>
-                          <p className="text-[10px] text-ink/50 font-mono mt-0.5">ID: {c.id}</p>
-                        </div>
-                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-primary uppercase">
-                          {c.grade_level}
-                        </span>
-                      </div>
-                      
-                      <div className="mt-3 space-y-1 text-xs font-sans">
-                        <div className="flex items-center space-x-2 text-ink/75">
-                          <User className="w-3.5 h-3.5 text-teal-primary" />
-                          <span>Class Teacher: <strong className="text-ink font-semibold">{c.teacher_name || 'Unassigned'}</strong></span>
-                        </div>
-                        <div className="flex items-center space-x-2 text-ink/75">
-                          <UserCheck className="w-3.5 h-3.5 text-amber-warning" />
-                          <span>Form Master: <strong className="text-ink font-semibold">{c.form_master_name || 'Unassigned'}</strong></span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-end gap-1.5 border-t border-line-border/20 pt-3">
-                      <button
-                        onClick={() => {
-                          const info = [
-                            `Class: ${c.name}`,
-                            `Grade: ${c.grade_level}`,
-                            `Form Master: ${c.form_master_name || 'Unassigned'}`,
-                            `Level: ${c.level || 'Not set'}`,
-                          ].join(' · ');
-                          toast.info(info);
-                        }}
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#e8f4f3] hover:bg-teal-primary/20 text-[#1b5e58] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-teal-primary/20"
-                      >
-                        <Eye className="w-3 h-3" />
-                        <span>View</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          const newName = prompt('Edit class name:', c.name);
-                          if (newName && newName.trim()) {
-                            api.put(`/schools/${activeSchoolId}/classes/${c.id}`, { name: newName.trim() })
-                              .then(() => fetchData())
-                              .then(() => { toast.success(`${c.name} deleted.`); fetchData(); })
-                              .catch(err => toast.error(err.message || 'Failed to delete class.'));
-                          }
-                        }}
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fdf6e7] hover:bg-amber-warning/25 text-[#925f0e] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-amber-warning/30"
-                      >
-                        <Edit2 className="w-3 h-3" />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        onClick={() => toast.info('Classroom is active and ready.')}
-
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fdf0e6] text-[#a84b00] hover:bg-orange-500/25 text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-orange-500/30"
-                      >
-                        <Ban className="w-3 h-3" />
-                        <span>Suspend</span>
-                      </button>
-                      <button
-                        onClick={() => handleDeleteClass(c.id)}
-                        className="inline-flex items-center space-x-1 px-2.5 py-1 bg-[#fbeae8] hover:bg-brick-critical/20 text-[#9b2c2c] text-[10px] font-bold rounded-lg transition-all cursor-pointer border border-brick-critical/30"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Delete</span>
-                      </button>
-                    </div>
-
-                  </div>
+                  <option key={c.id} value={c.id}>{c.name} ({c.student_count || 0} students)</option>
                 ))}
-                {classes.length === 0 && (
-                  <div className="col-span-2 text-center py-20 text-ink/40 text-sm">
-                    No classes set up yet. Build your first classroom above!
-                  </div>
-                )}
-              </div>
+              </select>
             </div>
-          )}
 
-          {/* TAB 2: SUBJECTS ROSTER */}
-          {activeTab === 'subjects' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Subject Creation Form */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 h-fit space-y-4">
-                <h3 className="font-sans font-bold text-sm text-ink flex items-center space-x-2">
-                  <BookMarked className="w-4 h-4 text-teal-primary" />
-                  <span>Register New Subject</span>
-                </h3>
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1.5">Destination Class (Promoted Roll)</label>
+              <select
+                value={promoToClass}
+                onChange={e => setPromoToClass(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select destination class...</option>
+                {classes
+                  .filter(c => String(c.id) !== String(promoFromClass))
+                  .map(c => (
+                    <option key={c.id} value={c.id}>{c.name} (Capacity: {c.capacity || 40})</option>
+                  ))}
+              </select>
+            </div>
+          </div>
 
-                <form onSubmit={handleCreateSubject} className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Subject Name *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Mathematics, Shona, Chemistry"
-                      className="w-full glass-input rounded-xl text-xs"
-                      value={subjectForm.name}
-                      onChange={e => setSubjectForm({ ...subjectForm, name: e.target.value })}
-                    />
-                  </div>
+          {promoFromClass && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (promoSelectedIds.length === promoStudents.length) {
+                        setPromoSelectedIds([]);
+                      } else {
+                        setPromoSelectedIds(promoStudents.map(s => s.id));
+                      }
+                    }}
+                    className="text-xs font-semibold text-brand-700 hover:underline"
+                  >
+                    {promoSelectedIds.length === promoStudents.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                  <span className="text-xs text-muted">({promoSelectedIds.length} of {promoStudents.length} selected)</span>
+                </div>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Subject Code *</label>
+                <button
+                  disabled={promoSelectedIds.length === 0 || !promoToClass || promoLoading}
+                  onClick={handleBulkPromote}
+                  className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition disabled:opacity-50 flex items-center gap-2 shadow-xs"
+                >
+                  <ArrowRight className="w-4 h-4" />
+                  {promoLoading ? 'Promoting...' : `Promote Selected (${promoSelectedIds.length})`}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                {promoStudents.map(st => {
+                  const checked = promoSelectedIds.includes(st.id);
+                  return (
+                    <label
+                      key={st.id}
+                      className={`p-3 rounded-xl border cursor-pointer flex items-center gap-3 transition ${
+                        checked ? 'bg-surface border-brand-500 shadow-xs' : 'bg-surface border-line hover:bg-canvas'
+                      }`}
+                    >
                       <input
-                        type="text"
-                        required
-                        placeholder="e.g. MATH101"
-                        className="w-full glass-input rounded-xl text-xs uppercase"
-                        value={subjectForm.code}
-                        onChange={e => setSubjectForm({ ...subjectForm, code: e.target.value })}
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          setPromoSelectedIds(prev =>
+                            prev.includes(st.id) ? prev.filter(id => id !== st.id) : [...prev, st.id]
+                          );
+                        }}
+                        className="rounded text-brand-700 focus:ring-brand-500"
                       />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Academic Level</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={subjectForm.level}
-                        onChange={e => setSubjectForm({ ...subjectForm, level: e.target.value })}
-                      >
-                        <option value="all">All Levels</option>
-                        {(!schoolInfo || schoolInfo.school_type === 'primary') && (
-                          <option value="primary">Primary</option>
-                        )}
-                        {(!schoolInfo || schoolInfo.school_type === 'secondary') && (
-                          <>
-                            <option value="secondary">Secondary (O-Level)</option>
-                            <option value="alevel">Advanced (A-Level)</option>
-                          </>
-                        )}
-                      </select>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center justify-center space-x-2 cursor-pointer transition-colors"
-                  >
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    <span>Register Subject</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Subjects Table */}
-              <div className="lg:col-span-2 glass-panel rounded-2xl border border-line-border/30 overflow-hidden h-fit">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs font-sans text-ink">
-                    <thead>
-                      <tr className="bg-sage/10 border-b border-line-border/30 text-ink/60 font-bold uppercase tracking-wider">
-                        <th className="py-3.5 px-5">Code</th>
-                        <th className="py-3.5 px-5">Subject Name</th>
-                        <th className="py-3.5 px-5">Level Scope</th>
-                        <th className="py-3.5 px-5 text-right pr-6">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line-border/20">
-                      {subjects.map(s => (
-                        <tr key={s.id} className="hover:bg-sage/5 transition-colors">
-                          <td className="py-3.5 px-5 font-mono font-bold text-teal-primary">{s.code}</td>
-                          <td className="py-3.5 px-5 font-bold text-ink">{s.name}</td>
-                          <td className="py-3.5 px-5 capitalize text-ink/70">{s.level || 'All Levels'}</td>
-                          <td className="py-3.5 px-5 text-right pr-6">
-                            <button
-                              onClick={() => handleDeleteSubject(s.id)}
-                              className="p-1 text-brick-critical hover:bg-brick-critical/10 rounded-lg transition-colors cursor-pointer"
-                              title="Delete Subject"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {subjects.length === 0 && (
-                        <tr>
-                          <td colSpan={4} className="py-12 text-center text-ink/40">
-                            No subjects configured yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                      <Avatar name={`${st.first_name} ${st.last_name}`} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-semibold text-ink truncate">{st.first_name} {st.last_name}</div>
+                        <div className="text-[10px] font-mono text-muted">{st.admission_number || 'ADM-N/A'}</div>
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           )}
-
-          {/* TAB 3: TEACHING ASSIGNMENTS */}
-          {activeTab === 'assignments' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Assignment Form */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 h-fit space-y-4">
-                <h3 className="font-sans font-bold text-sm text-ink flex items-center space-x-2">
-                  <User className="w-4 h-4 text-teal-primary" />
-                  <span>Assign Teacher Duty</span>
-                </h3>
-                
-                <form onSubmit={handleCreateAssignment} className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Target Class</label>
-                    <select
-                      className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                      value={assignForm.class_id}
-                      onChange={e => setAssignForm({ ...assignForm, class_id: e.target.value })}
-                    >
-                      {classes.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Subject</label>
-                    <select
-                      className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                      value={assignForm.subject_id}
-                      onChange={e => setAssignForm({ ...assignForm, subject_id: e.target.value })}
-                    >
-                      {subjects.map(s => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} ({s.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Teacher</label>
-                    <select
-                      className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                      value={assignForm.teacher_id}
-                      onChange={e => setAssignForm({ ...assignForm, teacher_id: e.target.value })}
-                    >
-                      {staff.map(st => (
-                        <option key={st.id} value={st.user_id || st.id}>{st.name} ({st.role_title || 'Staff'})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center justify-center space-x-2 cursor-pointer transition-colors"
-                  >
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    <span>Assign Duty</span>
-                  </button>
-                </form>
-              </div>
-
-              {/* Assignments Table */}
-              <div className="lg:col-span-2 glass-panel rounded-2xl border border-line-border/30 overflow-hidden h-fit">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs font-sans text-ink">
-                    <thead>
-                      <tr className="bg-sage/10 border-b border-line-border/30 text-ink/60 font-bold uppercase tracking-wider">
-                        <th className="py-3.5 px-5">Class</th>
-                        <th className="py-3.5 px-5">Subject</th>
-                        <th className="py-3.5 px-5">Assigned Teacher</th>
-                        <th className="py-3.5 px-5 text-right pr-6">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line-border/20">
-                      {assignments.map(a => (
-                        <tr key={a.id} className="hover:bg-sage/5 transition-colors">
-                          <td className="py-3.5 px-5 font-bold text-ink">{a.class_name || a.class_id}</td>
-                          <td className="py-3.5 px-5 font-semibold text-teal-dark">{a.subject_name || a.subject_id}</td>
-                          <td className="py-3.5 px-5 text-ink/75 font-medium">{a.teacher_name || a.teacher_id}</td>
-                          <td className="py-3.5 px-5 text-right pr-6">
-                            <button
-                              onClick={() => handleDeleteAssignment(a.id)}
-                              className="p-1 text-brick-critical hover:bg-brick-critical/10 rounded-lg transition-colors cursor-pointer"
-                              title="Delete Assignment"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      {assignments.length === 0 && (
-                        <tr>
-                          <td colSpan={4} className="py-12 text-center text-ink/40">
-                            No subject assignments registered yet.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: END OF YEAR PROMOTIONS */}
-          {activeTab === 'promotions' && (
-            <div className="space-y-6">
-              {/* Top Configuration Bar */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-2">
-                    Source Class (Current Class) *
-                  </label>
-                  <select
-                    className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                    value={fromClassId}
-                    onChange={e => setFromClassId(e.target.value)}
-                  >
-                    <option value="">-- Choose Class to Promote From --</option>
-                    {classes.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-2">
-                    Destination Class (Promoted To) *
-                  </label>
-                  <select
-                    className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                    value={toClassId}
-                    onChange={e => setToClassId(e.target.value)}
-                  >
-                    <option value="">-- Choose Class to Promote To --</option>
-                    {classes.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {fromClassId && toClassId && (
-                <form onSubmit={handleProcessPromotions} className="space-y-6">
-                  {/* Class Teachers Reassignment Card */}
-                  <div className="glass-panel p-6 rounded-2xl border border-line-border/30">
-                    <h3 className="font-sans font-bold text-sm text-ink mb-4 flex items-center space-x-2">
-                      <UserCheck className="w-4 h-4 text-teal-primary" />
-                      <span>Class Teachers (Form Masters) Reassignment</span>
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-                      <div className="p-4 bg-sage/5 border border-line-border/20 rounded-xl space-y-3">
-                        <span className="font-bold text-teal-dark block">Source Class Teacher</span>
-                        <div>
-                          <label className="block text-[9px] font-sans text-ink/50 uppercase tracking-wider mb-1">Assign Teacher</label>
-                          <select
-                            className="w-full bg-paper border border-line-border rounded-lg px-2.5 py-1.5 text-xs font-semibold"
-                            value={fromClassTeacher}
-                            onChange={e => setFromClassTeacher(e.target.value)}
-                          >
-                            <option value="">Unassigned</option>
-                            {staff.map(st => (
-                              <option key={st.id} value={st.id}>{st.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="p-4 bg-teal-primary/5 border border-teal-primary/20 rounded-xl space-y-3">
-                        <span className="font-bold text-teal-primary block">Destination Class Teacher</span>
-                        <div>
-                          <label className="block text-[9px] font-sans text-ink/50 uppercase tracking-wider mb-1">Assign Teacher</label>
-                          <select
-                            className="w-full bg-paper border border-line-border rounded-lg px-2.5 py-1.5 text-xs font-semibold"
-                            value={toClassTeacher}
-                            onChange={e => setToClassTeacher(e.target.value)}
-                          >
-                            <option value="">Unassigned</option>
-                            {staff.map(st => (
-                              <option key={st.id} value={st.id}>{st.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Student Promotions Table */}
-                  <div className="glass-panel rounded-2xl border border-line-border/30 overflow-hidden">
-                    <div className="p-4 bg-sage/5 border-b border-line-border/30 flex justify-between items-center">
-                      <span className="font-sans font-bold text-xs text-ink/75">
-                        Students list ({promoStudents.length})
-                      </span>
-                      <div className="space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => setPromoStudents(prev => prev.map(s => ({ ...s, action: 'promote' })))}
-                          className="px-3 py-1 bg-teal-primary/10 text-teal-dark border border-teal-primary/20 rounded-lg text-[10px] font-bold cursor-pointer hover:bg-teal-primary/20"
-                        >
-                          Mark All Promote
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPromoStudents(prev => prev.map(s => ({ ...s, action: 'repeat' })))}
-                          className="px-3 py-1 bg-brick-critical/10 text-brick-critical border border-brick-critical/20 rounded-lg text-[10px] font-bold cursor-pointer hover:bg-brick-critical/20"
-                        >
-                          Mark All Repeat
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPromoStudents(prev => prev.map(s => ({ ...s, action: 'graduate' })))}
-                          className="px-3 py-1 bg-ink/10 text-ink border border-line-border/30 rounded-lg text-[10px] font-bold cursor-pointer hover:bg-ink/20"
-                        >
-                          Mark All Graduate
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs font-sans text-ink">
-                        <thead>
-                          <tr className="bg-sage/10 border-b border-line-border/30 text-ink/60 font-bold uppercase tracking-wider">
-                            <th className="py-3 px-5">Admission No.</th>
-                            <th className="py-3 px-5">Student Name</th>
-                            <th className="py-3 px-5 text-right pr-6">Action / Provision</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-line-border/20">
-                          {loadingPromoStudents ? (
-                            <tr>
-                              <td colSpan={3} className="py-12 text-center text-ink/40">
-                                <Loader2 className="w-6 h-6 animate-spin mx-auto text-teal-primary mb-2" />
-                                <span>Loading class roster...</span>
-                              </td>
-                            </tr>
-                          ) : (
-                            promoStudents.map(student => (
-                              <tr key={student.id} className="hover:bg-sage/5 transition-colors">
-                                <td className="py-3 px-5 font-mono font-bold text-teal-primary">{student.admission_number}</td>
-                                <td className="py-3 px-5 font-bold text-ink">{student.first_name} {student.last_name}</td>
-                                <td className="py-3 px-5 text-right pr-6">
-                                  <div className="inline-flex rounded-lg border border-line-border overflow-hidden">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setPromoStudents(prev => prev.map(s => s.id === student.id ? { ...s, action: 'promote' } : s));
-                                      }}
-                                      className={`px-3 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
-                                        student.action === 'promote' ? 'bg-teal-primary text-white' : 'bg-paper text-ink/65 hover:bg-sage/5'
-                                      }`}
-                                    >
-                                      Promote
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setPromoStudents(prev => prev.map(s => s.id === student.id ? { ...s, action: 'repeat' } : s));
-                                      }}
-                                      className={`px-3 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
-                                        student.action === 'repeat' ? 'bg-brick-critical text-white' : 'bg-paper text-ink/65 hover:bg-sage/5'
-                                      }`}
-                                    >
-                                      Repeat
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setPromoStudents(prev => prev.map(s => s.id === student.id ? { ...s, action: 'graduate' } : s));
-                                      }}
-                                      className={`px-3 py-1.5 text-[10px] font-bold transition-all cursor-pointer ${
-                                        student.action === 'graduate' ? 'bg-ink text-white' : 'bg-paper text-ink/65 hover:bg-sage/5'
-                                      }`}
-                                    >
-                                      Graduate
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                          {!loadingPromoStudents && promoStudents.length === 0 && (
-                            <tr>
-                              <td colSpan={3} className="py-12 text-center text-ink/40">
-                                No students currently registered in this source class.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Submission buttons */}
-                  <div className="flex justify-end pt-4 border-t border-line-border/30">
-                    <button
-                      type="submit"
-                      disabled={promoSubmitting}
-                      className="px-6 py-3 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center space-x-2 cursor-pointer transition-colors"
-                    >
-                      {promoSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                      <span>Process Year-End Promotions</span>
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-          )}
-        </>
+        </Card>
       )}
+
+      {/* MODAL: Create Class */}
+      <Modal
+        isOpen={showClassModal}
+        onClose={() => setShowClassModal(false)}
+        title="Create New Classroom Stream"
+        description="Establish a new student cohort and assign its designated Form Master."
+      >
+        <form onSubmit={handleCreateClass} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Class Display Name *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Form 1 North or Grade 4 Blue"
+              value={classForm.name}
+              onChange={e => setClassForm({ ...classForm, name: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Grade Level</label>
+              <select
+                value={classForm.grade_level}
+                onChange={e => setClassForm({ ...classForm, grade_level: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                {gradeLevels.map(lvl => (
+                  <option key={lvl} value={lvl}>{lvl}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Stream / Section</label>
+              <input
+                type="text"
+                placeholder="North, South, A, etc."
+                value={classForm.stream}
+                onChange={e => setClassForm({ ...classForm, stream: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Desk Capacity</label>
+              <input
+                type="number"
+                min="10"
+                max="80"
+                value={classForm.capacity}
+                onChange={e => setClassForm({ ...classForm, capacity: parseInt(e.target.value) || 40 })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Form Master</label>
+              <select
+                value={classForm.form_master_id}
+                onChange={e => setClassForm({ ...classForm, form_master_id: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Unassigned</option>
+                {staff.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.role_title || 'Teacher'})</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowClassModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Creating...' : 'Save Class'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL: Create Subject */}
+      <Modal
+        isOpen={showSubjectModal}
+        onClose={() => setShowSubjectModal(false)}
+        title="Add Curriculum Subject"
+        description="Register an academic discipline into the syllabus."
+      >
+        <form onSubmit={handleCreateSubject} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Subject Title *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Mathematics or Heritage Studies"
+              value={subjectForm.name}
+              onChange={e => setSubjectForm({ ...subjectForm, name: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Subject Code</label>
+              <input
+                type="text"
+                placeholder="e.g. 4004 (ZIMSEC)"
+                value={subjectForm.code}
+                onChange={e => setSubjectForm({ ...subjectForm, code: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Department</label>
+              <input
+                type="text"
+                placeholder="Sciences, Humanities, etc."
+                value={subjectForm.department}
+                onChange={e => setSubjectForm({ ...subjectForm, department: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowSubjectModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : 'Register Subject'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL: Teaching Assignment */}
+      <Modal
+        isOpen={showAssignModal}
+        onClose={() => setShowAssignModal(false)}
+        title="Assign Teacher to Subject & Class"
+        description="Allocate an educator to deliver a curriculum subject for a specific stream."
+      >
+        <form onSubmit={handleAssignTeacher} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Target Class *</label>
+            <select
+              required
+              value={assignForm.class_id}
+              onChange={e => setAssignForm({ ...assignForm, class_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Select Class...</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Curriculum Subject *</label>
+            <select
+              required
+              value={assignForm.subject_id}
+              onChange={e => setAssignForm({ ...assignForm, subject_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Select Subject...</option>
+              {subjects.map(s => (
+                <option key={s.id} value={s.id}>{s.name} {s.code ? `(${s.code})` : ''}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Assigned Teacher *</label>
+            <select
+              required
+              value={assignForm.teacher_id}
+              onChange={e => setAssignForm({ ...assignForm, teacher_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Select Teacher...</option>
+              {staff.map(st => (
+                <option key={st.id} value={st.id}>{st.name} ({st.role_title || 'Teacher'})</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowAssignModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Linking...' : 'Confirm Assignment'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Confirm Delete Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingId}
+        onClose={() => {
+          setDeletingId(null);
+          setDeleteType(null);
+        }}
+        onConfirm={handleDelete}
+        title="Confirm Removal"
+        description="Are you sure you want to remove this academic record? Enrolled relationships or subject allocations will be unlinked."
+        confirmText="Remove Record"
+        danger
+      />
+
+      <ImportModal
+        isOpen={importSubjectsModal}
+        onClose={() => setImportSubjectsModal(false)}
+        schoolId={activeSchoolId}
+        entity="subjects"
+        title="Import Curriculum Subjects"
+        invalidateKeys={[`subjects_${activeSchoolId}`]}
+      />
     </div>
   );
-};
-
-export default Classes;
+}

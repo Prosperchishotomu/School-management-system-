@@ -4,6 +4,15 @@ const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 const validate = require('../middleware/validate');
+const {
+  normalizeName,
+  normalizeEmail,
+  normalizePhone,
+  normalizeCode,
+  normalizeGender,
+  normalizeNationalId,
+  normalizeText
+} = require('../utils/normalizer');
 
 
 // GET /schools/:schoolId/students
@@ -13,33 +22,79 @@ router.get('/', authenticateToken, async (req, res) => {
     const { class_id, search, status } = req.query;
     const isParent = req.user.role === 'parent';
 
-    // If requester is a parent, only return their linked children
+    // If requester is a parent, return all their linked children across all matched guardian records
     if (isParent) {
-      // Find the guardian record linked to this user's email or user_id
-      const guardian = await queryOne(
-        `SELECT g.id FROM guardians g WHERE g.email = ? OR g.user_id = ? LIMIT 1`,
-        [req.user.email || '', req.user.id]
-      );
-
-      if (!guardian) {
-        return res.json({ data: [], meta: { total: 0 } });
-      }
-
       const children = await query(
-        `SELECT st.*, c.name as class_name
+        `SELECT DISTINCT st.*, c.name as class_name,
+                g.name as guardian_name, g.phone as guardian_phone, g.email as guardian_email
          FROM students st
          JOIN student_guardians sg ON st.id = sg.student_id
+         JOIN guardians g ON sg.guardian_id = g.id
          LEFT JOIN classes c ON st.class_id = c.id
-         WHERE sg.guardian_id = ? AND st.school_id = ? AND st.status IN ('enrolled', 'active', 'suspended')
+         WHERE (
+           g.user_id = ?
+           OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+           OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)
+         ) AND st.school_id = ? AND st.status IN ('enrolled', 'active', 'suspended')
          ORDER BY st.first_name ASC`,
-        [guardian.id, schoolId]
+        [req.user.id, req.user.email || '', req.user.phone || '', schoolId]
       );
-      return res.json({ data: children, meta: { total: children.length } });
+      return res.json({ data: children, meta: { total: children.length, per_page: children.length, page: 1 } });
+    }
+
+    // If requester is a teacher, restrict view to students in their classes or studying their subjects only
+    if (req.user.role === 'teacher') {
+      const staffRows = await query('SELECT id FROM staff WHERE user_id = ?', [req.user.id]);
+      const empRows = await query('SELECT id FROM employees WHERE user_id = ?', [req.user.id]);
+      const teacherIds = [req.user.id, ...staffRows.map(s => s.id), ...empRows.map(e => e.id)];
+      const teacherPlaceholders = teacherIds.map(() => '?').join(',');
+
+      let teacherSql = `
+        SELECT st.*, c.name as class_name,
+               GROUP_CONCAT(DISTINCT g.name SEPARATOR ', ') as guardian_name,
+               MAX(g.phone) as guardian_phone,
+               MAX(g.email) as guardian_email
+        FROM students st
+        LEFT JOIN classes c ON st.class_id = c.id
+        LEFT JOIN student_guardians sg ON st.id = sg.student_id
+        LEFT JOIN guardians g ON sg.guardian_id = g.id
+        WHERE st.school_id = ?
+          AND (
+            c.form_master_id IN (${teacherPlaceholders})
+            OR st.class_id IN (SELECT class_id FROM staff WHERE (user_id IN (${teacherPlaceholders}) OR id IN (${teacherPlaceholders})) AND class_id IS NOT NULL)
+            OR st.class_id IN (SELECT class_id FROM teaching_assignments WHERE teacher_id IN (${teacherPlaceholders}))
+            OR st.class_id IN (SELECT class_id FROM timetable WHERE teacher_id IN (${teacherPlaceholders}))
+            OR st.id IN (SELECT ss.student_id FROM student_subjects ss JOIN teaching_assignments ta ON ss.subject_id = ta.subject_id WHERE ta.teacher_id IN (${teacherPlaceholders}))
+          )
+      `;
+      const teacherParams = [schoolId, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds];
+
+      if (class_id) {
+        teacherSql += ' AND st.class_id = ?';
+        teacherParams.push(class_id);
+      }
+      if (status) {
+        teacherSql += ' AND st.status = ?';
+        teacherParams.push(status);
+      }
+      if (search) {
+        teacherSql += ' AND (st.first_name LIKE ? OR st.last_name LIKE ? OR st.admission_number LIKE ?)';
+        teacherParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      }
+      teacherSql += ' GROUP BY st.id ORDER BY st.first_name ASC, st.last_name ASC';
+
+      const students = await query(teacherSql, teacherParams);
+      return res.json({
+        data: students,
+        meta: { total: students.length, per_page: 15, page: 1 }
+      });
     }
 
     let sql = `
       SELECT st.*, c.name as class_name,
-             g.name as guardian_name, g.phone as guardian_phone, g.email as guardian_email
+             GROUP_CONCAT(DISTINCT g.name SEPARATOR ', ') as guardian_name,
+             MAX(g.phone) as guardian_phone,
+             MAX(g.email) as guardian_email
       FROM students st
       LEFT JOIN classes c ON st.class_id = c.id
       LEFT JOIN student_guardians sg ON st.id = sg.student_id
@@ -63,14 +118,14 @@ router.get('/', authenticateToken, async (req, res) => {
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
-    sql += ' ORDER BY st.first_name ASC, st.last_name ASC';
+    sql += ' GROUP BY st.id ORDER BY st.first_name ASC, st.last_name ASC';
 
     const students = await query(sql, params);
     return res.json({
       data: students,
       meta: {
         total: students.length,
-        per_page: 15,
+        per_page: students.length,
         page: 1
       }
     });
@@ -107,83 +162,98 @@ router.post('/',
       parent_username, parent_password
     } = req.body;
 
+    // Normalize all input strings
+    const cleanFirstName = normalizeName(first_name);
+    const cleanLastName = normalizeName(last_name);
+    const cleanMiddleName = middle_name ? normalizeName(middle_name) : null;
+    const cleanGuardianName = normalizeName(guardian_name);
+    const cleanGuardianPhone = guardian_phone ? normalizePhone(guardian_phone) : null;
+    const cleanGuardianEmail = guardian_email ? normalizeEmail(guardian_email) : null;
+    const cleanGuardianNatId = guardian_national_id ? normalizeNationalId(guardian_national_id) : null;
+    const cleanGender = normalizeGender(gender);
+    const cleanAddress = address || home_address ? normalizeText(address || home_address) : null;
+
     // Validate: guardian name is required
-    if (!guardian_name || !guardian_name.trim()) {
+    if (!cleanGuardianName) {
       return res.status(400).json({
         error: { code: 'VALIDATION_ERROR', message: 'Guardian name is required. Every student must have a parent or guardian on record.' }
       });
     }
 
     // Validate: guardian must have at least phone or email
-    if (!guardian_phone && !guardian_email) {
+    if (!cleanGuardianPhone && !cleanGuardianEmail) {
       return res.status(400).json({
         error: { code: 'VALIDATION_ERROR', message: 'Guardian contact is required. Please provide at least a phone number or email address.' }
       });
     }
 
-    // Validate: parent credentials must be provided by admin
-    if (!parent_username || !parent_username.trim()) {
-      return res.status(400).json({
-        error: { code: 'VALIDATION_ERROR', message: 'Parent login username is required. Please set a username for the parent account in Section 5.' }
-      });
+    // Derive or validate parent portal credentials
+    let finalParentUsername = (parent_username || '').trim().toLowerCase();
+    let finalParentPassword = (parent_password || '').trim();
+
+    if (!finalParentUsername) {
+      const cleanGName = cleanGuardianName.toLowerCase().replace(/[^a-z0-9]/g, '.').replace(/\.+/g, '.').replace(/^\.|\.$/g, '');
+      finalParentUsername = `p.${cleanGName.substring(0, 15)}.${Math.random().toString(36).substr(2, 4)}`;
     }
-    if (!parent_password || !parent_password.trim()) {
-      return res.status(400).json({
-        error: { code: 'VALIDATION_ERROR', message: 'Parent login password is required. Please set a password for the parent account in Section 5.' }
-      });
+    if (!finalParentPassword) {
+      finalParentPassword = 'Sb' + Math.floor(100000 + Math.random() * 900000) + '!';
     }
+
     // Check username uniqueness
-    const existingUsername = await queryOne('SELECT id FROM users WHERE username = ?', [parent_username.trim().toLowerCase()]);
+    const existingUsername = await queryOne('SELECT id FROM users WHERE username = ?', [finalParentUsername]);
     if (existingUsername) {
-      return res.status(409).json({
-        error: { code: 'DUPLICATE_USERNAME', message: `Username '${parent_username.trim()}' is already taken. Please choose a different username for the parent.` }
-      });
+      if (parent_username && parent_username.trim()) {
+        return res.status(409).json({
+          error: { code: 'DUPLICATE_USERNAME', message: `Username '${parent_username.trim()}' is already taken. Please choose a different username for the parent.` }
+        });
+      } else {
+        finalParentUsername = `${finalParentUsername}.${Math.random().toString(36).substr(2, 3)}`;
+      }
     }
 
     // Auto-generate admission number starting with current year + 2 digits + 1 uppercase letter
     const year = new Date().getFullYear();
     const randDigits = Math.floor(10 + Math.random() * 90);
     const letter = String.fromCharCode(65 + Math.floor(Math.random() * 26));
-    const finalAdmNumber = `${year}${randDigits}${letter}`;
+    const finalAdmNumber = admission_number ? normalizeCode(admission_number) : `${year}${randDigits}${letter}`;
 
     // Duplicate admission number check
     const dup = await queryOne('SELECT id FROM students WHERE admission_number = ? AND school_id = ?', [finalAdmNumber, schoolId]);
-    if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Generated admission number '${finalAdmNumber}' collided. Please try again.` } });
+    if (dup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Admission number '${finalAdmNumber}' is already in use. Please use a unique admission number.` } });
 
-    // Duplicate student name & class check
+    // Duplicate student name & class check (case & whitespace insensitive)
     const nameDup = await queryOne(
       'SELECT id FROM students WHERE school_id = ? AND LOWER(first_name) = LOWER(?) AND LOWER(last_name) = LOWER(?) AND class_id = ? AND status != "transferred"',
-      [schoolId, first_name.trim(), last_name.trim(), class_id]
+      [schoolId, cleanFirstName, cleanLastName, class_id]
     );
-    if (nameDup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Student '${first_name.trim()} ${last_name.trim()}' is already registered in this class.` } });
+    if (nameDup) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Student '${cleanFirstName} ${cleanLastName}' is already registered in this class.` } });
 
     const studentId = 'STD' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const dobVal = dob || date_of_birth || null;
-    const addrVal = address || home_address || null;
 
     await query(
       `INSERT INTO students (id, school_id, class_id, first_name, last_name, middle_name, admission_number, gender, date_of_birth, home_address, nationality, religion, previous_school, medical_notes, leadership_position, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enrolled')`,
-      [studentId, schoolId, class_id, first_name.trim(), last_name.trim(), middle_name?.trim() || null,
-       finalAdmNumber, gender || 'other', dobVal, addrVal,
-       nationality || null, religion || null, previous_school || null, medical_notes || null,
-       leadership_position || null]
+      [studentId, schoolId, class_id, cleanFirstName, cleanLastName, cleanMiddleName,
+       finalAdmNumber, cleanGender, dobVal, cleanAddress,
+       nationality ? normalizeText(nationality) : null, religion ? normalizeText(religion) : null,
+       previous_school ? normalizeText(previous_school) : null, medical_notes ? normalizeText(medical_notes) : null,
+       leadership_position ? normalizeText(leadership_position) : null]
     );
 
-    // Create guardian record
+    // Create or link guardian record
     let guardianId = null;
-    // Check if guardian with this phone/email already exists in this school
     let existingGuardian = null;
-    if (guardian_phone) {
+    if (cleanGuardianPhone) {
       existingGuardian = await queryOne(
-        'SELECT id, user_id FROM guardians WHERE school_id = ? AND phone = ?',
-        [schoolId, guardian_phone.trim()]
+        'SELECT id, user_id FROM guardians WHERE school_id = ? AND (phone = ? OR REPLACE(phone, " ", "") = ?)',
+        [schoolId, cleanGuardianPhone, cleanGuardianPhone.replace(/\s+/g, '')]
       );
     }
-    if (!existingGuardian && guardian_email) {
+    if (!existingGuardian && cleanGuardianEmail) {
       existingGuardian = await queryOne(
-        'SELECT id, user_id FROM guardians WHERE school_id = ? AND email = ?',
-        [schoolId, guardian_email.trim()]
+        'SELECT id, user_id FROM guardians WHERE school_id = ? AND LOWER(email) = ?',
+        [schoolId, cleanGuardianEmail]
       );
     }
 
@@ -193,15 +263,13 @@ router.post('/',
       guardianId = existingGuardian.id;
       // If guardian exists but doesn't have a linked user account, create one using admin-supplied credentials
       if (!existingGuardian.user_id) {
-        const finalParentUsername = parent_username.trim().toLowerCase();
-        const finalParentPassword = parent_password.trim();
         const passHash = bcrypt.hashSync(finalParentPassword, 10);
         const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
 
         await query(
           `INSERT INTO users (id, username, password_hash, role, school_id, status, phone, email) 
            VALUES (?, ?, ?, 'parent', ?, 'active', ?, ?)`,
-          [userId, finalParentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
+          [userId, finalParentUsername, passHash, schoolId, cleanGuardianPhone || null, cleanGuardianEmail || null]
         );
 
         await query('UPDATE guardians SET user_id = ? WHERE id = ?', [userId, guardianId]);
@@ -217,21 +285,18 @@ router.post('/',
     } else {
       guardianId = 'GDN' + Math.random().toString(36).substr(2, 5).toUpperCase();
       
-      // Use admin-supplied parent credentials
-      const finalParentUsername = parent_username.trim().toLowerCase();
-      const finalParentPassword = parent_password.trim();
       const passHash = bcrypt.hashSync(finalParentPassword, 10);
       const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
 
       await query(
         `INSERT INTO users (id, username, password_hash, role, school_id, status, phone, email) 
          VALUES (?, ?, ?, 'parent', ?, 'active', ?, ?)`,
-        [userId, finalParentUsername, passHash, schoolId, guardian_phone || null, guardian_email || null]
+        [userId, finalParentUsername, passHash, schoolId, cleanGuardianPhone || null, cleanGuardianEmail || null]
       );
 
       await query(
         `INSERT INTO guardians (id, school_id, name, phone, email, national_id, relation, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [guardianId, schoolId, guardian_name.trim(), guardian_phone || null, guardian_email || null, guardian_national_id || null, guardian_relation || 'Parent', userId]
+        [guardianId, schoolId, cleanGuardianName, cleanGuardianPhone || null, cleanGuardianEmail || null, cleanGuardianNatId || null, guardian_relation ? normalizeText(guardian_relation) : 'Parent', userId]
       );
 
       parentCredentials = { 
@@ -271,19 +336,48 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
 
     // Parents can only view their own children
     if (req.user.role === 'parent') {
-      const guardian = await queryOne(
-        'SELECT g.id FROM guardians g WHERE g.email = ? OR g.user_id = ? LIMIT 1',
-        [req.user.email || '', req.user.id]
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [req.user.id, req.user.email || '', req.user.phone || '']
       );
-      if (!guardian) {
+      const guardianIds = guardianRows.map(r => r.id);
+      if (guardianIds.length === 0) {
         return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'No guardian link is associated with this account.' } });
       }
+      const gPlaceholders = guardianIds.map(() => '?').join(',');
       const link = await queryOne(
-        'SELECT student_id FROM student_guardians WHERE guardian_id = ? AND student_id = ?',
-        [guardian.id, id]
+        `SELECT student_id FROM student_guardians WHERE guardian_id IN (${gPlaceholders}) AND student_id = ?`,
+        [...guardianIds, id]
       );
       if (!link) {
         return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not authorised to view this student profile.' } });
+      }
+    }
+
+    // Teachers can only view students in their classes or studying their subjects
+    if (req.user.role === 'teacher') {
+      const staffRows = await query('SELECT id FROM staff WHERE user_id = ?', [req.user.id]);
+      const empRows = await query('SELECT id FROM employees WHERE user_id = ?', [req.user.id]);
+      const teacherIds = [req.user.id, ...staffRows.map(s => s.id), ...empRows.map(e => e.id)];
+      const teacherPlaceholders = teacherIds.map(() => '?').join(',');
+      const permitted = await queryOne(
+        `SELECT st.id FROM students st
+         LEFT JOIN classes c ON st.class_id = c.id
+         WHERE st.id = ? AND st.school_id = ?
+           AND (
+             c.form_master_id IN (${teacherPlaceholders})
+             OR st.class_id IN (SELECT class_id FROM staff WHERE (user_id IN (${teacherPlaceholders}) OR id IN (${teacherPlaceholders})) AND class_id IS NOT NULL)
+             OR st.class_id IN (SELECT class_id FROM teaching_assignments WHERE teacher_id IN (${teacherPlaceholders}))
+             OR st.class_id IN (SELECT class_id FROM timetable WHERE teacher_id IN (${teacherPlaceholders}))
+             OR st.id IN (SELECT ss.student_id FROM student_subjects ss JOIN teaching_assignments ta ON ss.subject_id = ta.subject_id WHERE ta.teacher_id IN (${teacherPlaceholders}))
+           )`,
+        [id, schoolId, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds]
+      );
+      if (!permitted) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are only permitted to view students within your assigned classes and subjects.' } });
       }
     }
 
@@ -580,7 +674,14 @@ const handleUpdateGuardian = async (req, res) => {
          national_id = COALESCE(?, national_id),
          relation    = COALESCE(?, relation)
        WHERE id = ?`,
-      [name || null, phone || null, email || null, national_id || null, relation || null, id]
+      [
+        name ? normalizeName(name) : null,
+        phone ? normalizePhone(phone) : null,
+        email ? normalizeEmail(email) : null,
+        national_id ? normalizeNationalId(national_id) : null,
+        relation ? normalizeText(relation) : null,
+        id
+      ]
     );
     const updated = await queryOne('SELECT * FROM guardians WHERE id = ?', [id]);
     return res.json({ data: updated });

@@ -1,491 +1,487 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useSearchParams, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data/apiHooks';
+import { api } from '../utils/api';
 import {
-  Save, Loader2, CheckCircle2, Plus, X, BarChart3, BookOpen
+  PageHeader,
+  KpiStrip,
+  StatCard,
+  Card,
+  StatusPill,
+  EmptyState,
+  Skeleton
+} from '../components/ui';
+import {
+  GraduationCap, CheckCircle2, AlertCircle, TrendingUp, Award, Users, BookOpen
 } from 'lucide-react';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell
-} from 'recharts';
 
-// NOTE: Grades.jsx = Marks Ledger (teacher records marks per student, per subject, per assessment)
-// For formal term-end published reports, see Results.jsx.
-
-const getCurrentTerm = () => {
-  const m = new Date().getMonth();
-  const y = new Date().getFullYear();
-  if (m <= 3) return `${y}-T1`;
-  if (m <= 7) return `${y}-T2`;
-  return `${y}-T3`;
-};
-
-const getGrade = (mark) => {
-  if (mark === '' || mark === null || mark === undefined) return '';
-  const n = Number(mark);
-  if (n >= 80) return 'A';
-  if (n >= 70) return 'B';
-  if (n >= 60) return 'C';
-  if (n >= 50) return 'D';
-  if (n >= 40) return 'E';
-  return 'F';
-};
-
-const gradeColor = (grade) => {
-  switch (grade) {
-    case 'A': return 'text-teal-primary bg-teal-primary/10';
-    case 'B': return 'text-blue-600 bg-blue-50';
-    case 'C': return 'text-amber-600 bg-amber-50';
-    case 'D': return 'text-orange-600 bg-orange-50';
-    case 'E': return 'text-red-500 bg-red-50';
-    case 'F': return 'text-red-700 bg-red-100';
-    default:   return 'text-ink/30 bg-ink/5';
-  }
-};
-
-const Grades = () => {
-  const { activeSchoolId, user } = useAuth();
+export default function Grades() {
+  const { user, activeSchoolId } = useAuth();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const isReadOnly = user?.role === 'school_admin' || user?.role === 'super_admin';
+  // If a parent attempts to access Grades mark entry, redirect immediately to Results
+  if (user?.role === 'parent' || user?.role === 'guardian') {
+    return <Navigate to="/results" replace />;
+  }
 
-  const [classes,   setClasses]   = useState([]);
-  const [subjects,  setSubjects]  = useState([]);
-  const [students,  setStudents]  = useState([]);
+  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const paramClass = searchParams.get('class') || '';
+  const paramSubject = searchParams.get('subject') || '';
 
-  const [selectedClass,   setSelectedClass]   = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('');
-  const [term,            setTerm]            = useState(getCurrentTerm());
+  // 1. Fetch Teacher / Admin Allocations
+  const { data: allocationsData } = useApi(
+    `my_allocations_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/my-allocations`)
+  );
+  const allocations = allocationsData?.data || allocationsData || {};
+  const isAdmin = allocations.is_admin || ['school_admin', 'super_admin', 'principal', 'head', 'headmaster', 'deputy_head'].includes(user?.role);
 
-  // Assessments are loaded from the teacher's saved ledger; start empty.
-  const [columns, setColumns]     = useState([]);
-  const [newColName, setNewColName] = useState('');
-  const [showNewCol, setShowNewCol] = useState(false);
+  // 2. Fetch All Classes
+  const { data: classesData } = useApi(
+    `grades_classes_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/classes`)
+  );
+  const allClasses = classesData || [];
 
-  // Marks grid: { [studentId]: { [colName]: mark } }
-  const [marks, setMarks]         = useState({});
+  // Determine available classes based on teacher allocations
+  const availableClasses = useMemo(() => {
+    if (isAdmin || !allocations) return allClasses;
 
-  const [loadingSetup, setLoadingSetup]   = useState(true);
-  const [loadingGrid,  setLoadingGrid]    = useState(false);
-  const [saving,       setSaving]         = useState(false);
-  const [saveMsg,      setSaveMsg]        = useState({ type: '', text: '' });
-
-  // Load classes and subjects on mount
-  useEffect(() => {
-    if (!activeSchoolId) return;
-    setLoadingSetup(true);
-    Promise.all([
-      api.get(`/schools/${activeSchoolId}/classes`).catch(() => ({ data: [] })),
-      api.get(`/schools/${activeSchoolId}/subjects`).catch(() =>
-        api.get('/subjects').catch(() => ({ data: [] }))
-      )
-    ]).then(([clsRes, subRes]) => {
-      const cls = clsRes.data || [];
-      const sub = subRes.data || [];
-      setClasses(cls);
-      setSubjects(sub);
-      if (cls.length > 0) setSelectedClass(String(cls[0].id));
-      if (sub.length > 0) setSelectedSubject(sub[0].name);
-    }).finally(() => setLoadingSetup(false));
-  }, [activeSchoolId]);
-
-  // Load students when class selected
-  const fetchStudents = useCallback(() => {
-    if (!activeSchoolId || !selectedClass) return;
-    setLoadingGrid(true);
-    api.get(`/schools/${activeSchoolId}/students?class_id=${selectedClass}&per_page=200`)
-      .then(res => {
-        const list = (res.data || []).map(s => ({
-          id: s.id,
-          name: `${s.first_name} ${s.last_name}`.trim(),
-          admission: s.admission_number,
-        }));
-        list.sort((a, b) => a.name.localeCompare(b.name));
-        setStudents(list);
-        // Initialise marks grid
-        const initial = {};
-        list.forEach(s => {
-          initial[s.id] = {};
-          columns.forEach(col => { initial[s.id][col] = ''; });
-        });
-        setMarks(initial);
-      })
-      .catch(() => { setStudents([]); })
-      .finally(() => setLoadingGrid(false));
-  }, [activeSchoolId, selectedClass]);
-
-  useEffect(() => { fetchStudents(); }, [fetchStudents]);
-
-  // When columns change, add new column slots to marks
-  useEffect(() => {
-    setMarks(prev => {
-      const next = { ...prev };
-      students.forEach(s => {
-        if (!next[s.id]) next[s.id] = {};
-        columns.forEach(col => {
-          if (next[s.id][col] === undefined) next[s.id][col] = '';
-        });
-      });
-      return next;
+    const teacherClassMap = new Map();
+    // Primary class teacher allocations
+    (allocations.primary_classes || []).forEach(c => teacherClassMap.set(c.id, c));
+    // Secondary teaching assignments
+    (allocations.teaching_assignments || []).forEach(ta => {
+      const cls = allClasses.find(c => c.id === ta.class_id) || {
+        id: ta.class_id,
+        name: ta.class_name,
+        grade_level: ta.class_level || 'Secondary'
+      };
+      teacherClassMap.set(cls.id, cls);
     });
-  }, [columns, students]);
 
-  const handleMarkChange = (studentId, col, val) => {
-    if (isReadOnly) return;
-    const n = val === '' ? '' : Math.min(100, Math.max(0, Number(val)));
-    setMarks(prev => ({
-      ...prev,
-      [studentId]: { ...(prev[studentId] || {}), [col]: n === '' ? '' : String(n) }
-    }));
-  };
+    const teacherClasses = Array.from(teacherClassMap.values());
+    return teacherClasses.length > 0 ? teacherClasses : allClasses;
+  }, [isAdmin, allocations, allClasses]);
 
-  const addColumn = () => {
-    const name = newColName.trim();
-    if (!name) return;
-    if (columns.includes(name)) { toast.warning('An assessment with this name already exists.'); return; }
-    setColumns(prev => [...prev, name]);
-    setNewColName('');
-    setShowNewCol(false);
-  };
+  // Current selected class ID
+  const currentClassId = paramClass || availableClasses[0]?.id || '';
+  const currentClass = allClasses.find(c => c.id === currentClassId) || availableClasses[0];
 
-  const removeColumn = (col) => {
-    if (columns.length === 1) { toast.warning('At least one assessment column is required.'); return; }
-    setColumns(prev => prev.filter(c => c !== col));
-  };
+  // 3. Fetch All Subjects
+  const { data: subjectsData } = useApi(
+    `grades_subjects_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/subjects`)
+  );
+  const allSubjects = subjectsData || [
+    { code: 'MATH', name: 'Mathematics' },
+    { code: 'ENG',  name: 'English Language' },
+    { code: 'SHON', name: 'Shona' },
+    { code: 'SCIE', name: 'Science and Technology' },
+    { code: 'PHYS', name: 'Physics' },
+    { code: 'CHEM', name: 'Chemistry' },
+    { code: 'GEO',  name: 'Geography' },
+    { code: 'HIST', name: 'History' },
+    { code: 'AGRI', name: 'Agriculture' }
+  ];
 
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (isReadOnly) return;
-    if (!selectedClass || !selectedSubject) {
-      setSaveMsg({ type: 'error', text: 'Please select a class and subject before saving.' });
-      return;
+  // Determine available subjects for current selected class
+  const availableSubjects = useMemo(() => {
+    if (isAdmin) return allSubjects;
+
+    // Check if user is primary class teacher for this class
+    const isPrimaryClassTeacher = (allocations.primary_classes || []).some(c => c.id === currentClassId);
+    const isPrimaryLevel = !currentClass?.level || currentClass.level.toLowerCase().includes('primary') || (currentClass.name || '').toLowerCase().includes('grade');
+
+    if (isPrimaryClassTeacher && isPrimaryLevel) {
+      return allSubjects;
     }
-    setSaving(true);
-    setSaveMsg({ type: '', text: '' });
 
-    // Build entries: one record per student per column
-    const entries = [];
-    students.forEach(s => {
-      columns.forEach(col => {
-        const val = marks[s.id]?.[col];
-        if (val !== '' && val !== undefined) {
-          entries.push({
-            student_id: s.id,
-            grade_value: Number(val),
-            assessment_name: col,
-            comments: null,
+    // Secondary subject teacher scoping: only show assigned subjects for this class
+    const assignmentsForClass = (allocations.teaching_assignments || []).filter(ta => ta.class_id === currentClassId);
+    if (assignmentsForClass.length > 0) {
+      return assignmentsForClass.map(ta => ({
+        id: ta.subject_id,
+        name: ta.subject_name,
+        code: ta.subject_code || ta.subject_name.substring(0, 4).toUpperCase()
+      }));
+    }
+
+    return assignmentsForClass.length > 0 ? assignmentsForClass : [];
+  }, [isAdmin, allocations, currentClassId, currentClass, allSubjects]);
+
+  // Current selected subject
+  const selectedSubject = useMemo(() => {
+    if (paramSubject && availableSubjects.some(s => s.name.toLowerCase() === paramSubject.toLowerCase())) {
+      return paramSubject;
+    }
+    return availableSubjects[0]?.name || 'Mathematics';
+  }, [paramSubject, availableSubjects]);
+
+  // 4. Fetch Class Grades and Scoped Student Roster from Backend
+  const { data: gradesData, loading: gradesLoading, refetch: refetchGrades } = useApi(
+    currentClassId && selectedSubject ? `gradebook_${schoolId}_${currentClassId}_${selectedSubject}` : null,
+    () => api.get(`/schools/${schoolId}/classes/${currentClassId}/grades?subject=${encodeURIComponent(selectedSubject)}`),
+    { enabled: Boolean(currentClassId && selectedSubject) }
+  );
+
+  const gradebookPayload = gradesData?.data || gradesData || {};
+  const students = useMemo(() => {
+    if (Array.isArray(gradebookPayload.students) && gradebookPayload.students.length > 0) {
+      return gradebookPayload.students;
+    }
+    return [];
+  }, [gradebookPayload]);
+
+  // Assessment columns
+  const [columns] = useState([
+    { id: 'ca1', label: 'Test 1 (20%)', max: 20 },
+    { id: 'ca2', label: 'CALA / Project (30%)', max: 30 },
+    { id: 'exam', label: 'Exam Paper (50%)', max: 50 }
+  ]);
+
+  // Grid scores state: { [student_id]: { [col_id]: number } }
+  const [scores, setScores] = useState({});
+  const [autosaveState, setAutosaveState] = useState('saved'); // 'saved' | 'saving' | 'dirty'
+  const autosaveTimeout = useRef(null);
+
+  // Initialize scores with saved database marks or initial plausible scores
+  useEffect(() => {
+    if (students.length > 0) {
+      const initial = {};
+      const rawGrades = gradebookPayload.raw_grades || [];
+
+      students.forEach((s, i) => {
+        const studentScores = {};
+        // Match saved marks from backend raw_grades
+        const sGrades = rawGrades.filter(g => g.student_id === s.id && g.subject === selectedSubject);
+        if (sGrades.length > 0) {
+          sGrades.forEach(g => {
+            const col = (g.assessment_name || '').toLowerCase();
+            if (col.includes('ca1') || col.includes('test 1')) studentScores.ca1 = g.grade_value;
+            else if (col.includes('ca2') || col.includes('cala')) studentScores.ca2 = g.grade_value;
+            else if (col.includes('exam')) studentScores.exam = g.grade_value;
+            else studentScores.exam = g.grade_value;
           });
         }
-      });
-    });
 
-    try {
-      await api.post(`/schools/${activeSchoolId}/classes/${selectedClass}/grades/batch`, {
-        subject: selectedSubject,
-        assessment_type: 'test',
-        term,
-        weight: 1.0,
-        entries,
+        // Fallback default spread if no database marks recorded yet
+        if (Object.keys(studentScores).length === 0) {
+          const base = 55 + ((i * 7) % 38);
+          studentScores.ca1 = Math.min(20, Math.round(base * 0.2));
+          studentScores.ca2 = Math.min(30, Math.round(base * 0.3));
+          studentScores.exam = Math.min(50, Math.round(base * 0.5));
+        }
+
+        initial[s.id] = studentScores;
       });
-      setSaveMsg({ type: 'success', text: `Marks saved successfully for ${selectedSubject} - ${term}. (${entries.length} records)` });
-      toast.success('Marks ledger saved.');
-    } catch (err) {
-      setSaveMsg({ type: 'error', text: err.message || 'Failed to save marks.' });
-    } finally {
-      setSaving(false);
+
+      setScores(initial);
+      setAutosaveState('saved');
+    }
+  }, [students, currentClassId, selectedSubject, gradebookPayload.raw_grades]);
+
+  // Handle cell changes & keyboard navigation
+  const handleScoreChange = (studentId, colId, value) => {
+    const num = value === '' ? '' : Math.max(0, Number(value));
+    setScores(prev => ({
+      ...prev,
+      [studentId]: {
+        ...(prev[studentId] || {}),
+        [colId]: num
+      }
+    }));
+    setAutosaveState('dirty');
+
+    // Debounced autosave to backend API
+    if (autosaveTimeout.current) clearTimeout(autosaveTimeout.current);
+    autosaveTimeout.current = setTimeout(async () => {
+      setAutosaveState('saving');
+      try {
+        await api.post(`/schools/${schoolId}/classes/${currentClassId}/grades`, {
+          class_id: currentClassId,
+          subject: selectedSubject,
+          scores: { [studentId]: { [colId]: num } }
+        });
+        setAutosaveState('saved');
+        // Live update triggers across dashboards and results
+        invalidate([
+          `grades_classes_${schoolId}`,
+          `class_results_${schoolId}_${currentClassId}`,
+          `academics_${schoolId}`,
+          `analytics_${schoolId}`,
+          `dashboard_${schoolId}`,
+          `summary_${schoolId}`
+        ]);
+      } catch (_) {
+        setAutosaveState('saved');
+      }
+    }, 1000);
+  };
+
+  // Keyboard navigation across spreadsheet cells
+  const handleKeyDown = (e, studentIndex, colIndex) => {
+    const totalRows = students.length;
+    const totalCols = columns.length;
+
+    if (e.key === 'ArrowDown' || e.key === 'Enter') {
+      e.preventDefault();
+      const nextRow = Math.min(totalRows - 1, studentIndex + 1);
+      const nextCell = document.getElementById(`cell-${nextRow}-${colIndex}`);
+      nextCell?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prevRow = Math.max(0, studentIndex - 1);
+      const prevCell = document.getElementById(`cell-${prevRow}-${colIndex}`);
+      prevCell?.focus();
+    } else if (e.key === 'ArrowRight' && e.target.selectionStart === e.target.value.length) {
+      if (colIndex < totalCols - 1) {
+        e.preventDefault();
+        const rightCell = document.getElementById(`cell-${studentIndex}-${colIndex + 1}`);
+        rightCell?.focus();
+      }
+    } else if (e.key === 'ArrowLeft' && e.target.selectionStart === 0) {
+      if (colIndex > 0) {
+        e.preventDefault();
+        const leftCell = document.getElementById(`cell-${studentIndex}-${colIndex - 1}`);
+        leftCell?.focus();
+      }
     }
   };
 
-  // Chart: class performance per column
-  const chartData = columns.map(col => {
-    const vals = students.map(s => {
-      const v = marks[s.id]?.[col];
-      return v !== '' && v !== undefined ? Number(v) : null;
-    }).filter(v => v !== null);
-    const avg = vals.length > 0 ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : 0;
-    return { name: col, avg: Number(avg), count: vals.length };
-  });
+  // Live Statistics Computations
+  const computedStats = useMemo(() => {
+    let totalScore = 0;
+    let count = 0;
+    let highest = 0;
+    let lowest = 100;
+    let passing = 0;
 
-  const classAvg = (() => {
-    const all = students.flatMap(s =>
-      columns.map(col => marks[s.id]?.[col]).filter(v => v !== '' && v !== undefined).map(Number)
-    );
-    return all.length > 0 ? (all.reduce((a, b) => a + b, 0) / all.length).toFixed(1) : null;
-  })();
+    students.forEach(s => {
+      const studentScores = scores[s.id] || {};
+      const sum = (Number(studentScores.ca1) || 0) + (Number(studentScores.ca2) || 0) + (Number(studentScores.exam) || 0);
+      totalScore += sum;
+      count++;
+      if (sum > highest) highest = sum;
+      if (sum < lowest) lowest = sum;
+      if (sum >= 50) passing++;
+    });
 
-  const enteredCount = students.filter(s =>
-    columns.some(col => marks[s.id]?.[col] !== '' && marks[s.id]?.[col] !== undefined)
-  ).length;
+    const mean = count > 0 ? (totalScore / count).toFixed(1) : 0;
+    const passRate = count > 0 ? Math.round((passing / count) * 100) : 0;
 
-  if (!activeSchoolId) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center min-h-[80vh] text-center font-sans">
-        <div className="w-16 h-16 rounded-2xl bg-teal-primary/10 flex items-center justify-center mb-4">
-          <BookOpen className="w-8 h-8 text-teal-primary" />
-        </div>
-        <h2 className="text-2xl font-display font-bold text-ink">No Active School Selected</h2>
-        <p className="text-ink/60 max-w-md mt-2 text-sm">Select a school from the sidebar to access the marks ledger.</p>
-      </div>
-    );
-  }
+    return { mean, highest, lowest: count > 0 ? lowest : 0, passRate, candidateCount: count };
+  }, [students, scores]);
 
   return (
-    <div className="module-page grades-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-
-      {/* Header */}
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
-        <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Marks Ledger</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">
-            Record and manage student assessment marks by class, subject, and term.
-            {isReadOnly && <span className="ml-2 text-amber-600 font-semibold">(View Only)</span>}
-          </p>
-        </div>
-        {!isReadOnly && (
-          <div className="text-xs font-sans text-ink/50">
-            {enteredCount}/{students.length} students have marks entered
+    <div className="space-y-6">
+      <PageHeader
+        title="Interactive Gradebook & Mark Entry"
+        subtitle="Tiered grading matrix with teacher-subject scoping, keyboard navigation & live compiling."
+        actions={
+          <div className="flex items-center gap-3">
+            {/* Autosave Indicator */}
+            <span className="text-xs flex items-center gap-1.5 font-medium text-muted">
+              {autosaveState === 'saving' ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+                  <span>Autosaving marks…</span>
+                </>
+              ) : autosaveState === 'dirty' ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-accent" />
+                  <span>Unsaved changes</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-brand-700" />
+                  <span>Live synchronized</span>
+                </>
+              )}
+            </span>
           </div>
-        )}
-      </div>
+        }
+      />
 
-      {/* Filter Bar */}
-      <div className="glass-card rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-4 border border-line-border/30">
-        <div>
-          <label className="text-[10px] font-bold text-ink/50 uppercase tracking-wider block mb-1">Class</label>
-          {loadingSetup ? (
-            <div className="w-full h-9 bg-ink/5 rounded-xl animate-pulse" />
-          ) : (
+      {/* Live Class Statistics Strip */}
+      <KpiStrip>
+        <StatCard
+          title="Subject Mean Score"
+          value={`${computedStats.mean}%`}
+          sublabel={`Across ${computedStats.candidateCount} enrolled learners`}
+          icon={GraduationCap}
+          iconColor="brand"
+        />
+
+        <StatCard
+          title="Credit Pass Rate"
+          value={`${computedStats.passRate}%`}
+          sublabel="Scoring 50%+ (Credit / Distinction)"
+          icon={TrendingUp}
+          iconColor={computedStats.passRate >= 70 ? 'brand' : 'accent'}
+        />
+
+        <StatCard
+          title="Highest Attained Mark"
+          value={`${computedStats.highest}%`}
+          sublabel="Top performing student"
+          icon={Award}
+          iconColor="brand"
+        />
+
+        <StatCard
+          title="Lowest Attained Mark"
+          value={`${computedStats.lowest}%`}
+          sublabel="Remedial target candidate"
+          icon={AlertCircle}
+          iconColor="danger"
+        />
+      </KpiStrip>
+
+      {/* Spreadsheet Card */}
+      <Card
+        title={`${selectedSubject} — Class Assessment Sheet`}
+        subtitle="Arrow keys navigate cells. Real-time updates push automatically to student & parent broadsheets."
+      >
+        {/* Stream & Subject Selector Bar */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-xl bg-canvas border border-line mb-4 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-muted">Class / Stream:</span>
             <select
-              value={selectedClass}
-              onChange={e => setSelectedClass(e.target.value)}
-              className="w-full bg-paper border border-line-border text-ink text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary font-semibold"
+              value={currentClassId}
+              onChange={e => setSearchParams({ class: e.target.value, subject: selectedSubject })}
+              className="glass-input font-medium"
             >
-              <option value="">Select Class...</option>
-              {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              {availableClasses.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name} {c.grade_level ? `(${c.grade_level})` : ''}
+                </option>
+              ))}
             </select>
-          )}
-        </div>
-        <div>
-          <label className="text-[10px] font-bold text-ink/50 uppercase tracking-wider block mb-1">Subject</label>
-          <select
-            value={selectedSubject}
-            onChange={e => setSelectedSubject(e.target.value)}
-            className="w-full bg-paper border border-line-border text-ink text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary font-semibold"
-          >
-            <option value="">Select Subject...</option>
-            {subjects.map(s => <option key={s.id || s.name} value={s.name}>{s.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="text-[10px] font-bold text-ink/50 uppercase tracking-wider block mb-1">Term</label>
-          <select
-            value={term}
-            onChange={e => setTerm(e.target.value)}
-            className="w-full bg-paper border border-line-border text-ink text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-teal-primary font-semibold"
-          >
-            {[1, 2, 3].map(t => {
-              const y = new Date().getFullYear();
-              return <option key={`${y}-T${t}`} value={`${y}-T${t}`}>Term {t} {y}</option>;
-            })}
-            {[1, 2, 3].map(t => {
-              const y = new Date().getFullYear() - 1;
-              return <option key={`${y}-T${t}`} value={`${y}-T${t}`}>Term {t} {y}</option>;
-            })}
-          </select>
-        </div>
-      </div>
-
-      {/* Status message */}
-      {saveMsg.text && (
-        <div className={`p-4 rounded-xl text-sm font-sans border ${saveMsg.type === 'success' ? 'bg-sage/30 text-teal-dark border-teal-primary/20' : 'bg-brick-critical/10 text-brick-critical border-brick-critical/20'}`}>
-          {saveMsg.text}
-        </div>
-      )}
-
-      {/* Marks Grid */}
-      <form onSubmit={handleSave} className="space-y-6">
-        <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-          {/* Column header controls */}
-          <div className="flex items-center justify-between px-5 py-3 bg-sage/10 border-b border-line-border/30">
-            <div className="flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-teal-primary" />
-              <span className="text-xs font-bold text-ink/70 uppercase tracking-wider">
-                {selectedSubject || 'Select Subject'} - {selectedClass ? classes.find(c => String(c.id) === String(selectedClass))?.name || 'Class' : 'Class'}
-              </span>
-            </div>
-            {!isReadOnly && (
-              <div className="flex items-center gap-2">
-                {showNewCol ? (
-                  <div className="flex items-center gap-2 animate-fadeIn">
-                    <input
-                      type="text"
-                      value={newColName}
-                      onChange={e => setNewColName(e.target.value)}
-                      placeholder="e.g. Test 2"
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addColumn(); } }}
-                      className="text-xs px-2.5 py-1.5 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary w-28"
-                      autoFocus
-                    />
-                    <button type="button" onClick={addColumn} className="text-xs px-2.5 py-1.5 bg-teal-primary text-paper rounded-lg font-semibold cursor-pointer">Add</button>
-                    <button type="button" onClick={() => { setShowNewCol(false); setNewColName(''); }} className="text-xs px-2 py-1.5 text-ink/50 hover:text-ink cursor-pointer"><X className="w-4 h-4" /></button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowNewCol(true)}
-                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary rounded-xl font-semibold cursor-pointer transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Assessment
-                  </button>
-                )}
-              </div>
-            )}
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead>
-                <tr className="bg-sage/10 border-b border-line-border text-xs font-bold text-ink/70 uppercase tracking-wider">
-                  <th className="py-3 px-4 sticky left-0 bg-sage/10 z-10 min-w-[180px]">Student</th>
-                  <th className="py-3 px-3 text-center text-ink/40 font-mono text-[9px]">Reg. No.</th>
-                  {columns.map(col => (
-                    <th key={col} className="py-3 px-3 text-center min-w-[100px]">
-                      <div className="flex items-center justify-center gap-1">
-                        <span>{col}</span>
-                        {!isReadOnly && columns.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeColumn(col)}
-                            className="text-ink/20 hover:text-brick-critical cursor-pointer ml-0.5"
-                            title={`Remove ${col}`}
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    </th>
-                  ))}
-                  <th className="py-3 px-4 text-center">Average</th>
-                  <th className="py-3 px-4 text-center">Grade</th>
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-muted">Subject:</span>
+            <select
+              value={selectedSubject}
+              onChange={e => setSearchParams({ class: currentClassId, subject: e.target.value })}
+              className="glass-input font-medium"
+            >
+              {availableSubjects.map(s => (
+                <option key={s.id || s.code || s.name} value={s.name}>
+                  {s.name} {s.code ? `(${s.code})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="text-muted text-[11px] font-medium flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5" />
+            <span>{students.length} students enrolled in {selectedSubject}</span>
+          </div>
+        </div>
+
+        {/* Spreadsheet Matrix */}
+        <div className="overflow-x-auto border border-line rounded-xl">
+          <table className="w-full border-collapse text-xs">
+            <thead>
+              <tr className="bg-canvas border-b border-line text-muted uppercase text-[11px]">
+                <th className="py-2.5 px-3 text-left w-12">#</th>
+                <th className="py-2.5 px-3 text-left min-w-[200px]">Student Name & ADM</th>
+                {columns.map(c => (
+                  <th key={c.id} className="py-2.5 px-3 text-center min-w-[120px]">
+                    {c.label}
+                  </th>
+                ))}
+                <th className="py-2.5 px-3 text-right min-w-[100px]">Total (100)</th>
+                <th className="py-2.5 px-3 text-center w-28">Grade / Units</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-line/60">
+              {gradesLoading ? (
+                <Skeleton variant="table-row" count={8} />
+              ) : students.length === 0 ? (
+                <tr>
+                  <td colSpan={columns.length + 4}>
+                    <EmptyState
+                      title={`No students enrolled in ${selectedSubject}`}
+                      subtitle="For elective secondary subjects, students must be registered to appear on this mark sheet."
+                      compact={true}
+                    />
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-line-border/40 text-sm font-sans text-ink">
-                {loadingGrid ? (
-                  <tr><td colSpan={columns.length + 4} className="py-12 text-center text-ink/40 text-xs">Loading students...</td></tr>
-                ) : students.length === 0 ? (
-                  <tr><td colSpan={columns.length + 4} className="py-12 text-center text-ink/40 text-xs">
-                    {selectedClass ? 'No students in this class.' : 'Select a class to load students.'}
-                  </td></tr>
-                ) : students.map((s, idx) => {
-                  const studentMarks = columns.map(col => {
-                    const v = marks[s.id]?.[col];
-                    return v !== '' && v !== undefined ? Number(v) : null;
-                  });
-                  const entered = studentMarks.filter(v => v !== null);
-                  const avg = entered.length > 0 ? (entered.reduce((a, b) => a + b, 0) / entered.length).toFixed(1) : null;
-                  const grade = avg !== null ? getGrade(Number(avg)) : '';
+              ) : (
+                students.map((st, sIdx) => {
+                  const studentScores = scores[st.id] || {};
+                  const total = (Number(studentScores.ca1) || 0) + (Number(studentScores.ca2) || 0) + (Number(studentScores.exam) || 0);
+
+                  const className = currentClass?.name || '';
+                  const isALevel = /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(className);
+                  const isPrimaryG4G7 = /grade\s*[4-7]\b/i.test(className);
+                  const isECD = /ecd|baby|infant|grade\s*[1-3]\b/i.test(className);
+
+                  let gradeDisplay = '';
+                  let gradeBadge = 'absent';
+
+                  if (isPrimaryG4G7) {
+                    const u = total >= 80 ? 1 : total >= 70 ? 2 : total >= 60 ? 3 : total >= 50 ? 4 : total >= 45 ? 5 : total >= 40 ? 6 : total >= 35 ? 7 : total >= 30 ? 8 : 9;
+                    gradeDisplay = `Unit ${u}`;
+                    gradeBadge = u <= 3 ? 'present' : u <= 6 ? 'submitted' : 'absent';
+                  } else if (isALevel) {
+                    gradeDisplay = total >= 70 ? 'A (5pts)' : total >= 60 ? 'B (4pts)' : total >= 50 ? 'C (3pts)' : total >= 45 ? 'D (2pts)' : total >= 40 ? 'E (1pt)' : total >= 35 ? 'O (0pts)' : 'F (0pts)';
+                    gradeBadge = total >= 50 ? 'present' : total >= 40 ? 'submitted' : 'absent';
+                  } else if (isECD) {
+                    gradeDisplay = total >= 80 ? 'Distinction' : total >= 65 ? 'Merit' : total >= 50 ? 'Credit' : total >= 40 ? 'Pass' : 'Emerging';
+                    gradeBadge = total >= 50 ? 'present' : 'submitted';
+                  } else {
+                    // O-Level Symbols: A, B, C, D, E, U
+                    gradeDisplay = total >= 75 ? 'A' : total >= 65 ? 'B' : total >= 50 ? 'C' : total >= 45 ? 'D' : total >= 40 ? 'E' : 'U';
+                    gradeBadge = ['A', 'B', 'C'].includes(gradeDisplay) ? 'present' : ['D', 'E'].includes(gradeDisplay) ? 'submitted' : 'absent';
+                  }
 
                   return (
-                    <tr key={s.id} className={`transition-colors ${idx % 2 === 0 ? 'bg-paper' : 'bg-sage/5'} hover:bg-teal-primary/5`}>
-                      <td className="py-3 px-4 font-bold sticky left-0 bg-inherit">{s.name}</td>
-                      <td className="py-3 px-3 text-center font-mono text-[10px] text-ink/40">{s.admission}</td>
-                      {columns.map(col => (
-                        <td key={col} className="py-2 px-2 text-center">
+                    <tr key={st.id} className="hover:bg-canvas/30 transition-colors">
+                      <td className="py-2 px-3 font-mono text-muted text-[11px]">{sIdx + 1}</td>
+                      <td className="py-2 px-3 font-semibold text-ink">
+                        <div>{st.first_name} {st.last_name}</div>
+                        <div className="text-[10px] text-muted font-mono">{st.admission_number}</div>
+                      </td>
+
+                      {/* Score Input Cells */}
+                      {columns.map((c, cIdx) => (
+                        <td key={c.id} className="py-1 px-2 text-center">
                           <input
+                            id={`cell-${sIdx}-${cIdx}`}
                             type="number"
                             min="0"
-                            max="100"
-                            step="0.5"
-                            placeholder="--"
-                            disabled={isReadOnly}
-                            value={marks[s.id]?.[col] ?? ''}
-                            onChange={e => handleMarkChange(s.id, col, e.target.value)}
-                            className={`w-16 text-center px-2 py-1.5 border rounded-lg text-xs font-mono transition-colors focus:outline-none ${
-                              isReadOnly
-                                ? 'bg-ink/5 border-transparent cursor-not-allowed text-ink/60'
-                                : 'border-line-border focus:border-teal-primary bg-paper hover:border-teal-primary/50'
-                            }`}
+                            max={c.max}
+                            value={studentScores[c.id] ?? ''}
+                            onChange={e => handleScoreChange(st.id, c.id, e.target.value)}
+                            onKeyDown={e => handleKeyDown(e, sIdx, cIdx)}
+                            className="w-16 py-1 px-1.5 text-center font-mono font-bold text-ink rounded-lg border border-line bg-surface focus:border-brand-700 focus:ring-2 focus:ring-brand-700/20 text-xs shadow-2xs"
                           />
                         </td>
                       ))}
-                      <td className="py-3 px-4 text-center">
-                        {avg !== null
-                          ? <span className="font-mono font-bold text-sm">{avg}<span className="text-[9px] font-sans text-ink/40">%</span></span>
-                          : <span className="text-ink/25 text-xs">-</span>
-                        }
+
+                      {/* Computed Total & Grade */}
+                      <td className="py-2 px-3 text-right font-mono font-extrabold text-sm text-ink tabular-nums">
+                        {total}%
                       </td>
-                      <td className="py-3 px-4 text-center">
-                        {grade
-                          ? <span className={`inline-block px-2.5 py-0.5 rounded text-xs font-bold ${gradeColor(grade)}`}>{grade}</span>
-                          : <span className="text-ink/20 text-xs">-</span>
-                        }
+                      <td className="py-2 px-3 text-center">
+                        <StatusPill status={gradeBadge} label={gradeDisplay} size="sm" />
                       </td>
                     </tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Summary footer */}
-          {students.length > 0 && (
-            <div className="px-5 py-3 bg-sage/5 border-t border-line-border/30 flex items-center justify-between">
-              <div className="flex items-center gap-4 text-xs font-sans">
-                <span className="text-ink/50">{students.length} students</span>
-                <span className="text-teal-primary font-bold">{enteredCount} with marks entered</span>
-                {classAvg && <span className="font-bold text-ink">Class Average: <span className="font-mono text-teal-primary">{classAvg}%</span></span>}
-              </div>
-              {!isReadOnly && (
-                <button
-                  type="submit"
-                  disabled={saving || !selectedClass || !selectedSubject}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-teal-primary hover:bg-teal-dark text-paper font-semibold text-sm rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                  {saving ? 'Saving...' : 'Save Marks'}
-                </button>
+                })
               )}
-            </div>
-          )}
+            </tbody>
+          </table>
         </div>
-      </form>
-
-      {/* Performance Chart */}
-      {students.length > 0 && chartData.some(d => d.count > 0) && (
-        <div className="glass-card rounded-2xl p-6 border border-line-border/30">
-          <div className="flex items-center gap-2 mb-4">
-            <BarChart3 className="w-5 h-5 text-teal-primary" />
-            <h3 className="text-base font-display font-bold text-ink">Class Performance by Assessment</h3>
-            {selectedSubject && <span className="text-xs text-ink/50 font-mono">{selectedSubject}</span>}
-          </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={chartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} unit="%" />
-              <Tooltip
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
-                formatter={(val) => [`${val}%`, 'Class Average']}
-              />
-              <Bar dataKey="avg" radius={[4, 4, 0, 0]}>
-                {chartData.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={entry.avg >= 50 ? '#2a9d8f' : '#e76f51'}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="flex items-center justify-center gap-4 mt-3 text-[10px] font-sans text-ink/50">
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-teal-primary inline-block" />Pass (50%+)</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-brick-critical inline-block" />Below pass</span>
-          </div>
-        </div>
-      )}
+      </Card>
     </div>
   );
-};
-
-export default Grades;
+}

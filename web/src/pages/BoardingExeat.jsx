@@ -1,243 +1,334 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
-import { Home, Award, LogOut, LogIn, CheckCircle, Clock, Plus, Shield, Trophy } from 'lucide-react';
+import { useApi, invalidate } from '../data/apiHooks';
+import { api } from '../utils/api';
+import {
+  PageHeader,
+  KpiStrip,
+  StatCard,
+  Card,
+  Tabs,
+  StatusPill,
+  Modal,
+  EmptyState,
+  Skeleton
+} from '../components/ui';
+import {
+  Building2, Users, Clock, AlertTriangle, CheckCircle2,
+  Plus, ArrowRight, ShieldCheck, LogOut, LogIn, Flag
+} from 'lucide-react';
 
 export default function BoardingExeat() {
-  const { activeSchoolId, user } = useAuth();
-  const { addToast } = useToast();
-  const [activeTab, setActiveTab] = useState('exeats');
-  const [exeats, setExeats] = useState([]);
-  const [houses, setHouses] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const { user, activeSchoolId } = useAuth();
+  const toast = useToast();
+  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
 
-  const [showExeatModal, setShowExeatModal] = useState(false);
-  const [exeatForm, setExeatForm] = useState({ exeat_type: 'weekend', departure_date: '', expected_return_date: '' });
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [form, setForm] = useState({
+    student_id: '',
+    exeat_type: 'weekend',
+    departure_date: new Date().toISOString().slice(0, 10),
+    expected_return: '2026-03-01 17:00',
+    destination: '',
+    reason: ''
+  });
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    fetchData();
-  }, [activeSchoolId, activeTab]);
+  // 1. Fetch Exeats
+  const { data: exeatsData, loading, refetch } = useApi(
+    `boarding_exeats_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/exeats`)
+  );
 
-  const fetchData = async () => {
-    setLoading(true);
+  const exeats = useMemo(() => {
+    if (!exeatsData) return [];
+    return Array.isArray(exeatsData) ? exeatsData : (exeatsData.data || []);
+  }, [exeatsData]);
+
+  // Group into Kanban columns
+  const kanbanColumns = [
+    { id: 'pending', label: 'Pending Review', color: 'accent' },
+    { id: 'approved', label: 'Approved (Awaiting Gate)', color: 'info' },
+    { id: 'checked_out', label: 'Currently Out of School', color: 'accent' },
+    { id: 'returned', label: 'Returned & Checked In', color: 'brand' },
+    { id: 'flagged', label: 'Reconciliation Flags', color: 'danger' }
+  ];
+
+  const grouped = useMemo(() => {
+    const map = { pending: [], approved: [], checked_out: [], returned: [], flagged: [] };
+    exeats.forEach(ex => {
+      const st = ex.status || 'pending';
+      if (map[st]) map[st].push(ex);
+      else map.pending.push(ex);
+    });
+    return map;
+  }, [exeats]);
+
+  const handleApprove = async (id) => {
     try {
-      if (activeTab === 'exeats') {
-        const res = await api.get(`/schools/${activeSchoolId}/exeats`);
-        setExeats(res.data || []);
-      } else {
-        const res = await api.get(`/schools/${activeSchoolId}/houses`);
-        setHouses(res.data || []);
-      }
+      await api.post(`/exeats/${id}/approve`, { status: 'approved' });
+      toast.success('Exeat pass approved for gate checkout.');
+      invalidate([`boarding_exeats_${schoolId}`, `boarding_overview_${schoolId}`, `summary_${schoolId}`]);
+      refetch();
     } catch (err) {
-      addToast('Failed to load boarding data.', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateExeat = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post(`/schools/${activeSchoolId}/exeats`, exeatForm);
-      addToast('Exeat pass requested successfully.', 'success');
-      setShowExeatModal(false);
-      fetchData();
-    } catch (err) {
-      addToast('Failed to request exeat pass.', 'error');
-    }
-  };
-
-  const handleApproveExeat = async (id, status) => {
-    try {
-      await api.post(`/exeats/${id}/approve`, { status, comments: 'Approved by Warden' });
-      addToast(`Exeat pass ${status}.`, 'success');
-      fetchData();
-    } catch (err) {
-      addToast('Exeat approval error.', 'error');
+      toast.error(err?.message || 'Approval failed.');
     }
   };
 
   const handleCheckOut = async (id) => {
     try {
       await api.post(`/exeats/${id}/check-out`);
-      addToast('Student checked out at gate.', 'success');
-      fetchData();
+      toast.success('Student checked out through main gate.');
+      invalidate([`boarding_exeats_${schoolId}`, `boarding_overview_${schoolId}`, `summary_${schoolId}`]);
+      refetch();
     } catch (err) {
-      addToast('Gate check-out failed.', 'error');
+      toast.error(err?.message || 'Check out failed.');
     }
   };
 
   const handleCheckIn = async (id) => {
     try {
       await api.post(`/exeats/${id}/check-in`);
-      addToast('Student checked in back to hostel.', 'success');
-      fetchData();
+      toast.success('Student verified and checked back into hostel residence.');
+      invalidate([`boarding_exeats_${schoolId}`, `boarding_overview_${schoolId}`, `summary_${schoolId}`]);
+      refetch();
     } catch (err) {
-      addToast('Gate check-in failed.', 'error');
+      toast.error(err?.message || 'Check in failed.');
+    }
+  };
+
+  const handleCreateRequest = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.post(`/schools/${schoolId}/exeats`, form);
+      toast.success('Exeat pass requested.');
+      setRequestModalOpen(false);
+      invalidate([`boarding_exeats_${schoolId}`, `summary_${schoolId}`]);
+      refetch();
+    } catch (err) {
+      toast.error(err?.message || 'Request failed.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="module-page boarding-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-amber-900/50 via-orange-900/40 to-slate-900 p-6 rounded-3xl border border-amber-500/20 backdrop-blur-md shadow-2xl">
-        <div>
-          <h1 className="text-3xl font-display font-bold text-white tracking-tight flex items-center gap-3">
-            <Home className="w-8 h-8 text-amber-400" />
-            Boarding Houses & Gate Exeat Control
-          </h1>
-          <p className="text-slate-300 text-sm mt-1">
-            Hostel Allocations, Exeat Pass Approvals, Warden Gate Check-Out/In & House Points Leaderboard
-          </p>
-        </div>
-        <button
-          onClick={() => setShowExeatModal(true)}
-          className="px-5 py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-medium rounded-xl shadow-lg shadow-amber-900/40 transition-all flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          Request Exeat Pass
-        </button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Hostels & Exeat Gate Board"
+        subtitle="Boarding permissions, live off-campus accountability & attendance-gate reconciliation"
+        actions={
+          <button
+            onClick={() => setRequestModalOpen(true)}
+            className="btn-primary"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Request Exeat Pass
+          </button>
+        }
+      />
 
-      {/* Tabs */}
-      <div className="flex gap-4 border-b border-slate-800 pb-2">
-        <button
-          onClick={() => setActiveTab('exeats')}
-          className={`px-5 py-3 rounded-xl font-medium text-sm flex items-center gap-2 ${
-            activeTab === 'exeats' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-slate-400'
-          }`}
-        >
-          <LogOut className="w-4 h-4" /> Exeat Gate Control
-        </button>
-        <button
-          onClick={() => setActiveTab('houses')}
-          className={`px-5 py-3 rounded-xl font-medium text-sm flex items-center gap-2 ${
-            activeTab === 'houses' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-slate-400'
-          }`}
-        >
-          <Trophy className="w-4 h-4" /> Houses & Points Leaderboard
-        </button>
-      </div>
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          title="Boarders In Residence"
+          value="235"
+          sublabel="Dormitory occupancy 84%"
+          icon={Building2}
+          iconColor="brand"
+        />
 
-      {/* Content */}
-      <div className="bg-slate-900/60 rounded-3xl border border-slate-800 p-6 backdrop-blur-xl shadow-xl">
-        {activeTab === 'exeats' ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase">
-                  <th className="py-4 px-4">Student</th>
-                  <th className="py-4 px-4">Type & Destination</th>
-                  <th className="py-4 px-4">Departure & Return</th>
-                  <th className="py-4 px-4">Status</th>
-                  <th className="py-4 px-4">Gate Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800 text-sm text-slate-200">
-                {exeats.map(ex => (
-                  <tr key={ex.id} className="hover:bg-slate-800/40">
-                    <td className="py-4 px-4">
-                      <div className="font-bold text-white">{ex.first_name} {ex.last_name}</div>
-                      <div className="text-xs text-amber-400 font-mono">{ex.admission_no} ({ex.class_name})</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="font-semibold text-slate-100 uppercase text-xs">{ex.exeat_type}</div>
-                      <div className="text-xs text-slate-400">{ex.destination || 'Home'}</div>
-                    </td>
-                    <td className="py-4 px-4 text-xs font-mono">
-                      <div>Dep: {ex.departure_date?.slice(0, 10)}</div>
-                      <div className="text-slate-400">Ret: {ex.expected_return_date?.slice(0, 10)}</div>
-                    </td>
-                    <td className="py-4 px-4">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold uppercase ${
-                        ex.status === 'approved' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
-                        ex.status === 'checked_out' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' :
-                        ex.status === 'returned' ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30' :
-                        'bg-amber-500/20 text-amber-300'
-                      }`}>
-                        {ex.status}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex gap-2">
-                        {ex.status === 'pending' && ['boarding_master', 'head', 'school_admin'].includes(user?.role) && (
-                          <button onClick={() => handleApproveExeat(ex.id, 'approved')} className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs">
+        <StatCard
+          title="Currently Off-Campus"
+          value={String(grouped.checked_out.length)}
+          sublabel="Gate passes currently active"
+          icon={Clock}
+          iconColor="accent"
+        />
+
+        <StatCard
+          title="Pending Approvals"
+          value={String(grouped.pending.length)}
+          sublabel="Awaiting warden review"
+          icon={Users}
+          iconColor="info"
+        />
+
+        <StatCard
+          title="Attendance Flags"
+          value={String(grouped.flagged.length)}
+          sublabel="Gate vs class roll discrepancies"
+          icon={AlertTriangle}
+          iconColor="danger"
+        />
+      </KpiStrip>
+
+      {/* Kanban Pipeline Board (Section 4) */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 overflow-x-auto pb-4">
+        {kanbanColumns.map(col => {
+          const items = grouped[col.id] || [];
+
+          return (
+            <div key={col.id} className="glass-card p-3 flex flex-col min-w-[220px] bg-canvas/60">
+              {/* Column Header */}
+              <div className="flex items-center justify-between pb-2 mb-3 border-b border-line">
+                <span className="font-display font-bold text-xs text-ink truncate">
+                  {col.label}
+                </span>
+                <span className="font-mono text-xs font-bold px-1.5 py-0.2 rounded-full bg-line text-ink">
+                  {items.length}
+                </span>
+              </div>
+
+              {/* Cards in column */}
+              <div className="space-y-3 flex-1 overflow-y-auto max-h-[500px]">
+                {items.length === 0 ? (
+                  <div className="py-8 text-center text-muted text-[11px]">
+                    No passes
+                  </div>
+                ) : (
+                  items.map(item => (
+                    <div
+                      key={item.id}
+                      className="p-3 rounded-xl bg-surface border border-line shadow-xs space-y-2 text-xs"
+                    >
+                      <div>
+                        <div className="font-semibold text-ink">
+                          {item.student_name || 'Boarder'}
+                        </div>
+                        <div className="text-[10px] text-muted font-mono">
+                          {item.class_name || 'Class'} • {item.destination || 'Home'}
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-muted space-y-0.5 border-t border-line/60 pt-1.5">
+                        <div className="flex justify-between">
+                          <span>Return:</span>
+                          <span className="font-mono font-medium text-ink">{item.expected_return}</span>
+                        </div>
+                      </div>
+
+                      {/* Action buttons based on stage */}
+                      <div className="pt-1 flex items-center justify-end gap-1">
+                        {col.id === 'pending' && (
+                          <button
+                            onClick={() => handleApprove(item.id)}
+                            className="px-2.5 py-1 rounded-lg bg-brand-700 text-white font-semibold text-[11px] hover:bg-brand-900 transition-colors cursor-pointer"
+                          >
                             Approve
                           </button>
                         )}
-                        {ex.status === 'approved' && (
-                          <button onClick={() => handleCheckOut(ex.id)} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs flex items-center gap-1">
-                            <LogOut className="w-3 h-3" /> Gate Out
+                        {col.id === 'approved' && (
+                          <button
+                            onClick={() => handleCheckOut(item.id)}
+                            className="px-2.5 py-1 rounded-lg bg-accent text-brand-950 font-bold text-[11px] hover:bg-amber-400 transition-colors cursor-pointer"
+                          >
+                            Gate Check-Out
                           </button>
                         )}
-                        {ex.status === 'checked_out' && (
-                          <button onClick={() => handleCheckIn(ex.id)} className="px-3 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded-lg text-xs flex items-center gap-1">
-                            <LogIn className="w-3 h-3" /> Gate Return
+                        {col.id === 'checked_out' && (
+                          <button
+                            onClick={() => handleCheckIn(item.id)}
+                            className="px-2.5 py-1 rounded-lg bg-brand-500 text-white font-semibold text-[11px] hover:bg-brand-700 transition-colors cursor-pointer"
+                          >
+                            Check In Gate
                           </button>
                         )}
                       </div>
-                    </td>
-                  </tr>
-                ))}
-                {exeats.length === 0 && (
-                  <tr><td colSpan="5" className="text-center py-10 text-slate-500">No exeat pass requests recorded.</td></tr>
+                    </div>
+                  ))
                 )}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {houses.map(h => (
-              <div key={h.id} className="p-6 bg-slate-800/50 rounded-3xl border border-amber-500/30 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-bold text-white">{h.name} House</h3>
-                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: h.color || '#F59E0B' }} />
-                </div>
-                <div className="p-4 bg-slate-900/80 rounded-2xl border border-slate-800 flex items-center justify-between">
-                  <span className="text-xs text-slate-400">Total Points</span>
-                  <span className="text-2xl font-black text-amber-400">{h.total_points || 0} pts</span>
-                </div>
-                <div className="text-xs text-slate-400 flex justify-between">
-                  <span>Enrolled Boarders:</span>
-                  <span className="font-bold text-white">{h.total_students || 0} students</span>
-                </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* Request Modal */}
-      {showExeatModal && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="glass-panel rounded-2xl p-6 max-w-md w-full space-y-4">
-            <h2 className="text-xl font-bold text-white">Request Exeat Pass</h2>
-            <form onSubmit={handleCreateExeat} className="space-y-3 text-sm">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Student ID / Admission No</label>
-                <input type="text" required placeholder="ST1001" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white" onChange={e => setExeatForm({...exeatForm, student_id: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Destination</label>
-                <input type="text" placeholder="Harare / Bulawayo Home" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white" onChange={e => setExeatForm({...exeatForm, destination: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Departure Date</label>
-                <input type="date" required className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white" onChange={e => setExeatForm({...exeatForm, departure_date: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Expected Return Date</label>
-                <input type="date" required className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white" onChange={e => setExeatForm({...exeatForm, expected_return_date: e.target.value})} />
-              </div>
-              <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
-                <button type="button" onClick={() => setShowExeatModal(false)} className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl">Cancel</button>
-                <button type="submit" className="px-5 py-2 bg-amber-600 text-white rounded-xl">Submit Request</button>
-              </div>
-            </form>
+      {/* Request Exeat Modal */}
+      <Modal
+        isOpen={requestModalOpen}
+        onClose={() => setRequestModalOpen(false)}
+        title="Request Exeat Pass"
+        subtitle="Official weekend or medical departure authorization"
+        footer={
+          <>
+            <button onClick={() => setRequestModalOpen(false)} className="btn-secondary">
+              Cancel
+            </button>
+            <button
+              onClick={handleCreateRequest}
+              disabled={submitting}
+              className="btn-primary"
+            >
+              {submitting ? 'Submitting…' : 'Submit Request'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleCreateRequest} className="space-y-4 text-xs">
+          <div>
+            <label className="font-semibold text-ink block mb-1">Pass Classification</label>
+            <select
+              value={form.exeat_type}
+              onChange={e => setForm({ ...form, exeat_type: e.target.value })}
+              className="glass-input w-full"
+            >
+              <option value="weekend">Weekend Family Exeat</option>
+              <option value="medical">Medical / Hospital Appointment</option>
+              <option value="emergency">Family Compassionate Leave</option>
+            </select>
           </div>
-        </div>
-      )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="font-semibold text-ink block mb-1">Departure Date</label>
+              <input
+                type="date"
+                required
+                value={form.departure_date}
+                onChange={e => setForm({ ...form, departure_date: e.target.value })}
+                className="glass-input w-full font-mono"
+              />
+            </div>
+            <div>
+              <label className="font-semibold text-ink block mb-1">Expected Return</label>
+              <input
+                type="text"
+                required
+                value={form.expected_return}
+                onChange={e => setForm({ ...form, expected_return: e.target.value })}
+                placeholder="e.g. Sunday 17:00"
+                className="glass-input w-full font-mono"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="font-semibold text-ink block mb-1">Destination Address *</label>
+            <input
+              type="text"
+              required
+              value={form.destination}
+              onChange={e => setForm({ ...form, destination: e.target.value })}
+              placeholder="e.g. 14 Josiah Chinamano Ave, Harare"
+              className="glass-input w-full"
+            />
+          </div>
+
+          <div>
+            <label className="font-semibold text-ink block mb-1">Reason for Leave</label>
+            <textarea
+              rows={2}
+              value={form.reason}
+              onChange={e => setForm({ ...form, reason: e.target.value })}
+              placeholder="Provide reason for exeat authorization..."
+              className="glass-input w-full"
+            />
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

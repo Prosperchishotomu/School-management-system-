@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
+const { broadcastInvalidation } = require('../services/realtime');
 
 const MESSAGE_STAFF_ROLES = new Set([
   'super_admin', 'school_admin', 'head', 'head_teacher', 'deputy_head', 'hod',
@@ -41,9 +42,9 @@ async function ensureStaffSubjectsTable() {
     await query(`
       CREATE TABLE IF NOT EXISTS staff_subjects (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        staff_id VARCHAR(8) NOT NULL,
-        school_id VARCHAR(8) NOT NULL,
-        subject_id INT NOT NULL,
+        staff_id VARCHAR(50) NOT NULL,
+        school_id VARCHAR(50) NOT NULL,
+        subject_id VARCHAR(50) NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_staff_subject (staff_id, subject_id),
         FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE
@@ -342,8 +343,8 @@ router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_
     const id = 'USR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
     const hash = bcrypt.hashSync(password, 10);
     await query(
-      `INSERT INTO users (id, school_id, username, email, password_hash, role, student_id, phone, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [id, schoolId, username.trim(), email || null, hash, role, student_id || null, phone || null]
+      `INSERT INTO users (id, school_id, username, email, password_hash, role, student_id, phone, name, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [id, schoolId, username.trim(), email || null, hash, role, student_id || null, phone || null, name || null]
     );
 
     // If creating a parent, link the user to their guardian record
@@ -364,15 +365,31 @@ router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_
       }
     }
 
-    const created = await queryOne('SELECT id, username, email, role, status, created_at, phone FROM users WHERE id = ?', [id]);
+    // If creating a teacher or school_admin/principal, ensure staff profile exists
+    if (role === 'teacher' || role === 'school_admin') {
+      try {
+        const staffName = name || username.trim();
+        const roleTitle = role === 'school_admin' ? 'Principal' : 'Teacher';
+        const existingStaff = await queryOne('SELECT id FROM staff WHERE user_id = ? OR (school_id = ? AND email IS NOT NULL AND LOWER(email) = LOWER(?))', [id, schoolId, email || '']);
+        if (!existingStaff) {
+          const staffId = 'STF' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+          await query(
+            'INSERT INTO staff (id, school_id, user_id, name, email, phone, role_title, status) VALUES (?, ?, ?, ?, ?, ?, ?, "active")',
+            [staffId, schoolId, id, staffName, email || null, phone || null, roleTitle]
+          );
+        }
+      } catch (staffErr) {
+        console.warn('Staff profile sync warning:', staffErr.message);
+      }
+    }
+
+    const created = await queryOne('SELECT id, username, email, role, status, created_at, phone, name FROM users WHERE id = ?', [id]);
     return res.status(201).json({ data: created, credentials: { username: username.trim(), password } });
   } catch (err) {
     console.error('Create user error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create user account.' } });
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message || 'Failed to create user account.' } });
   }
 });
-
-
 
 router.delete('/schools/:schoolId/users/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
@@ -383,19 +400,22 @@ router.delete('/schools/:schoolId/users/:id', authenticateToken, requireRoles('s
   }
 });
 
-router.post('/schools/:schoolId/users/:id/reset-password', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+const handleResetPassword = async (req, res) => {
   try {
-    const { new_password } = req.body;
-    if (!new_password) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'New password is required.' } });
+    const newPassword = req.body.password || req.body.new_password;
+    if (!newPassword) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Password is required.' } });
     }
-    const hash = bcrypt.hashSync(new_password, 10);
+    const hash = bcrypt.hashSync(newPassword, 10);
     await query('UPDATE users SET password_hash = ? WHERE id = ? AND school_id = ?', [hash, req.params.id, req.params.schoolId]);
     return res.json({ data: { message: 'Password reset successfully.' } });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to reset password.' } });
   }
-});
+};
+
+router.post('/schools/:schoolId/users/:id/reset-password', authenticateToken, requireRoles('school_admin', 'super_admin'), handleResetPassword);
+router.patch('/schools/:schoolId/users/:id/password', authenticateToken, requireRoles('school_admin', 'super_admin'), handleResetPassword);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH — RESET PASSWORD (public reset token flow)
@@ -879,16 +899,27 @@ router.get('/schools/:schoolId/leave-requests', authenticateToken, async (req, r
         );
       }
     } else if (role === 'parent') {
-      const guardian = await queryOne('SELECT id FROM guardians WHERE user_id = ?', [userId]);
-      if (guardian) {
-        const kids = await query('SELECT student_id FROM student_guardians WHERE guardian_id = ?', [guardian.id]);
-        const kidIds = kids.map(k => k.student_id);
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [userId, req.user.email || '', req.user.phone || '']
+      );
+      const guardianIds = guardianRows.map(g => g.id);
+      if (guardianIds.length > 0) {
+        const gPlaceholders = guardianIds.map(() => '?').join(',');
+        const kids = await query(`SELECT student_id FROM student_guardians WHERE guardian_id IN (${gPlaceholders})`, guardianIds);
+        const kidIds = [...new Set(kids.map(k => k.student_id))];
         if (kidIds.length > 0) {
           const placeholders = kidIds.map(() => '?').join(',');
           requests = await query(
-            `SELECT lr.*, CONCAT(st.first_name, ' ', st.last_name) as staff_name, u.username as approver_name
+            `SELECT lr.*, CONCAT(st.first_name, ' ', st.last_name) as staff_name,
+                    st.admission_number, c.name as class_name,
+                    u.username as approver_name
              FROM leave_requests lr
              LEFT JOIN students st ON lr.student_id = st.id
+             LEFT JOIN classes c ON st.class_id = c.id
              LEFT JOIN users u ON lr.reviewed_by = u.id
              WHERE lr.school_id = ? AND lr.student_id IN (${placeholders})
              ORDER BY lr.created_at DESC`,
@@ -901,10 +932,12 @@ router.get('/schools/:schoolId/leave-requests', authenticateToken, async (req, r
       requests = await query(
         `SELECT lr.*, 
                 COALESCE(stf.name, CONCAT(st.first_name, ' ', st.last_name)) as staff_name, 
+                st.admission_number, c.name as class_name,
                 u.username as approver_name
          FROM leave_requests lr
          LEFT JOIN staff stf ON lr.staff_id = stf.id
          LEFT JOIN students st ON lr.student_id = st.id
+         LEFT JOIN classes c ON st.class_id = c.id
          LEFT JOIN users u ON lr.reviewed_by = u.id
          WHERE lr.school_id = ?
          ORDER BY lr.created_at DESC`,
@@ -922,29 +955,137 @@ router.get('/schools/:schoolId/leave-requests', authenticateToken, async (req, r
 router.post('/schools/:schoolId/leave-requests', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { staff_id, leave_type, start_date, end_date, reason } = req.body;
-    if (!staff_id || !start_date || !end_date) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Staff ID, start date, and end date are required.' } });
+    const { role, id: userId } = req.user;
+    const {
+      student_id, staff_id, leave_type, request_type,
+      start_date, end_date, reason, attachment_url, audio_url
+    } = req.body;
+
+    if (!start_date || !end_date || (!reason?.trim() && !audio_url)) {
+      return res.status(400).json({
+        error: { code: 'VALIDATION_ERROR', message: 'Start date, end date, and reason or audio note are required.' }
+      });
     }
+
+    let finalStudentId = null;
+    let finalStaffId = null;
+    const finalType = request_type || leave_type || (role === 'parent' ? 'student_absence' : 'staff_leave');
+
+    if (role === 'parent') {
+      if (!student_id) {
+        return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Please select a child for this absence notice.' } });
+      }
+      finalStudentId = student_id;
+    } else {
+      if (staff_id) {
+        finalStaffId = staff_id;
+      } else {
+        const staff = await queryOne('SELECT id FROM staff WHERE user_id = ?', [userId]);
+        finalStaffId = staff?.id || null;
+      }
+      finalStudentId = student_id || null;
+    }
+
     const id = 'LVR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+    const initialThread = [
+      {
+        id: 'msg_init',
+        sender_id: userId,
+        sender_role: role,
+        sender_name: req.user.username || 'Parent / Guardian',
+        text: reason || 'Audio notice or medical document attached',
+        attachment_url: attachment_url || null,
+        audio_url: audio_url || null,
+        timestamp: new Date().toISOString()
+      }
+    ];
+
     await query(
-      `INSERT INTO leave_requests (id, school_id, staff_id, request_type, start_date, end_date, reason, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [id, schoolId, staff_id, leave_type || 'staff_leave', start_date, end_date, reason || null]
+      `INSERT INTO leave_requests (id, school_id, staff_id, student_id, request_type, start_date, end_date, reason, attachment_url, audio_url, chat_thread, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [id, schoolId, finalStaffId, finalStudentId, finalType, start_date, end_date, reason || null, attachment_url || null, audio_url || null, JSON.stringify(initialThread)]
     );
-    const created = await queryOne('SELECT * FROM leave_requests WHERE id = ?', [id]);
+
+    const created = await queryOne(
+      `SELECT lr.*, COALESCE(CONCAT(st.first_name, ' ', st.last_name), stf.name) as staff_name,
+              st.admission_number, c.name as class_name
+       FROM leave_requests lr
+       LEFT JOIN students st ON lr.student_id = st.id
+       LEFT JOIN classes c ON st.class_id = c.id
+       LEFT JOIN staff stf ON lr.staff_id = stf.id
+       WHERE lr.id = ?`,
+      [id]
+    );
+
     return res.status(201).json({ data: created });
   } catch (err) {
+    console.error('Submit leave request error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to submit leave request.' } });
+  }
+});
+
+router.post('/schools/:schoolId/leave-requests/:id/chat', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { text, audio_url, attachment_url } = req.body;
+    if (!text?.trim() && !audio_url && !attachment_url) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Message content, audio, or attachment required.' } });
+    }
+
+    const existing = await queryOne('SELECT * FROM leave_requests WHERE id = ? AND school_id = ?', [id, schoolId]);
+    if (!existing) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Leave request not found.' } });
+    }
+
+    let thread = [];
+    try {
+      thread = typeof existing.chat_thread === 'string' ? JSON.parse(existing.chat_thread) : (existing.chat_thread || []);
+    } catch (_) { thread = []; }
+
+    const newMsg = {
+      id: 'msg_' + Date.now(),
+      sender_id: req.user.id,
+      sender_role: req.user.role,
+      sender_name: req.user.username || 'User',
+      text: text?.trim() || '',
+      attachment_url: attachment_url || null,
+      audio_url: audio_url || null,
+      timestamp: new Date().toISOString()
+    };
+
+    thread.push(newMsg);
+    await query('UPDATE leave_requests SET chat_thread = ? WHERE id = ?', [JSON.stringify(thread), id]);
+    return res.json({ data: { message: 'Chat message posted', thread } });
+  } catch (err) {
+    console.error('Leave request chat error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to post message to consultation thread.' } });
   }
 });
 
 router.patch('/schools/:schoolId/leave-requests/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { status, reviewer_comment } = req.body;
-    await query(
-      `UPDATE leave_requests SET status = COALESCE(?, status), reviewer_comment = COALESCE(?, reviewer_comment), reviewed_by = ? WHERE id = ? AND school_id = ?`,
-      [status, reviewer_comment, req.user.id, req.params.id, req.params.schoolId]
-    );
+    const existing = await queryOne('SELECT * FROM leave_requests WHERE id = ? AND school_id = ?', [req.params.id, req.params.schoolId]);
+    if (existing) {
+      let thread = [];
+      try {
+        thread = typeof existing.chat_thread === 'string' ? JSON.parse(existing.chat_thread) : (existing.chat_thread || []);
+      } catch (_) { thread = []; }
+      if (reviewer_comment || status) {
+        thread.push({
+          id: 'admin_' + Date.now(),
+          sender_id: req.user.id,
+          sender_role: req.user.role,
+          sender_name: 'School Administration',
+          text: reviewer_comment ? `[Status: ${status?.toUpperCase() || 'UPDATED'}] ${reviewer_comment}` : `Status updated to ${status?.toUpperCase()}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+      await query(
+        `UPDATE leave_requests SET status = COALESCE(?, status), reviewer_comment = COALESCE(?, reviewer_comment), reviewed_by = ?, chat_thread = ? WHERE id = ? AND school_id = ?`,
+        [status, reviewer_comment, req.user.id, JSON.stringify(thread), req.params.id, req.params.schoolId]
+      );
+    }
     const updated = await queryOne('SELECT * FROM leave_requests WHERE id = ?', [req.params.id]);
     return res.json({ data: updated });
   } catch (err) {
@@ -1037,12 +1178,28 @@ router.delete('/schools/:schoolId/exams/:id', authenticateToken, requireRoles('s
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/schools/:schoolId/enquiries', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    const enquiries = await query(
-      'SELECT * FROM enquiries WHERE school_id = ? ORDER BY created_at DESC',
-      [req.params.schoolId]
-    );
-    return res.json({ data: enquiries });
+    const { schoolId } = req.params;
+    const { status } = req.query;
+    let sql = 'SELECT * FROM enquiries WHERE school_id = ?';
+    const params = [schoolId];
+    if (status && status !== 'all') {
+      sql += ' AND status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY created_at DESC';
+    const enquiries = await query(sql, params);
+    const formatted = (enquiries || []).map(e => ({
+      ...e,
+      applicant_name: e.student_name || e.applicant_name || 'Prospective Student',
+      guardian_name: e.parent_name || e.guardian_name || 'Parent/Guardian',
+      guardian_phone: e.contact_phone || e.guardian_phone || '',
+      guardian_email: e.contact_email || e.guardian_email || '',
+      grade_applying_for: e.grade_applying || e.grade_applying_for || 'Form 1',
+      notes: e.message || e.notes || e.admin_notes || ''
+    }));
+    return res.json({ data: formatted });
   } catch (err) {
+    console.error('Get enquiries error:', err);
     return res.json({ data: [] });
   }
 });
@@ -1050,19 +1207,36 @@ router.get('/schools/:schoolId/enquiries', authenticateToken, requireRoles('scho
 router.post('/schools/:schoolId/enquiries', async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { parent_name, student_name, contact_phone, contact_email, grade_applying, message } = req.body;
+    const parent_name = (req.body.parent_name || req.body.guardian_name || '').trim();
+    const student_name = (req.body.student_name || req.body.applicant_name || '').trim();
+    const contact_phone = (req.body.contact_phone || req.body.guardian_phone || req.body.phone || '').trim();
+    const contact_email = (req.body.contact_email || req.body.guardian_email || req.body.email || '').trim();
+    const grade_applying = (req.body.grade_applying || req.body.grade_applying_for || req.body.grade || 'Form 1').trim();
+    const message = (req.body.message || req.body.notes || '').trim();
+
     if (!parent_name || !contact_phone) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Parent name and contact are required.' } });
     }
     const id = 'ENQ' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
     await query(
       `INSERT INTO enquiries (id, school_id, parent_name, student_name, contact_phone, contact_email, grade_applying, message, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new')`,
       [id, schoolId, parent_name, student_name || null, contact_phone, contact_email || null, grade_applying || null, message || null]
     );
     const created = await queryOne('SELECT * FROM enquiries WHERE id = ?', [id]);
-    return res.status(201).json({ data: created });
+    return res.status(201).json({
+      data: {
+        ...created,
+        applicant_name: created?.student_name || student_name,
+        guardian_name: created?.parent_name || parent_name,
+        guardian_phone: created?.contact_phone || contact_phone,
+        guardian_email: created?.contact_email || contact_email,
+        grade_applying_for: created?.grade_applying || grade_applying,
+        notes: created?.message || message
+      }
+    });
   } catch (err) {
+    console.error('Create enquiry error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to submit enquiry.' } });
   }
 });
@@ -1091,8 +1265,24 @@ router.patch('/schools/:schoolId/enquiries/:id', authenticateToken, requireRoles
 router.get('/schools/:schoolId/assets', authenticateToken, async (req, res) => {
   try {
     const assets = await query(
-      `SELECT a.*, a.category as category_name
+      `SELECT a.*,
+              al.holder_name,
+              al.holder_type,
+              al.holder_id,
+              al.issued_at
        FROM assets a
+       LEFT JOIN (
+         SELECT al2.*,
+                COALESCE(
+                  CONCAT(s.first_name, ' ', s.last_name),
+                  CONCAT(e.first_name, ' ', e.last_name),
+                  al2.holder_id
+                ) AS holder_name
+         FROM asset_lendings al2
+         LEFT JOIN students s ON al2.holder_type = 'student' AND al2.holder_id = s.id
+         LEFT JOIN employees e ON al2.holder_type = 'staff' AND al2.holder_id = e.id
+         WHERE al2.returned_at IS NULL
+       ) al ON al.asset_id = a.id
        WHERE a.school_id = ?
        ORDER BY a.name ASC`,
       [req.params.schoolId]
@@ -1103,23 +1293,28 @@ router.get('/schools/:schoolId/assets', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/schools/:schoolId/assets', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.post('/schools/:schoolId/assets', authenticateToken, requireRoles('school_admin', 'super_admin', 'bursar'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { name, category, category_id, code, serial_number, value, purchase_cost, description, notes } = req.body;
+    const { name, category, category_id, code, serial_number, value, purchase_cost, description, notes, condition, condition_status, location, custodian } = req.body;
     if (!name) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Asset name is required.' } });
     }
     const id = 'AST' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const cat = category || category_id || 'general';
-    const val = value || purchase_cost ? parseFloat(value || purchase_cost) : 0;
+    const cost = parseFloat(purchase_cost || value || 0);
+    const cond = condition || condition_status || 'good';
+    const loc = location || null;
+    const cust = custodian || null;
     const desc = description || notes || null;
+
     await query(
-      `INSERT INTO assets (id, school_id, name, category, code, serial_number, value, description, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')`,
-      [id, schoolId, name.trim(), cat, code || id, serial_number || null, val, desc]
+      `INSERT INTO assets (id, school_id, name, category, code, serial_number, value, purchase_cost, condition_status, location, custodian, description, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available')`,
+      [id, schoolId, name.trim(), cat, code || id, serial_number || null, cost, cost, cond, loc, cust, desc]
     );
     const created = await queryOne('SELECT * FROM assets WHERE id = ?', [id]);
+    broadcastInvalidation(schoolId, ['assets', 'inventory', 'dashboard'], 'asset_created');
     return res.status(201).json({ data: created });
   } catch (err) {
     console.error('Add asset error:', err);
@@ -1646,6 +1841,81 @@ router.get('/schools/:schoolId/audit-log', authenticateToken, requireRoles('scho
 
 
 
+// Helper: Seed default grading systems based on school type
+async function seedDefaultGradeThresholds(schoolId, schoolType) {
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS grade_thresholds (
+        id VARCHAR(50) PRIMARY KEY,
+        school_id VARCHAR(50) NOT NULL,
+        grade VARCHAR(10) NOT NULL,
+        label VARCHAR(50) NULL,
+        min_score DECIMAL(5,2) NOT NULL,
+        max_score DECIMAL(5,2) NOT NULL,
+        points INT NULL,
+        color VARCHAR(20) NULL,
+        is_pass TINYINT(1) DEFAULT 1
+      )
+    `);
+
+    let defaults = [];
+    const type = String(schoolType || '').toLowerCase();
+    if (type === 'primary') {
+      defaults = [
+        { grade: '1', label: 'Distinction', min: 80, max: 100, points: 1, pass: 1, color: '#0d9488' },
+        { grade: '2', label: 'Merit',       min: 70, max: 79.99, points: 2, pass: 1, color: '#0284c7' },
+        { grade: '3', label: 'Credit',      min: 60, max: 69.99, points: 3, pass: 1, color: '#2563eb' },
+        { grade: '4', label: 'Satisfactory',min: 50, max: 59.99, points: 4, pass: 1, color: '#4f46e5' },
+        { grade: '5', label: 'Marginal Pass', min: 45, max: 49.99, points: 5, pass: 1, color: '#ca8a04' },
+        { grade: '6', label: 'Bare Pass',   min: 40, max: 44.99, points: 6, pass: 1, color: '#ea580c' },
+        { grade: '7', label: 'Unsatisfactory', min: 35, max: 39.99, points: 7, pass: 0, color: '#e11d48' },
+        { grade: '8', label: 'Poor',        min: 30, max: 34.99, points: 8, pass: 0, color: '#dc2626' },
+        { grade: '9', label: 'Very Poor',   min: 0,  max: 29.99, points: 9, pass: 0, color: '#991b1b' }
+      ];
+    } else if (type === 'high_school' || type === 'combined') {
+      defaults = [
+        // A-Level Points Scale (A=5, B=4, C=3, D=2, E=1, O=0, F=0)
+        { grade: 'A', label: 'A-Level Distinction (5 Pts)', min: 70, max: 100, points: 5, pass: 1, color: '#0d9488' },
+        { grade: 'B', label: 'A-Level Merit (4 Pts)',       min: 60, max: 69.99, points: 4, pass: 1, color: '#0284c7' },
+        { grade: 'C', label: 'A-Level Credit (3 Pts)',      min: 50, max: 59.99, points: 3, pass: 1, color: '#2563eb' },
+        { grade: 'D', label: 'A-Level Sub-Pass (2 Pts)',    min: 45, max: 49.99, points: 2, pass: 1, color: '#ca8a04' },
+        { grade: 'E', label: 'A-Level Pass (1 Pt)',         min: 40, max: 44.99, points: 1, pass: 1, color: '#ea580c' },
+        { grade: 'O', label: 'A-Level Subsidiary (0 Pts)', min: 35, max: 39.99, points: 0, pass: 0, color: '#e11d48' },
+        { grade: 'F', label: 'A-Level Fail (0 Pts)',       min: 0,  max: 34.99, points: 0, pass: 0, color: '#991b1b' },
+        // O-Level Scale
+        { grade: 'A_OL', label: 'O-Level Distinction', min: 75, max: 100, points: 1, pass: 1, color: '#0d9488' },
+        { grade: 'B_OL', label: 'O-Level Merit',       min: 65, max: 74.99, points: 2, pass: 1, color: '#0284c7' },
+        { grade: 'C_OL', label: 'O-Level Credit Pass', min: 50, max: 64.99, points: 3, pass: 1, color: '#2563eb' },
+        { grade: 'D_OL', label: 'O-Level Sub-Credit',  min: 45, max: 49.99, points: 4, pass: 0, color: '#ca8a04' },
+        { grade: 'E_OL', label: 'O-Level Poor',        min: 40, max: 44.99, points: 5, pass: 0, color: '#ea580c' },
+        { grade: 'U_OL', label: 'O-Level Ungraded',    min: 0,  max: 39.99, points: 6, pass: 0, color: '#991b1b' }
+      ];
+    } else {
+      // Secondary: O-Level Symbols A, B, C, D, E, U
+      defaults = [
+        { grade: 'A', label: 'Distinction', min: 75, max: 100, points: 1, pass: 1, color: '#0d9488' },
+        { grade: 'B', label: 'Merit',       min: 65, max: 74.99, points: 2, pass: 1, color: '#0284c7' },
+        { grade: 'C', label: 'Credit Pass', min: 50, max: 64.99, points: 3, pass: 1, color: '#2563eb' },
+        { grade: 'D', label: 'Sub-credit',  min: 45, max: 49.99, points: 4, pass: 0, color: '#ca8a04' },
+        { grade: 'E', label: 'Poor',        min: 40, max: 44.99, points: 5, pass: 0, color: '#ea580c' },
+        { grade: 'U', label: 'Ungraded',    min: 0,  max: 39.99, points: 6, pass: 0, color: '#991b1b' }
+      ];
+    }
+
+    await query('DELETE FROM grade_thresholds WHERE school_id = ?', [schoolId]);
+    for (const d of defaults) {
+      const tId = 'GT' + Math.random().toString(36).substr(2, 6).toUpperCase();
+      await query(
+        `INSERT INTO grade_thresholds (id, school_id, grade, grade_symbol, label, min_score, min_mark, max_score, max_mark, points, color, is_pass)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tId, schoolId, d.grade, d.grade, d.label, d.min, d.min, d.max, d.max, d.points, d.color, d.pass]
+      );
+    }
+  } catch (err) {
+    console.error('seedDefaultGradeThresholds error:', err);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SCHOOLS — Create/Edit (CommandCenter)
 // POST /schools
@@ -1653,19 +1923,54 @@ router.get('/schools/:schoolId/audit-log', authenticateToken, requireRoles('scho
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/schools', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
-    const { id, name, school_type, head_title } = req.body;
-    if (!id || !name) {
-      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'School ID and name are required.' } });
+    const { id, code, name, school_type, head_title, is_boarding, boarding_type, tuition_fee_benchmark, admin_username, admin_email, admin_password } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'School name is required.' } });
     }
-    const exists = await queryOne('SELECT id FROM schools WHERE id = ?', [id]);
-    if (exists) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'A school with this ID already exists.' } });
-    await query(
-      `INSERT INTO schools (id, name, school_type, head_title, status) VALUES (?, ?, ?, ?, 'active')`,
-      [id.toUpperCase(), name.trim(), school_type || 'secondary', head_title || 'Headmaster']
-    );
-    const created = await queryOne('SELECT * FROM schools WHERE id = ?', [id.toUpperCase()]);
+    const rawId = (id || code || name.trim().replace(/[^a-zA-Z0-9]/g, '').substring(0, 8)).trim();
+    if (!rawId) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'School ID or code is required.' } });
+    }
+    const schoolIdUpper = rawId.toUpperCase();
+    const exists = await queryOne('SELECT id FROM schools WHERE id = ?', [schoolIdUpper]);
+    if (exists) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'A school with this ID or Code already exists.' } });
+    const isBoardingVal = is_boarding !== undefined ? (is_boarding ? 1 : 0) : (school_type?.includes('boarding') ? 1 : 1);
+    const resolvedType = school_type || 'secondary';
+    try {
+      await query(
+        `INSERT INTO schools (id, code, name, school_type, head_title, status, is_boarding, boarding_type, tuition_fee_benchmark) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+        [schoolIdUpper, code || schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, boarding_type || 'boarding', tuition_fee_benchmark || null]
+      );
+    } catch (_) {
+      // Fallback if code or tuition_fee_benchmark columns don't exist yet
+      await query(
+        `INSERT INTO schools (id, name, school_type, head_title, status, is_boarding, boarding_type) VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+        [schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, boarding_type || 'boarding']
+      );
+    }
+
+    // If initial admin user credentials are provided, provision school admin
+    if (admin_username && admin_password) {
+      try {
+        const bcrypt = require('bcryptjs');
+        const adminPassHash = bcrypt.hashSync(admin_password, 10);
+        const adminId = 'USR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+        await query(
+          `INSERT INTO users (id, school_id, username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, 'school_admin', 'active')`,
+          [adminId, schoolIdUpper, admin_username.trim(), admin_email ? admin_email.trim() : null, adminPassHash]
+        );
+      } catch (adminErr) {
+        console.error('Failed to provision initial school admin account:', adminErr);
+      }
+    }
+
+    // Seed default grading system matching the school type
+    await seedDefaultGradeThresholds(schoolIdUpper, resolvedType);
+
+    const created = await queryOne('SELECT * FROM schools WHERE id = ?', [schoolIdUpper]);
     return res.status(201).json({ data: created });
   } catch (err) {
+    console.error('Create school error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create school.' } });
   }
 });
@@ -1673,15 +1978,17 @@ router.post('/schools', authenticateToken, requireRoles('super_admin'), async (r
 router.put('/schools/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, school_type, head_title, status } = req.body;
+    const { name, school_type, head_title, status, is_boarding, boarding_type } = req.body;
     await query(
       `UPDATE schools SET
-         name        = COALESCE(?, name),
-         school_type = COALESCE(?, school_type),
-         head_title  = COALESCE(?, head_title),
-         status      = COALESCE(?, status)
+         name          = COALESCE(?, name),
+         school_type   = COALESCE(?, school_type),
+         head_title    = COALESCE(?, head_title),
+         status        = COALESCE(?, status),
+         is_boarding   = COALESCE(?, is_boarding),
+         boarding_type = COALESCE(?, boarding_type)
        WHERE id = ?`,
-      [name, school_type, head_title, status, id]
+      [name, school_type, head_title, status, is_boarding !== undefined ? (is_boarding ? 1 : 0) : null, boarding_type, id]
     );
     const updated = await queryOne('SELECT * FROM schools WHERE id = ?', [id]);
     return res.json({ data: updated });
@@ -1938,7 +2245,7 @@ router.get('/admin/audit-log', authenticateToken, requireRoles('super_admin'), a
 router.get('/schools/:schoolId/license', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const license = await queryOne(
+    let license = await queryOne(
       `SELECT l.*, s.name as school_name, s.school_type
        FROM licenses l
        JOIN schools s ON l.school_id = s.id
@@ -1947,16 +2254,39 @@ router.get('/schools/:schoolId/license', authenticateToken, async (req, res) => 
        LIMIT 1`,
       [schoolId]
     );
+
+    const studentCountRow = await queryOne(
+      `SELECT COUNT(*) as count FROM students WHERE school_id = ? AND status IN ('enrolled', 'active')`,
+      [schoolId]
+    );
+    const activeStudentCount = studentCountRow ? Number(studentCountRow.count) : 0;
+
     if (!license) {
-      return res.json({ data: { license: null, warning: false } });
+      license = {
+        tier: 'Enterprise Standard',
+        status: 'active',
+        student_limit: 1000,
+        expires_at: '2028-01-01',
+        features: ['Multi-currency cashier', 'ZIMSEC Best-6 grading', 'Boarding & Exeat gate', 'Automated EMIS census']
+      };
     }
+
     const now = new Date();
     const expiresAt = new Date(license.expires_at);
-    const daysLeft = Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24));
+    const daysLeft = Math.max(0, Math.ceil((expiresAt - now) / (1000 * 60 * 60 * 24)));
+
+    license.days_remaining = daysLeft;
+    license.days_left = daysLeft;
+    license.current_students = activeStudentCount;
+    if (!license.student_limit) license.student_limit = 1000;
+
     return res.json({
       data: {
         license,
         days_left: daysLeft,
+        days_remaining: daysLeft,
+        current_students: activeStudentCount,
+        student_limit: license.student_limit,
         warning: daysLeft <= 30,
         expires_at: license.expires_at
       }
@@ -2036,8 +2366,34 @@ router.get('/hostels/applications', authenticateToken, async (req, res) => {
     let sql = `SELECT ha.*, s.first_name, s.last_name, s.admission_number, s.gender
                FROM hostel_applications ha JOIN students s ON ha.student_id = s.id`;
     const params = [];
-    if (school_id) { sql += ' WHERE s.school_id = ?'; params.push(school_id); }
-    sql += ' ORDER BY ha.created_at DESC';
+
+    if (req.user.role === 'parent') {
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      const guardianIds = guardianRows.map(g => g.id);
+      if (guardianIds.length === 0) {
+        return res.json({ data: [] });
+      }
+      const gPlaceholders = guardianIds.map(() => '?').join(',');
+      const kids = await query(`SELECT student_id FROM student_guardians WHERE guardian_id IN (${gPlaceholders})`, guardianIds);
+      const kidIds = [...new Set(kids.map(k => k.student_id))];
+      if (kidIds.length === 0) {
+        return res.json({ data: [] });
+      }
+      const kPlaceholders = kidIds.map(() => '?').join(',');
+      sql += ` WHERE ha.student_id IN (${kPlaceholders})`;
+      params.push(...kidIds);
+    } else if (school_id) {
+      sql += ' WHERE s.school_id = ?';
+      params.push(school_id);
+    }
+
+    sql += ' ORDER BY ha.applied_at DESC, ha.created_at DESC';
     const apps = await query(sql, params);
     return res.json({ data: apps });
   } catch (err) {
@@ -2049,6 +2405,29 @@ router.post('/hostels/applications', authenticateToken, async (req, res) => {
   try {
     const { student_id, notes, school_id } = req.body;
     if (!student_id) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Student ID is required.' } });
+
+    if (req.user.role === 'parent') {
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      const guardianIds = guardianRows.map(g => g.id);
+      if (guardianIds.length === 0) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not authorized to submit applications for this student.' } });
+      }
+      const gPlaceholders = guardianIds.map(() => '?').join(',');
+      const linked = await queryOne(
+        `SELECT student_id FROM student_guardians WHERE student_id = ? AND guardian_id IN (${gPlaceholders})`,
+        [student_id, ...guardianIds]
+      );
+      if (!linked) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not linked as a guardian for this student.' } });
+      }
+    }
+
     const id = 'HAPP' + Date.now().toString(36).toUpperCase();
     try { await query(`ALTER TABLE hostel_applications ADD COLUMN school_id VARCHAR(20) NULL`); } catch(e) {}
     const sId = school_id || req.user?.school_id || null;
@@ -2098,27 +2477,44 @@ router.delete('/schools/:schoolId/assets/:id', authenticateToken, requireRoles('
   }
 });
 
-router.post('/schools/:schoolId/assets/:id/issue', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
+router.post(['/schools/:schoolId/assets/:id/issue', '/schools/:schoolId/assets/:id/lend'], authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher', 'bursar'), async (req, res) => {
   try {
     const { schoolId, id } = req.params;
-    const { issued_to, issued_to_name, issued_to_type, expected_return_date, notes } = req.body;
-    if (!issued_to && !issued_to_name) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Issued to person is required.' } });
-    try { await query('ALTER TABLE assets ADD COLUMN holder_id VARCHAR(50) NULL'); } catch(e) {}
-    try { await query('ALTER TABLE assets ADD COLUMN holder_type VARCHAR(30) NULL'); } catch(e) {}
-    try { await query('ALTER TABLE assets ADD COLUMN holder_name VARCHAR(200) NULL'); } catch(e) {}
-    try { await query('ALTER TABLE assets ADD COLUMN issued_at DATETIME NULL'); } catch(e) {}
-    try { await query('ALTER TABLE assets ADD COLUMN expected_return_date DATE NULL'); } catch(e) {}
+    const { issued_to, issued_to_name, issued_to_type, expected_return_date, notes, holder_id, holder_type, due_date } = req.body;
+    
+    const targetHolderId = issued_to || holder_id || null;
+    const targetHolderType = issued_to_type || holder_type || 'student';
+    const targetDueDate = expected_return_date || due_date || null;
+    let targetHolderName = issued_to_name || req.body.holder_name || null;
+
+    if (!targetHolderId && !targetHolderName) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Issued to borrower or recipient is required.' } });
+    }
+
+    // Resolve borrower name if not provided
+    if (!targetHolderName && targetHolderId) {
+      if (targetHolderType === 'student') {
+        const st = await queryOne('SELECT first_name, last_name, admission_number FROM students WHERE id = ?', [targetHolderId]);
+        if (st) targetHolderName = `${st.first_name} ${st.last_name} (${st.admission_number || 'No ADM'})`;
+      } else {
+        const u = await queryOne('SELECT name, username FROM users WHERE id = ?', [targetHolderId]);
+        if (u) targetHolderName = u.name || u.username;
+      }
+    }
+
     await query(
       `UPDATE assets SET status = 'issued', holder_id = ?, holder_type = ?, holder_name = ?,
        issued_at = NOW(), expected_return_date = ?, notes = ? WHERE id = ? AND school_id = ?`,
-      [issued_to || null, issued_to_type || 'student', issued_to_name || null,
-       expected_return_date || null, notes || null, id, schoolId]
+      [targetHolderId, targetHolderType, targetHolderName, targetDueDate, notes || null, id, schoolId]
     );
+
+    broadcastInvalidation(schoolId, ['library', 'assets', 'dashboard', 'summary'], 'asset_loaned');
+
     const asset = await queryOne('SELECT * FROM assets WHERE id = ?', [id]);
     return res.json({ data: asset });
   } catch (err) {
-    console.error('Issue asset error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to issue asset.' } });
+    console.error('Issue/lend asset error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to issue resource: ' + err.message } });
   }
 });
 
@@ -2187,47 +2583,136 @@ router.put('/schools/:schoolId/bank-account', authenticateToken, requireRoles('s
 router.post('/schools/:schoolId/remote-payments', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { fee_id, student_id, amount, currency, method, reference, phone_number } = req.body;
-    if (!fee_id || !amount) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Fee ID and amount are required.' } });
+    let { fee_id, student_id, amount, amount_paid, currency, method, payment_method, reference, phone_number, payment_date, cashier_name, notes } = req.body;
+    const finalAmount = parseFloat(amount_paid || amount);
+    if (isNaN(finalAmount) || finalAmount <= 0) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'A valid payment amount is required.' } });
+    }
+
+    if (!fee_id && student_id) {
+      try {
+        const studentFee = await queryOne(
+          `SELECT id FROM fees WHERE student_id = ? AND school_id = ? ORDER BY created_at DESC LIMIT 1`,
+          [student_id, schoolId]
+        );
+        if (studentFee) {
+          fee_id = studentFee.id;
+        } else {
+          const newFeeId = 'FEE' + Date.now().toString(36).toUpperCase();
+          await query(
+            `INSERT INTO fees (id, school_id, student_id, term, amount_due, amount_paid, status)
+             VALUES (?, ?, ?, 'Term 1', ?, 0, 'unpaid')`,
+            [newFeeId, schoolId, student_id, finalAmount]
+          );
+          fee_id = newFeeId;
+        }
+      } catch (fErr) {
+        fee_id = 'FEE-' + (student_id || 'DECL') + '-' + Date.now().toString(36).toUpperCase();
+      }
+    }
+
+    if (!fee_id) {
+      fee_id = 'FEE-DECL-' + Date.now().toString(36).toUpperCase();
+    }
+
+    const payMethod = payment_method || method || 'cash';
     const id = 'RPAY' + Date.now().toString(36).toUpperCase();
-    await query(
-      `INSERT INTO remote_payments (id, school_id, fee_id, student_id, amount, currency, payment_method, reference, phone_number, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
-      [id, schoolId, fee_id, student_id || null, amount, currency || 'USD', method || 'ecocash', reference || null, phone_number || null]
-    );
-    return res.status(201).json({ data: { id, status: 'pending', message: 'Payment initiated. Awaiting verification.' } });
+    const finalRef = reference || ('CASH-' + Date.now().toString(36).toUpperCase());
+    const finalNotes = notes || (cashier_name ? `Cash payment. Cashier: ${cashier_name}` : null);
+
+    try {
+      await query(
+        `INSERT INTO remote_payments (id, school_id, fee_id, student_id, amount, amount_paid, currency, payment_method, reference, phone_number, cashier_name, notes, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+        [id, schoolId, fee_id, student_id || null, finalAmount, finalAmount, currency || 'USD', payMethod, finalRef, phone_number || null, cashier_name || null, finalNotes]
+      );
+    } catch (insertErr) {
+      try {
+        await query(`
+          CREATE TABLE IF NOT EXISTS \`remote_payments\` (
+            \`id\` VARCHAR(50) PRIMARY KEY,
+            \`school_id\` VARCHAR(50) NOT NULL,
+            \`fee_id\` VARCHAR(50) DEFAULT NULL,
+            \`student_id\` VARCHAR(50) DEFAULT NULL,
+            \`amount\` DECIMAL(12,2) NOT NULL,
+            \`amount_paid\` DECIMAL(12,2) DEFAULT NULL,
+            \`currency\` VARCHAR(10) DEFAULT 'USD',
+            \`payment_method\` VARCHAR(50) DEFAULT 'cash',
+            \`reference\` VARCHAR(100) DEFAULT NULL,
+            \`phone_number\` VARCHAR(50) DEFAULT NULL,
+            \`cashier_name\` VARCHAR(100) DEFAULT NULL,
+            \`notes\` TEXT DEFAULT NULL,
+            \`status\` VARCHAR(20) DEFAULT 'pending',
+            \`verified_at\` DATETIME DEFAULT NULL,
+            \`verified_by\` VARCHAR(50) DEFAULT NULL,
+            \`created_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX \`idx_rp_school\` (\`school_id\`),
+            INDEX \`idx_rp_student\` (\`student_id\`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        await query(
+          `INSERT INTO remote_payments (id, school_id, fee_id, student_id, amount, amount_paid, currency, payment_method, reference, phone_number, cashier_name, notes, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+          [id, schoolId, fee_id, student_id || null, finalAmount, finalAmount, currency || 'USD', payMethod, finalRef, phone_number || null, cashier_name || null, finalNotes]
+        );
+      } catch (retryErr) {
+        console.error('Remote payments insert retry error:', retryErr);
+        await query(
+          `INSERT INTO remote_payments (id, school_id, fee_id, student_id, amount, currency, payment_method, reference, phone_number, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NOW())`,
+          [id, schoolId, fee_id, student_id || null, finalAmount, currency || 'USD', payMethod, finalRef, phone_number || null]
+        );
+      }
+    }
+
+    return res.status(201).json({
+      data: { id, status: 'pending', reference: finalRef, message: 'Payment declaration submitted successfully. Awaiting administrative clearance.' }
+    });
   } catch (err) {
     console.error('Remote payment error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to initiate payment.' } });
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to submit payment declaration.' } });
   }
 });
 
 router.post('/schools/:schoolId/remote-payments/:id/verify', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId, id } = req.params;
-    const { action, notes } = req.body;
-    const status = action === 'approve' ? 'approved' : 'rejected';
+    const { action, status: reqStatus, notes, rejection_reason } = req.body;
+    const finalStatus = (action === 'approve' || reqStatus === 'approved') ? 'approved' : 'rejected';
+    const finalNotes = notes || rejection_reason || null;
     try { await query('ALTER TABLE remote_payments ADD COLUMN verified_at DATETIME NULL'); } catch(e) {}
     try { await query('ALTER TABLE remote_payments ADD COLUMN verified_by VARCHAR(50) NULL'); } catch(e) {}
     try { await query('ALTER TABLE remote_payments ADD COLUMN notes TEXT NULL'); } catch(e) {}
     await query(
       `UPDATE remote_payments SET status = ?, notes = ?, verified_at = NOW(), verified_by = ? WHERE id = ? AND school_id = ?`,
-      [status, notes || null, req.user.id, id, schoolId]
+      [finalStatus, finalNotes, req.user.id, id, schoolId]
     );
-    if (action === 'approve') {
+    if (finalStatus === 'approved') {
       const rp = await queryOne('SELECT * FROM remote_payments WHERE id = ?', [id]);
       if (rp && rp.fee_id) {
         const payId = 'PAY' + Date.now().toString(36).toUpperCase();
         try {
           await query(
-            `INSERT INTO fee_payments (id, fee_id, amount_paid, payment_method, reference, payment_date, recorded_by) VALUES (?, ?, ?, ?, ?, CURDATE(), ?)`,
-            [payId, rp.fee_id, rp.amount, rp.payment_method || 'online', rp.reference || id, req.user.id]
+            `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, reference, payment_date, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)`,
+            [payId, schoolId, rp.fee_id, rp.student_id, rp.amount, rp.payment_method || 'cash', rp.reference || id, req.user.id]
           );
-        } catch(e) {}
+        } catch(e) {
+          await query(
+            `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, reference, payment_date)
+             VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE())`,
+            [payId, schoolId, rp.fee_id, rp.student_id, rp.amount, rp.payment_method || 'cash', rp.reference || id]
+          );
+        }
+        await query(
+          `UPDATE fees SET amount_paid = amount_paid + ?, status = CASE WHEN amount_paid + ? >= amount_due THEN 'paid' ELSE 'partially_paid' END WHERE id = ?`,
+          [rp.amount, rp.amount, rp.fee_id]
+        );
       }
     }
-    return res.json({ data: { message: `Payment ${status} successfully.` } });
+    return res.json({ data: { message: `Payment ${finalStatus} successfully.` } });
   } catch (err) {
+    console.error('Verify payment error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to verify payment.' } });
   }
 });
@@ -2435,7 +2920,10 @@ router.patch('/schools/:schoolId', authenticateToken, requireRoles('school_admin
 router.post('/schools/:schoolId/grade-thresholds', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { thresholds } = req.body;
+    const { thresholds, school_type } = req.body;
+    if (school_type) {
+      await query('UPDATE schools SET school_type = ? WHERE id = ?', [school_type, schoolId]);
+    }
     try {
       await query(`
         CREATE TABLE IF NOT EXISTS grade_thresholds (
@@ -2446,7 +2934,8 @@ router.post('/schools/:schoolId/grade-thresholds', authenticateToken, requireRol
           min_score DECIMAL(5,2) NOT NULL,
           max_score DECIMAL(5,2) NOT NULL,
           points INT NULL,
-          color VARCHAR(20) NULL
+          color VARCHAR(20) NULL,
+          is_pass TINYINT(1) DEFAULT 1
         )
       `);
     } catch(e) {}
@@ -2455,10 +2944,15 @@ router.post('/schools/:schoolId/grade-thresholds', authenticateToken, requireRol
       await query('DELETE FROM grade_thresholds WHERE school_id = ?', [schoolId]);
       for (const t of thresholds) {
         const tId = 'GT' + Math.random().toString(36).substr(2, 6).toUpperCase();
+        const gradeSymbol = t.grade_symbol || t.grade || '';
+        const minVal = parseFloat(t.min_score ?? t.min_mark ?? 0);
+        const maxVal = parseFloat(t.max_score ?? t.max_mark ?? 100);
+        const points = t.points !== undefined ? t.points : 0;
+        const isPass = t.is_pass !== undefined ? (t.is_pass ? 1 : 0) : 1;
         await query(
-          `INSERT INTO grade_thresholds (id, school_id, grade, label, min_score, max_score, points, color)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [tId, schoolId, t.grade, t.label || '', t.min_score || 0, t.max_score || 100, t.points || 0, t.color || '#0d9488']
+          `INSERT INTO grade_thresholds (id, school_id, grade, grade_symbol, label, min_score, min_mark, max_score, max_mark, points, color, is_pass)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [tId, schoolId, gradeSymbol, gradeSymbol, t.label || '', minVal, minVal, maxVal, maxVal, points, t.color || '#0d9488', isPass]
         );
       }
     }
@@ -2475,32 +2969,48 @@ router.post('/schools/:schoolId/grade-thresholds', authenticateToken, requireRol
 router.get('/admin/subjects', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
     const subjects = await query(
-      `SELECT s.*, eb.name as board_name
+      `SELECT s.*, COALESCE(s.category, 'General') as category
        FROM subjects s
-       LEFT JOIN exam_boards eb ON eb.id = s.board_id
        ORDER BY s.name ASC`
     );
-    return res.json({ data: subjects });
+    return res.json({ data: subjects || [] });
   } catch (err) {
+    console.error('Get admin subjects error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to load subjects.' } });
   }
 });
 
 router.post('/admin/subjects', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
-    const { code, name, category, board_code } = req.body;
+    const { code, name, category, level, board_code } = req.body;
     if (!code || !name) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subject code and name are required.' } });
     }
-    const subjectUuid = require('crypto').randomUUID();
-    const result = await query(
-      `INSERT INTO subjects (uuid, code, name, category, board_code)
-       VALUES (?, ?, ?, ?, ?)`,
-      [subjectUuid, String(code).trim().toUpperCase(), String(name).trim(), category || 'general_studies', board_code || null]
-    );
-    const subject = await queryOne('SELECT * FROM subjects WHERE id = ?', [result.insertId]);
+    const cleanCode = String(code).trim().toUpperCase();
+    const cleanName = String(name).trim();
+    const subjectId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+
+    try {
+      await query(
+        `INSERT INTO subjects (id, code, name, category, level, is_active)
+         VALUES (?, ?, ?, ?, ?, 1)
+         ON DUPLICATE KEY UPDATE name = VALUES(name), level = VALUES(level)`,
+        [subjectId, cleanCode, cleanName, category || 'General', level || 'all']
+      );
+    } catch (insertErr) {
+      // Fallback if schema doesn't have is_active or level
+      await query(
+        `INSERT INTO subjects (id, code, name, category)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+        [subjectId, cleanCode, cleanName, category || 'General']
+      );
+    }
+
+    const subject = await queryOne('SELECT * FROM subjects WHERE id = ? OR code = ?', [subjectId, cleanCode]);
     return res.status(201).json({ data: subject });
   } catch (err) {
+    console.error('Create admin subject error:', err);
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: { code: 'DUPLICATE_SUBJECT', message: 'A subject with that code already exists.' } });
     }
@@ -2511,9 +3021,10 @@ router.post('/admin/subjects', authenticateToken, requireRoles('super_admin'), a
 router.delete('/admin/subjects/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
     const { id } = req.params;
-    await query('DELETE FROM subjects WHERE id = ?', [id]);
+    await query('DELETE FROM subjects WHERE id = ? OR code = ?', [id, id]);
     return res.json({ data: { message: 'Subject deleted successfully.' } });
   } catch (err) {
+    console.error('Delete admin subject error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete subject.' } });
   }
 });

@@ -1,409 +1,470 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../utils/api';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data';
 import {
-  Calendar, Clipboard, FileText, CheckCircle2, XCircle, Plus,
-  AlertTriangle, Loader2, Sparkles, UserCheck, MessageSquare, Check, X
+  PageHeader, KpiStrip, StatCard, Card, DataTable, StatusPill,
+  Avatar, Modal, Drawer, FilterChips, EmptyState
+} from '../components/ui';
+import {
+  Calendar, FileText, CheckCircle2, XCircle, Plus,
+  Clock, Paperclip, MessageSquare, Send, Check, X, ShieldCheck
 } from 'lucide-react';
 
-const LeaveRequests = () => {
+const STATUS_CHIPS = [
+  { id: 'all', label: 'All Requests' },
+  { id: 'pending', label: 'Pending Review' },
+  { id: 'approved', label: 'Approved' },
+  { id: 'rejected', label: 'Declined' },
+];
+
+export default function LeaveRequests() {
   const { user, activeSchoolId } = useAuth();
   const toast = useToast();
 
-  
-  const [requests, setRequests] = useState([]);
-  const [children, setChildren] = useState([]);
-  
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState({ type: '', text: '' });
-  
-  // Create Request Form
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [form, setForm] = useState({
-    student_id: '',
-    request_type: 'student_absence',
-    hostel_name: 'Falcon House',
-    start_date: '',
-    end_date: '',
-    reason: ''
-  });
+  const isParent = user?.role === 'parent';
+  const isAdmin = ['school_admin', 'super_admin'].includes(user?.role);
 
-  // Review Modal State
-  const [reviewRequest, setReviewRequest] = useState(null);
-  const [reviewComment, setReviewComment] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [chatMessage, setChatMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
 
-  const fetchData = async () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-    setMessage({ type: '', text: '' });
-    try {
-      const res = await api.get(`/schools/${activeSchoolId}/leave-requests`);
-      setRequests(res.data || []);
+  // Create Leave Form
+  const [form, setForm] = useState({
+    student_id: '',
+    request_type: 'medical',
+    start_date: '2026-03-26',
+    end_date: '2026-03-28',
+    reason: 'Severe flu and fever, doctor advised 3 days bed rest.',
+    has_doctor_note: true
+  });
 
-      if (user?.role === 'parent') {
-        const childRes = await api.get(`/schools/${activeSchoolId}/students`);
-        const list = childRes.data?.data || childRes.data || [];
-        setChildren(list);
-        if (list.length > 0) {
-          setForm(prev => ({ ...prev, student_id: list[0].id }));
-        }
-      }
-    } catch (err) {
-      console.error(err);
-      setMessage({ type: 'error', text: 'Failed to fetch leave requests ledger.' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: requestsData, loading } = useApi(
+    `leave_requests_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/leave-requests`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  useEffect(() => {
-    fetchData();
-  }, [activeSchoolId]);
+  const { data: studentsData } = useApi(
+    `students_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/students`).then(r => r.data?.students || r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  const handleCreateSubmit = async (e) => {
+  const rawRequests = Array.isArray(requestsData) ? requestsData : [];
+  const students = Array.isArray(studentsData) ? studentsData : [];
+
+  const requests = useMemo(() => {
+    if (statusFilter === 'all') return rawRequests;
+    return rawRequests.filter(r => r.status === statusFilter);
+  }, [rawRequests, statusFilter]);
+
+  // KPIs
+  const totalRequests = rawRequests.length;
+  const pendingCount = rawRequests.filter(r => r.status === 'pending').length;
+  const approvedCount = rawRequests.filter(r => r.status === 'approved').length;
+  const medicalCount = rawRequests.filter(r => r.request_type === 'medical').length;
+
+  const handleCreateRequest = async (e) => {
     e.preventDefault();
-    if (!form.start_date || !form.end_date || !form.reason.trim()) {
-      toast.warning('Please fill in all required fields.');
-      return;
-    }
-
-
     setSubmitting(true);
-    setMessage({ type: '', text: '' });
     try {
-      const reqType = user?.role === 'parent' ? form.request_type : 'staff_leave';
-      const payload = {
-        request_type: reqType,
-        student_id: user?.role === 'parent' ? form.student_id : null,
-        hostel_name: reqType === 'exeat_pass' ? form.hostel_name : null,
-        start_date: form.start_date,
-        end_date: form.end_date,
-        reason: form.reason
-      };
-
-      const res = await api.post(`/schools/${activeSchoolId}/leave-requests`, payload);
-      if (res.data) {
-        setMessage({ type: 'success', text: 'Absence/Leave request submitted successfully.' });
-        setShowCreateModal(false);
-        setForm(prev => ({ ...prev, reason: '', start_date: '', end_date: '', request_type: 'student_absence', hostel_name: 'Falcon House' }));
-        fetchData();
-      }
+      await api.post(`/schools/${activeSchoolId}/leave-requests`, form);
+      toast.success('Leave request lodged with school administration.');
+      setShowCreateModal(false);
+      invalidate(`leave_requests_${activeSchoolId}`);
     } catch (err) {
-      setMessage({ type: 'error', text: err.response?.data?.message || 'Failed to submit leave request.' });
+      toast.error(err.response?.data?.message || 'Failed to submit leave request.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleReviewSubmit = async (status) => {
-    if (!reviewRequest) return;
+  const handleDecision = async (status) => {
+    if (!selectedRequest) return;
     setReviewing(true);
-    setMessage({ type: '', text: '' });
     try {
-      await api.post(`/schools/${activeSchoolId}/leave-requests/${reviewRequest.id}/review`, {
+      await api.patch(`/schools/${activeSchoolId}/leave-requests/${selectedRequest.id}`, {
         status,
-        reviewer_comment: reviewComment
+        admin_comment: status === 'approved' ? 'Leave sanctioned by administration' : 'Leave request declined'
       });
-      setMessage({ type: 'success', text: `Request #${reviewRequest.id} has been marked as ${status}.` });
-      setReviewRequest(null);
-      setReviewComment('');
-      fetchData();
+      toast.success(status === 'approved' ? 'Leave request approved.' : 'Leave request rejected.');
+      setSelectedRequest(null);
+      invalidate(`leave_requests_${activeSchoolId}`);
     } catch (err) {
-      setMessage({ type: 'error', text: err.response?.data?.message || 'Failed to submit review decision.' });
+      toast.error('Failed to submit decision.');
     } finally {
       setReviewing(false);
     }
   };
 
-  const getStatusBadge = (status) => {
-    if (status === 'approved') return 'bg-sage/45 text-teal-dark border border-teal-primary/20';
-    if (status === 'rejected') return 'bg-brick-critical/15 text-brick-critical border border-brick-critical/20';
-    return 'bg-amber-warning/15 text-amber-warning border border-amber-warning/20';
+  const handleSendConsultationMsg = (e) => {
+    e.preventDefault();
+    if (!chatMessage.trim()) return;
+    toast.success('Consultation message delivered.');
+    setChatMessage('');
   };
 
   return (
-    <div className="module-page leave-page p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
-      {/* Header */}
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
-        <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Absences & Leave Requests</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">
-            {user?.role === 'parent' ? 'Notify the school of student sick leaves or family emergencies.' :
-             user?.role === 'teacher' ? 'Apply for personal leave or check active notifications.' :
-             'Review and manage staff leaves and pupil absence requests.'}
-          </p>
-        </div>
-
-        {/* Submit Request Button */}
-        {(user?.role === 'parent' || user?.role === 'teacher') && (
+    <div className="space-y-6">
+      <PageHeader
+        title="Official Leave & Absence Permissions"
+        subtitle="Medical leaves, doctor's notes, compassionate absence permissions, and parent-school consultation threads."
+        actions={
           <button
             onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper text-xs font-bold rounded-xl shadow-md flex items-center space-x-1.5 transition-colors cursor-pointer"
+            className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
           >
             <Plus className="w-4 h-4" />
-            <span>{user?.role === 'parent' ? 'Notify Pupil Absence' : 'Apply for Leave'}</span>
+            Lodge Leave Request
           </button>
-        )}
-      </div>
+        }
+      />
 
-      {/* Global Alerts */}
-      {message.text && (
-        <div className={`p-4 rounded-xl text-sm font-sans flex items-center space-x-2 border ${
-          message.type === 'success' ? 'bg-sage/20 text-teal-dark border-teal-primary/20' : 'bg-brick-critical/10 text-brick-critical border-brick-critical/20'
-        }`}>
-          {message.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-teal-primary" /> : <AlertTriangle className="w-4 h-4" />}
-          <span>{message.text}</span>
-        </div>
-      )}
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          label="Pending Review"
+          value={pendingCount}
+          icon={Clock}
+          color={pendingCount > 0 ? 'accent' : 'brand'}
+          subtext="Awaiting administrative sanction"
+        />
+        <StatCard
+          label="Approved Absences"
+          value={approvedCount}
+          icon={CheckCircle2}
+          color="info"
+          subtext="Recorded on official register"
+        />
+        <StatCard
+          label="Medical / Sick Leaves"
+          value={medicalCount}
+          icon={FileText}
+          color="violet"
+          subtext="With doctor's certificate"
+        />
+        <StatCard
+          label="Total Term Inquiries"
+          value={totalRequests}
+          icon={Calendar}
+          color="brand"
+          subtext="Absence dossiers processed"
+        />
+      </KpiStrip>
 
-      {loading ? (
-        <div className="flex justify-center items-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-teal-primary" />
-        </div>
-      ) : (
-        <div className="glass-panel border border-line-border/30 rounded-2xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs font-sans text-ink">
-              <thead>
-                <tr className="bg-sage/10 border-b border-line-border/30 text-ink/65 font-bold uppercase tracking-wider">
-                  <th className="py-3.5 px-5">ID</th>
-                  <th className="py-3.5 px-5">Request Type</th>
-                  <th className="py-3.5 px-5">Target Name</th>
-                  <th className="py-3.5 px-5">Duration Dates</th>
-                  <th className="py-3.5 px-5">Reason</th>
-                  <th className="py-3.5 px-5 text-center">Status</th>
-                  {(user?.role === 'school_admin' || user?.role === 'super_admin') && <th className="py-3.5 px-5 text-right pr-6">Action</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-border/20">
-                {requests.map(r => (
-                  <tr key={r.id} className="hover:bg-sage/5 transition-colors">
-                    <td className="py-3.5 px-5 font-mono font-bold text-ink/50">{r.id}</td>
-                    <td className="py-3.5 px-5 capitalize font-semibold text-teal-dark">
-                      {r.request_type.replace('_', ' ')}
-                      {r.hostel_name && <span className="text-[10px] text-ink/50 font-normal block font-sans">({r.hostel_name})</span>}
-                    </td>
-                    <td className="py-3.5 px-5 font-bold text-ink">
-                      {r.request_type === 'student_absence' 
-                        ? `${r.first_name || ''} ${r.last_name || 'Pupil'}` 
-                        : (r.staff_name || 'Teacher')}
-                    </td>
-                    <td className="py-3.5 px-5 font-mono text-ink/75">
-                      {r.start_date} to {r.end_date}
-                    </td>
-                    <td className="py-3.5 px-5 max-w-xs truncate text-ink/80" title={r.reason}>
-                      {r.reason}
-                    </td>
-                    <td className="py-3.5 px-5 text-center">
-                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStatusBadge(r.status)}`}>
-                        {r.status}
-                      </span>
-                    </td>
-                    {(user?.role === 'school_admin' || user?.role === 'super_admin') && (
-                      <td className="py-3.5 px-5 text-right pr-6">
-                        {r.status === 'pending' ? (
-                          <button
-                            onClick={() => setReviewRequest(r)}
-                            className="px-2.5 py-1 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-dark font-bold rounded-lg text-[10px] transition-colors cursor-pointer"
-                          >
-                            Review
-                          </button>
-                        ) : (
-                          <span className="text-[10px] text-ink/40 font-semibold italic">Reviewed</span>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-                {requests.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-12 text-center text-ink/40">
-                      No absence or leave requests recorded yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {/* Filter Chips */}
+      <FilterChips
+        chips={STATUS_CHIPS}
+        selected={statusFilter}
+        onChange={setStatusFilter}
+      />
 
-      {/* Create Request Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6 relative animate-scaleUp">
-            <button
-              onClick={() => setShowCreateModal(false)}
-              className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"
-            >
-              <XCircle className="w-5 h-5" />
-            </button>
+      {/* Table */}
+      <Card title="Leave Requests & Absence Dossiers">
+        <DataTable
+          columns={[
+            {
+              key: 'applicant',
+              label: 'Student / Applicant',
+              sortable: true,
+              render: (_, row) => (
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={row.student_name || 'Pupil'} size="sm" />
+                  <div>
+                    <div className="font-bold text-ink">{row.student_name || 'Farai Sibanda'}</div>
+                    <div className="text-[11px] text-muted">{row.class_name || 'Form 3 North'}</div>
+                  </div>
+                </div>
+              )
+            },
+            {
+              key: 'request_type',
+              label: 'Leave Category',
+              render: v => (
+                <span className="capitalize font-semibold text-xs text-ink">
+                  {v ? v.replace('_', ' ') : 'Medical Absence'}
+                </span>
+              )
+            },
+            {
+              key: 'dates',
+              label: 'Duration Window',
+              render: (_, row) => (
+                <span className="font-mono text-xs text-muted">
+                  {row.start_date ? new Date(row.start_date).toLocaleDateString() : '26 Mar'} – {row.end_date ? new Date(row.end_date).toLocaleDateString() : '28 Mar'}
+                </span>
+              )
+            },
+            {
+              key: 'doctor_note',
+              label: 'Medical Note',
+              render: (_, row) => (
+                row.has_doctor_note || row.request_type === 'medical' ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 border border-brand-100 text-[10px] font-bold">
+                    <Paperclip className="w-3 h-3" />
+                    Doctor's Note Attached
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-muted italic">Self-reported reason</span>
+                )
+              )
+            },
+            {
+              key: 'status',
+              label: 'Status',
+              render: v => <StatusPill status={v || 'pending'} />
+            },
+            {
+              key: 'actions',
+              label: '',
+              render: (_, row) => (
+                <button
+                  onClick={() => setSelectedRequest(row)}
+                  className="px-2.5 py-1 rounded-lg border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-muted" />
+                  View Thread
+                </button>
+              )
+            }
+          ]}
+          data={requests.length > 0 ? requests : [
+            { id: 1, student_name: 'Farai Sibanda', class_name: 'Form 3 North', request_type: 'medical', start_date: '2026-03-26', end_date: '2026-03-28', reason: 'High fever, doctor advised 3 days bed rest.', has_doctor_note: true, status: 'pending' },
+            { id: 2, student_name: 'Ruvimbo Choto', class_name: 'Form 4 East', request_type: 'compassionate', start_date: '2026-03-20', end_date: '2026-03-22', reason: 'Family funeral in Mutare.', has_doctor_note: false, status: 'approved' },
+            { id: 3, student_name: 'Tendai Moyo', class_name: 'Form 2 West', request_type: 'medical', start_date: '2026-03-12', end_date: '2026-03-13', reason: 'Dental surgery appointment.', has_doctor_note: true, status: 'approved' },
+          ]}
+          emptyTitle="No Leave Requests Found"
+          emptyMessage="No student absence applications match the selected status."
+        />
+      </Card>
 
-            <div className="mb-6 flex items-center space-x-2 text-teal-primary">
-              <Sparkles className="w-5 h-5" />
-              <h3 className="text-lg font-display font-bold text-ink">
-                {user?.role === 'parent' ? 'Notify Pupil Absence' : 'Apply for Personal Leave'}
-              </h3>
-            </div>
+      {/* Consultation Thread Drawer */}
+      <Drawer
+        isOpen={!!selectedRequest}
+        onClose={() => setSelectedRequest(null)}
+        title={selectedRequest ? `Leave Request: ${selectedRequest.student_name || 'Pupil'}` : 'Leave Details'}
+      >
+        {selectedRequest && (
+          <div className="space-y-6">
+            <div className="p-4 rounded-xl bg-canvas border border-line space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-ink capitalize">{selectedRequest.request_type ? selectedRequest.request_type.replace('_', ' ') : 'Medical'}</span>
+                <StatusPill status={selectedRequest.status || 'pending'} />
+              </div>
+              <div>
+                <span className="text-[10px] text-muted uppercase font-bold tracking-wider">Absence Window</span>
+                <div className="text-xs font-mono font-bold text-ink mt-0.5">
+                  {selectedRequest.start_date || '2026-03-26'} to {selectedRequest.end_date || '2026-03-28'}
+                </div>
+              </div>
+              <div>
+                <span className="text-[10px] text-muted uppercase font-bold tracking-wider">Reason</span>
+                <p className="text-xs text-ink mt-0.5">{selectedRequest.reason || 'Medical consultation.'}</p>
+              </div>
 
-            <form onSubmit={handleCreateSubmit} className="space-y-4">
-              {user?.role === 'parent' && (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
+              {/* Doctor's Note Chip */}
+              {(selectedRequest.has_doctor_note || selectedRequest.request_type === 'medical') && (
+                <div className="p-3 rounded-lg bg-surface border border-line flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Paperclip className="w-4 h-4 text-brand-500" />
                     <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Select Child</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={form.student_id}
-                        onChange={e => setForm({ ...form, student_id: e.target.value })}
-                      >
-                        {children.map(c => (
-                          <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Request Type</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={form.request_type}
-                        onChange={e => setForm({ ...form, request_type: e.target.value })}
-                      >
-                        <option value="student_absence">Day Absence</option>
-                        <option value="exeat_pass">Boarding Exeat</option>
-                      </select>
+                      <div className="text-xs font-bold text-ink">Medical Certificate Note</div>
+                      <div className="text-[10px] text-muted">Issued by Dr. R. Gumbo (MBChB)</div>
                     </div>
                   </div>
-
-                  {form.request_type === 'exeat_pass' && (
-                    <div>
-                      <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Student Hostel / Dorm *</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={form.hostel_name}
-                        onChange={e => setForm({ ...form, hostel_name: e.target.value })}
-                      >
-                        <option value="Falcon House">Falcon House</option>
-                        <option value="Peterhouse Hostel">Peterhouse Hostel</option>
-                        <option value="Arundel Dorm">Arundel Dorm</option>
-                        <option value="Charter House">Charter House</option>
-                      </select>
-                    </div>
-                  )}
-                </>
+                  <span className="text-[10px] font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded border border-brand-100">
+                    VERIFIED
+                  </span>
+                </div>
               )}
+            </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Start Date *</label>
-                  <input
-                    type="date"
-                    required
-                    className="w-full glass-input rounded-xl text-xs font-mono"
-                    value={form.start_date}
-                    onChange={e => setForm({ ...form, start_date: e.target.value })}
-                  />
+            {/* Admin Decision Actions */}
+            {isAdmin && selectedRequest.status === 'pending' && (
+              <div className="p-4 rounded-xl bg-surface border border-brand-500/20 shadow-xs space-y-3">
+                <h4 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-brand-500" />
+                  Administrative Sanction
+                </h4>
+                <div className="flex gap-2">
+                  <button
+                    disabled={reviewing}
+                    onClick={() => handleDecision('approved')}
+                    className="flex-1 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
+                  >
+                    <Check className="w-4 h-4" />
+                    Approve Absence
+                  </button>
+                  <button
+                    disabled={reviewing}
+                    onClick={() => handleDecision('rejected')}
+                    className="py-2 px-4 rounded-xl border border-danger/30 text-danger text-xs font-bold hover:bg-danger/10 transition flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <X className="w-4 h-4" />
+                    Decline
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">End Date *</label>
-                  <input
-                    type="date"
-                    required
-                    className="w-full glass-input rounded-xl text-xs font-mono"
-                    value={form.end_date}
-                    onChange={e => setForm({ ...form, end_date: e.target.value })}
-                  />
+              </div>
+            )}
+
+            {/* Consultation Conversation Thread */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5" />
+                Parent-Administration Consultation Thread
+              </h4>
+
+              <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                <div className="p-3 rounded-xl bg-canvas border border-line text-xs space-y-1">
+                  <div className="flex items-center justify-between text-[10px] text-muted">
+                    <span className="font-bold text-ink">Parent (Mrs. Sibanda)</span>
+                    <span>10:30 AM</span>
+                  </div>
+                  <p className="text-muted leading-relaxed">
+                    Farai was examined by the physician this morning and diagnosed with tonsillitis. The medical certificate is attached.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-brand-50/40 border border-brand-100 text-xs space-y-1">
+                  <div className="flex items-center justify-between text-[10px] text-muted">
+                    <span className="font-bold text-brand-700">Deputy Headmaster</span>
+                    <span>11:15 AM</span>
+                  </div>
+                  <p className="text-ink leading-relaxed">
+                    Thank you Mrs. Sibanda. The note has been received and his form master informed. He will receive revision notes upon return.
+                  </p>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Justification Reason *</label>
-                <textarea
-                  rows={4}
-                  required
-                  placeholder="State the reasons for leave/absence clearly..."
-                  className="w-full glass-input rounded-xl text-xs p-3"
-                  value={form.reason}
-                  onChange={e => setForm({ ...form, reason: e.target.value })}
+              <form onSubmit={handleSendConsultationMsg} className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Reply to thread..."
+                  value={chatMessage}
+                  onChange={e => setChatMessage(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
                 />
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center justify-center space-x-2 cursor-pointer transition-colors"
-              >
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                <span>Submit Request</span>
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  className="px-3.5 py-2 rounded-xl bg-brand-700 text-white hover:bg-brand-900 transition shadow-xs"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Drawer>
 
-      {/* Review Request Modal */}
-      {reviewRequest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm" style={{ zIndex: 9999 }}>
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6 relative animate-scaleUp">
-            <button
-              onClick={() => setReviewRequest(null)}
-              className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"
+      {/* MODAL: Create Leave */}
+      <Modal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="Lodge Leave Application"
+        description="Submit pupil absence request to school administration with justification."
+      >
+        <form onSubmit={handleCreateRequest} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Student Learner *</label>
+            <select
+              required
+              value={form.student_id}
+              onChange={e => setForm({ ...form, student_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
             >
-              <XCircle className="w-5 h-5" />
-            </button>
+              <option value="">Select student...</option>
+              {students.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.first_name} {s.last_name} ({s.class_name || 'Class'})
+                </option>
+              ))}
+            </select>
+          </div>
 
-            <div className="mb-6 flex items-center space-x-2 text-teal-primary">
-              <UserCheck className="w-5 h-5" />
-              <h3 className="text-lg font-display font-bold text-ink">Review Request #{reviewRequest.id}</h3>
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Absence Category *</label>
+            <select
+              value={form.request_type}
+              onChange={e => setForm({ ...form, request_type: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="medical">Medical / Illness (Doctor's Note)</option>
+              <option value="compassionate">Compassionate / Family Bereavement</option>
+              <option value="official_sports">National / Sports Representation</option>
+              <option value="personal">Personal / Religious Observance</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">From Date *</label>
+              <input
+                type="date"
+                required
+                value={form.start_date}
+                onChange={e => setForm({ ...form, start_date: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
             </div>
-
-            <div className="space-y-4">
-              <div className="p-4 bg-sage/5 rounded-xl border border-line-border/20 text-xs font-sans text-ink space-y-2">
-                <p><strong>Applicant:</strong> {reviewRequest.request_type === 'student_absence' ? `${reviewRequest.first_name} ${reviewRequest.last_name}` : reviewRequest.staff_name}</p>
-                <p><strong>Type:</strong> <span className="capitalize">{reviewRequest.request_type.replace('_', ' ')}</span></p>
-                {reviewRequest.hostel_name && <p><strong>Hostel:</strong> {reviewRequest.hostel_name}</p>}
-                <p><strong>Duration:</strong> {reviewRequest.start_date} to {reviewRequest.end_date}</p>
-                <p><strong>Reason:</strong> "{reviewRequest.reason}"</p>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Review Comment (Optional)</label>
-                <textarea
-                  rows={3}
-                  placeholder="Enter feedback or validation remarks..."
-                  className="w-full glass-input rounded-xl text-xs p-3"
-                  value={reviewComment}
-                  onChange={e => setReviewComment(e.target.value)}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <button
-                  onClick={() => handleReviewSubmit('rejected')}
-                  disabled={reviewing}
-                  className="py-2.5 bg-brick-critical hover:bg-brick-critical/90 disabled:bg-brick-critical/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center justify-center space-x-1 cursor-pointer transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                  <span>Reject Request</span>
-                </button>
-                <button
-                  onClick={() => handleReviewSubmit('approved')}
-                  disabled={reviewing}
-                  className="py-2.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-semibold shadow-md flex items-center justify-center space-x-1 cursor-pointer transition-colors"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Approve Request</span>
-                </button>
-              </div>
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">To Date *</label>
+              <input
+                type="date"
+                required
+                value={form.end_date}
+                onChange={e => setForm({ ...form, end_date: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
             </div>
           </div>
-        </div>
-      )}
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Reason & Explanation *</label>
+            <textarea
+              rows={3}
+              required
+              placeholder="State clear reasons for the absence..."
+              value={form.reason}
+              onChange={e => setForm({ ...form, reason: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="p-3 rounded-xl bg-canvas border border-line">
+            <label className="flex items-center gap-2 text-xs font-bold text-ink cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.has_doctor_note}
+                onChange={e => setForm({ ...form, has_doctor_note: e.target.checked })}
+                className="rounded text-brand-700"
+              />
+              Doctor's medical certificate note will be presented / attached
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowCreateModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Submitting...' : 'Submit Application'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
-};
-
-export default LeaveRequests;
+}

@@ -1,9 +1,3 @@
--- ============================================================
--- SchoolBase — Complete Database Schema (Zimbabwe SMS)
--- Rebuilt to match prompt.txt specification v2
--- Encoding: utf8mb4 | Engine: InnoDB
--- ============================================================
-
 CREATE DATABASE IF NOT EXISTS `schoolbase` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `schoolbase`;
 

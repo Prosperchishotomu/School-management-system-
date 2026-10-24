@@ -1,52 +1,15 @@
 /**
  * Zimbabwe Assessment & Grading Engine
- * Aligned with §2.4, §2.5, §9 of Zimbabwe School Management Specification
+ * Comprehensive grading models:
+ * 1. Primary ECD - Grade 3: Total marks sum, descending position ranking.
+ * 2. Primary Grade 4 - 7: Max 6 subjects, 1-9 units per subject (total 6 to 54 units), best student scores 6 units (Rank 1), worst scores 54 units.
+ * 3. Ordinary Level (Form 1 - 4): No max subjects, symbols A, B, C, D, E, U.
+ * 4. Advanced Level (Form 5 - 6 / Lower 6 & Upper 6): No max subjects, 5-point scale: A=5, B=4, C=3, D=2, E=1, O=0, F=0.
  */
 
 /**
- * ZIMSEC O-Level Grade & Points mapping
- * Points: 1 (A), 2 (B), 3 (C), 4 (D), 5 (E), 6 (U)
- * Pass grade: C or better (points <= 3)
- */
-function calculateZimsecOGrade(markPercentage) {
-  const mark = parseFloat(markPercentage || 0);
-  if (mark >= 75) return { grade: 'A', points: 1, is_pass: true, remark: 'Distinction' };
-  if (mark >= 65) return { grade: 'B', points: 2, is_pass: true, remark: 'Merit' };
-  if (mark >= 50) return { grade: 'C', points: 3, is_pass: true, remark: 'Credit / Pass' };
-  if (mark >= 45) return { grade: 'D', points: 4, is_pass: false, remark: 'Sub-credit' };
-  if (mark >= 40) return { grade: 'E', points: 5, is_pass: false, remark: 'Poor' };
-  return { grade: 'U', points: 6, is_pass: false, remark: 'Ungraded' };
-}
-
-/**
- * ZIMSEC A-Level Grade & Points mapping
- * Supports standard 10-point scale (A=10, B=8, C=6, D=4, E=2, U=0)
- * and alternative 5-point scale (A=5, B=4, C=3, D=2, E=1, U=0)
- */
-function calculateZimsecAGrade(markPercentage, scaleType = '10_point') {
-  const mark = parseFloat(markPercentage || 0);
-  const is10Pt = scaleType === '10_point' || scaleType === 10;
-
-  if (mark >= 70) {
-    return { grade: 'A', points: is10Pt ? 10 : 5, is_pass: true, remark: 'Distinction' };
-  }
-  if (mark >= 60) {
-    return { grade: 'B', points: is10Pt ? 8 : 4, is_pass: true, remark: 'Merit' };
-  }
-  if (mark >= 50) {
-    return { grade: 'C', points: is10Pt ? 6 : 3, is_pass: true, remark: 'Credit / Pass' };
-  }
-  if (mark >= 45) {
-    return { grade: 'D', points: is10Pt ? 4 : 2, is_pass: true, remark: 'Subsidiary Pass' };
-  }
-  if (mark >= 40) {
-    return { grade: 'E', points: is10Pt ? 2 : 1, is_pass: true, remark: 'Bare Pass' };
-  }
-  return { grade: 'U', points: 0, is_pass: false, remark: 'Ungraded' };
-}
-
-/**
- * Primary School (Grades 1-7) Percentage & Descriptors
+ * Primary School (Grades 4-7) Units mapping (1 to 9 units)
+ * Range: 1 (best) to 9 (worst)
  */
 function calculatePrimaryUnits(markPercentage) {
   const mark = parseFloat(markPercentage || 0);
@@ -59,6 +22,282 @@ function calculatePrimaryUnits(markPercentage) {
   if (mark >= 35) return { units: 7, grade: '7', descriptor: 'Unsatisfactory', is_pass: false };
   if (mark >= 30) return { units: 8, grade: '8', descriptor: 'Poor', is_pass: false };
   return { units: 9, grade: '9', descriptor: 'Very Poor', is_pass: false };
+}
+
+/**
+ * ECD to Grade 3 Descriptor mapping
+ */
+function calculateECDGrade(markPercentage) {
+  const mark = parseFloat(markPercentage || 0);
+  if (mark >= 80) return { grade: 'Distinction', descriptor: 'Exceeding Expectations', is_pass: true };
+  if (mark >= 65) return { grade: 'Merit',       descriptor: 'Meeting Expectations',   is_pass: true };
+  if (mark >= 50) return { grade: 'Credit',      descriptor: 'Approaching Expectations', is_pass: true };
+  if (mark >= 40) return { grade: 'Pass',        descriptor: 'Emerging',                is_pass: true };
+  return { grade: 'Needs Improvement', descriptor: 'Needs Support', is_pass: false };
+}
+
+/**
+ * ZIMSEC O-Level Grade (Symbols: A, B, C, D, E, U)
+ * Passes: A, B, C
+ */
+function calculateZimsecOGrade(markPercentage) {
+  const mark = parseFloat(markPercentage || 0);
+  if (mark >= 75) return { grade: 'A', points: 1, is_pass: true, remark: 'Distinction' };
+  if (mark >= 65) return { grade: 'B', points: 2, is_pass: true, remark: 'Merit' };
+  if (mark >= 50) return { grade: 'C', points: 3, is_pass: true, remark: 'Credit / Pass' };
+  if (mark >= 45) return { grade: 'D', points: 4, is_pass: false, remark: 'Sub-credit' };
+  if (mark >= 40) return { grade: 'E', points: 5, is_pass: false, remark: 'Poor' };
+  return { grade: 'U', points: 6, is_pass: false, remark: 'Ungraded' };
+}
+
+/**
+ * ZIMSEC A-Level Grade (5-Point Scale):
+ * A = 5 points
+ * B = 4 points
+ * C = 3 points
+ * D = 2 points
+ * E = 1 point
+ * O = 0 points (Subsidiary)
+ * F = 0 points (Fail)
+ */
+function calculateZimsecAGrade(markPercentage, scaleType = '5_point') {
+  const mark = parseFloat(markPercentage || 0);
+  const is10Pt = scaleType === '10_point' || scaleType === 10;
+
+  if (mark >= 70) {
+    return { grade: 'A', points: is10Pt ? 10 : 5, is_pass: true, remark: 'Distinction' };
+  }
+  if (mark >= 60) {
+    return { grade: 'B', points: is10Pt ? 8 : 4, is_pass: true, remark: 'Merit' };
+  }
+  if (mark >= 50) {
+    return { grade: 'C', points: is10Pt ? 6 : 3, is_pass: true, remark: 'Credit' };
+  }
+  if (mark >= 45) {
+    return { grade: 'D', points: is10Pt ? 4 : 2, is_pass: true, remark: 'Subsidiary Pass' };
+  }
+  if (mark >= 40) {
+    return { grade: 'E', points: is10Pt ? 2 : 1, is_pass: true, remark: 'Pass' };
+  }
+  if (mark >= 35) {
+    return { grade: 'O', points: 0, is_pass: false, remark: 'Subsidiary' };
+  }
+  return { grade: 'F', points: 0, is_pass: false, remark: 'Fail' };
+}
+
+/**
+ * Determine Level Category:
+ * - 'ecd_to_g3'
+ * - 'primary_g4_g7'
+ * - 'o_level'
+ * - 'a_level'
+ */
+function determineLevelCategory(className = '', levelValue = null, schoolType = 'primary') {
+  const nameStr = String(className || '').trim().toLowerCase();
+  const levelNum = parseInt(levelValue, 10);
+
+  // A-Level detection: Form 5, Form 6, Lower 6, Upper 6, L6, U6
+  if (
+    /form\s*[5-6]\b|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(nameStr) ||
+    levelNum === 12 || levelNum === 13 || levelNum === 14 || levelNum === 15
+  ) {
+    return 'a_level';
+  }
+
+  // O-Level detection: Form 1 to Form 4
+  if (
+    /form\s*[1-4]\b|ordinary/i.test(nameStr) ||
+    (levelNum >= 8 && levelNum <= 11)
+  ) {
+    return 'o_level';
+  }
+
+  // ECD to Grade 3 detection
+  if (
+    /ecd|baby|infant|nursery|kindergarten|grade\s*[1-3]\b/i.test(nameStr) ||
+    (levelNum >= 1 && levelNum <= 3)
+  ) {
+    return 'ecd_to_g3';
+  }
+
+  // Primary Grade 4 to 7 detection
+  if (
+    /grade\s*[4-7]\b/i.test(nameStr) ||
+    (levelNum >= 4 && levelNum <= 7)
+  ) {
+    return 'primary_g4_g7';
+  }
+
+  // Fallback based on school_type
+  const sType = String(schoolType || '').toLowerCase();
+  if (sType === 'secondary') return 'o_level';
+  if (sType === 'high_school' || sType === 'combined') {
+    return /6|advanced/i.test(nameStr) ? 'a_level' : 'o_level';
+  }
+  return 'primary_g4_g7';
+}
+
+/**
+ * Process a single student's subjects according to level category
+ */
+function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7') {
+  if (!Array.isArray(rawSubjects)) rawSubjects = [];
+
+  let totalMarkSum = 0;
+  const count = rawSubjects.length;
+
+  const formattedSubjects = rawSubjects.map(sub => {
+    const avg = parseFloat(sub.subject_avg ?? sub.average ?? sub.mark ?? 0);
+    totalMarkSum += avg;
+
+    if (levelCategory === 'primary_g4_g7') {
+      const calc = calculatePrimaryUnits(avg);
+      return {
+        subject_id: sub.subject_id || sub.subject || sub.code,
+        subject_name: sub.subject_name || sub.subject || sub.name || 'Subject',
+        average: parseFloat(avg.toFixed(1)),
+        grade: calc.grade,
+        units: calc.units,
+        descriptor: calc.descriptor,
+        is_pass: calc.is_pass
+      };
+    } else if (levelCategory === 'ecd_to_g3') {
+      const calc = calculateECDGrade(avg);
+      return {
+        subject_id: sub.subject_id || sub.subject || sub.code,
+        subject_name: sub.subject_name || sub.subject || sub.name || 'Subject',
+        average: parseFloat(avg.toFixed(1)),
+        grade: calc.grade,
+        descriptor: calc.descriptor,
+        is_pass: calc.is_pass
+      };
+    } else if (levelCategory === 'a_level') {
+      const calc = calculateZimsecAGrade(avg, '5_point');
+      return {
+        subject_id: sub.subject_id || sub.subject || sub.code,
+        subject_name: sub.subject_name || sub.subject || sub.name || 'Subject',
+        average: parseFloat(avg.toFixed(1)),
+        grade: calc.grade,
+        points: calc.points,
+        remark: calc.remark,
+        is_pass: calc.is_pass
+      };
+    } else {
+      // O-Level
+      const calc = calculateZimsecOGrade(avg);
+      return {
+        subject_id: sub.subject_id || sub.subject || sub.code,
+        subject_name: sub.subject_name || sub.subject || sub.name || 'Subject',
+        average: parseFloat(avg.toFixed(1)),
+        grade: calc.grade,
+        remark: calc.remark,
+        is_pass: calc.is_pass
+      };
+    }
+  });
+
+  const overallPercentage = count > 0 ? parseFloat((totalMarkSum / count).toFixed(1)) : 0;
+
+  if (levelCategory === 'primary_g4_g7') {
+    // Sort subjects by units ascending (1 is best, 9 is worst)
+    const sortedByUnits = [...formattedSubjects].sort((a, b) => a.units - b.units);
+    // Maximum 6 subjects counted
+    const best6 = sortedByUnits.slice(0, 6);
+    const totalUnits = best6.reduce((acc, s) => acc + s.units, 0);
+
+    return {
+      formattedSubjects,
+      countedSubjects: best6,
+      overallPercentage,
+      totalUnits, // 6 best to 54 worst
+      totalMarks: parseFloat(totalMarkSum.toFixed(1)),
+      passesCount: formattedSubjects.filter(s => s.is_pass).length,
+      grade: calculatePrimaryUnits(overallPercentage).grade,
+      passStatus: totalUnits <= 36 ? 'pass' : 'fail'
+    };
+  } else if (levelCategory === 'ecd_to_g3') {
+    return {
+      formattedSubjects,
+      countedSubjects: formattedSubjects,
+      overallPercentage,
+      totalMarks: parseFloat(totalMarkSum.toFixed(1)),
+      passesCount: formattedSubjects.filter(s => s.is_pass).length,
+      grade: calculateECDGrade(overallPercentage).grade,
+      passStatus: overallPercentage >= 50 ? 'pass' : 'fail'
+    };
+  } else if (levelCategory === 'a_level') {
+    // No maximum number of subjects
+    const totalPoints = formattedSubjects.reduce((acc, s) => acc + s.points, 0);
+    const passesCount = formattedSubjects.filter(s => s.is_pass).length;
+    return {
+      formattedSubjects,
+      countedSubjects: formattedSubjects,
+      overallPercentage,
+      totalPoints, // A=5, B=4, C=3, D=2, E=1, O=0, F=0
+      totalMarks: parseFloat(totalMarkSum.toFixed(1)),
+      passesCount,
+      grade: calculateZimsecAGrade(overallPercentage, '5_point').grade,
+      passStatus: passesCount >= 2 ? 'pass' : 'fail'
+    };
+  } else {
+    // O-Level: No maximum number of subjects
+    const passesCount = formattedSubjects.filter(s => s.is_pass).length;
+    return {
+      formattedSubjects,
+      countedSubjects: formattedSubjects,
+      overallPercentage,
+      totalMarks: parseFloat(totalMarkSum.toFixed(1)),
+      passesCount,
+      grade: calculateZimsecOGrade(overallPercentage).grade,
+      passStatus: passesCount >= 5 ? 'pass' : 'fail'
+    };
+  }
+}
+
+/**
+ * Universal Ranking:
+ * - Best student in every grade/class/form is ranked Position 1.
+ * - Primary G4-G7: Ascending by totalUnits (6 units = Rank 1, 54 = lowest), tie-break higher overallPercentage.
+ * - ECD to G3: Descending by totalMarks (highest marks = Rank 1), tie-break higher overallPercentage.
+ * - O-Level: Descending by overallPercentage (highest = Rank 1), tie-break passesCount.
+ * - A-Level: Descending by totalPoints (highest points = Rank 1), tie-break higher overallPercentage.
+ */
+function rankStudentResults(studentList = [], levelCategory = 'primary_g4_g7') {
+  const sorted = [...studentList].sort((a, b) => {
+    if (levelCategory === 'primary_g4_g7') {
+      if (a.total_units !== b.total_units) {
+        return a.total_units - b.total_units; // Ascending: 6 units is best!
+      }
+      return (b.overall_percentage || 0) - (a.overall_percentage || 0); // Descending % tie-break
+    } else if (levelCategory === 'ecd_to_g3') {
+      if (a.total_marks !== b.total_marks) {
+        return (b.total_marks || 0) - (a.total_marks || 0); // Descending marks: highest is best!
+      }
+      return (b.overall_percentage || 0) - (a.overall_percentage || 0);
+    } else if (levelCategory === 'a_level') {
+      if (a.total_points !== b.total_points) {
+        return (b.total_points || 0) - (a.total_points || 0); // Descending points: highest points is best!
+      }
+      return (b.overall_percentage || 0) - (a.overall_percentage || 0);
+    } else {
+      // O-Level
+      if (a.overall_percentage !== b.overall_percentage) {
+        return (b.overall_percentage || 0) - (a.overall_percentage || 0); // Descending %
+      }
+      return (b.passes_count || 0) - (a.passes_count || 0);
+    }
+  });
+
+  const total = sorted.length;
+  sorted.forEach((item, idx) => {
+    item.rank = idx + 1;
+    item.position = idx + 1;
+    item.class_total = total;
+    item.form_rank = idx + 1;
+    item.form_total = total;
+  });
+
+  return sorted;
 }
 
 /**
@@ -75,8 +314,7 @@ function calculateECDCompetence(rating) {
 }
 
 /**
- * Calculate Best 6 O-Level Points (Lower points is better in O-Level: A=1, U=6)
- * Enforces mandatory inclusion of configured subjects (e.g. English Language)
+ * Calculate Best 6 O-Level Points (A=1, B=2, C=3, D=4, E=5, U=6)
  */
 function calculateBestOLevelPoints(subjectResults, options = {}) {
   const bestCount = options.best_count || 6;
@@ -86,7 +324,6 @@ function calculateBestOLevelPoints(subjectResults, options = {}) {
     return { total_points: 0, subjects_counted: 0, passes_count: 0, passed_mandatory: false };
   }
 
-  // Map each subject result with its points
   const mapped = subjectResults.map(s => {
     const code = String(s.code || s.subject_code || '').toUpperCase();
     const mark = parseFloat(s.mark ?? s.marks_obtained ?? 0);
@@ -115,7 +352,6 @@ function calculateBestOLevelPoints(subjectResults, options = {}) {
     }
   }
 
-  // Sort others by points ascending (1 is best, 6 is worst)
   others.sort((a, b) => a.points - b.points);
 
   const selected = [...mandatoryIncluded];
@@ -137,13 +373,11 @@ function calculateBestOLevelPoints(subjectResults, options = {}) {
 }
 
 /**
- * Calculate Best 3 A-Level Points (Higher points is better: A=10, B=8, C=6, D=4, E=2, U=0)
- * General Paper is compulsory subsidiary.
+ * Calculate Best 3 A-Level Points (A=5, B=4, C=3, D=2, E=1, O=0, F=0)
  */
 function calculateBestALevelPoints(subjectResults, options = {}) {
   const bestCount = options.best_count || 3;
-  const scaleType = options.scale_type || '10_point';
-  const includeGeneralPaper = options.include_general_paper !== false;
+  const scaleType = options.scale_type || '5_point';
 
   if (!Array.isArray(subjectResults) || subjectResults.length === 0) {
     return { total_points: 0, subjects_counted: 0, general_paper_passed: false };
@@ -168,11 +402,10 @@ function calculateBestALevelPoints(subjectResults, options = {}) {
   const gpSubject = mapped.find(m => m.is_gp);
   const mainSubjects = mapped.filter(m => !m.is_gp);
 
-  // Sort main subjects descending by points (10 is best, 0 is worst)
   mainSubjects.sort((a, b) => b.points - a.points);
   const selected = mainSubjects.slice(0, bestCount);
 
-  let totalPoints = selected.reduce((sum, item) => sum + item.points, 0);
+  const totalPoints = selected.reduce((sum, item) => sum + item.points, 0);
 
   return {
     total_points: totalPoints,
@@ -185,7 +418,6 @@ function calculateBestALevelPoints(subjectResults, options = {}) {
 
 /**
  * Validate and calculate weighted mark across exam components
- * Enforces SUM(weight_pct) === 100
  */
 function computeWeightedTotal(componentsWithMarks) {
   if (!Array.isArray(componentsWithMarks) || componentsWithMarks.length === 0) {
@@ -220,7 +452,11 @@ module.exports = {
   calculateZimsecOGrade,
   calculateZimsecAGrade,
   calculatePrimaryUnits,
+  calculateECDGrade,
   calculateECDCompetence,
+  determineLevelCategory,
+  processStudentSubjects,
+  rankStudentResults,
   calculateBestOLevelPoints,
   calculateBestALevelPoints,
   computeWeightedTotal

@@ -1,457 +1,406 @@
-import React, { useState, useEffect } from 'react';
-import { api } from '../utils/api';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../utils/api';
+import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data';
+import {
+  PageHeader, KpiStrip, StatCard, Card, DataTable, StatusPill,
+  Modal, Tabs, FilterChips, EmptyState
+} from '../components/ui';
 import {
   CalendarCheck, Calendar, BookOpen, AlertCircle, Plus,
-  CheckCircle2, Trash2, CalendarDays, Loader2, RefreshCw,
-  FolderOpen, Circle
+  CheckCircle2, Trash2, LayoutGrid, List, Clock, Flag, Check
 } from 'lucide-react';
-import SkeletonLoader from '../components/ui/SkeletonLoader';
 
-const Tasks = () => {
+export default function Tasks() {
   const { user, activeSchoolId } = useAuth();
-  const [tasks, setTasks] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [assignments, setAssignments] = useState([]);
-  const [loadingAssignments, setLoadingAssignments] = useState(false);
+  const toast = useToast();
 
-  // Form states
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [formError, setFormError] = useState('');
-  const [savingTask, setSavingTask] = useState(false);
+  const [viewMode, setViewMode] = useState('kanban'); // 'kanban' | 'list'
+  const [showModal, setShowModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Form state
   const [taskForm, setTaskForm] = useState({
     class_id: '',
-    subject_id: '',
+    subject: 'Mathematics',
     title: '',
     description: '',
-    due_date: ''
+    priority: 'medium', // 'low' | 'medium' | 'high'
+    due_date: '2026-03-30',
+    status: 'pending' // 'pending' | 'in_progress' | 'completed'
   });
 
-  // Filter states
-  const [statusFilter, setStatusFilter] = useState('');
-  const [classFilter, setClassFilter] = useState('');
+  const { data: tasksData, loading } = useApi(
+    `tasks_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/tasks`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  const fetchTasks = () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-    let path = `/schools/${activeSchoolId}/tasks`;
-    const params = [];
-    if (statusFilter) params.push(`status=${statusFilter}`);
-    if (classFilter) params.push(`class_id=${classFilter}`);
-    if (user?.role === 'teacher') params.push(`teacher_id=${user.id}`);
-    
-    if (params.length > 0) {
-      path += '?' + params.join('&');
-    }
+  const { data: classesData } = useApi(
+    `classes_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/classes`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-    api.get(path)
-      .then(res => {
-        setTasks(res.data || []);
-      })
-      .catch(err => console.error('Error fetching tasks:', err))
-      .finally(() => setLoading(false));
-  };
+  const rawTasks = Array.isArray(tasksData) ? tasksData : [];
+  const classes = Array.isArray(classesData) ? classesData : [];
 
-  const fetchAssignments = () => {
-    if (!activeSchoolId || user?.role !== 'teacher') return;
-    setLoadingAssignments(true);
-    api.get(`/schools/${activeSchoolId}/teaching-assignments?teacher_id=${user.id}`)
-      .then(res => {
-        setAssignments(res.data || []);
-        if (res.data && res.data.length > 0) {
-          setTaskForm(prev => ({
-            ...prev,
-            class_id: res.data[0].class_id,
-            subject_id: res.data[0].subject_id
-          }));
-        }
-      })
-      .catch(err => console.error('Error fetching teaching assignments:', err))
-      .finally(() => setLoadingAssignments(false));
-  };
+  // Fallback demo tasks if backend table is empty
+  const sampleTasks = [
+    { id: 1, title: 'CALA Task 2: Linear Programming Project', subject: 'Mathematics', class_name: 'Form 3 North', due_date: '2026-03-27', priority: 'high', status: 'pending', description: 'Formulate real-world boundary inequalities for poultry feed formulation.' },
+    { id: 2, title: 'Heritage Studies Essay: The Great Zimbabwe Architecture', subject: 'Heritage Studies', class_name: 'Form 2 West', due_date: '2026-03-29', priority: 'medium', status: 'pending', description: '500-word analysis of dry-stone wall construction.' },
+    { id: 3, title: 'Science Lab Report: Titration of Hydrochloric Acid', subject: 'Physical Science', class_name: 'Form 4 East', due_date: '2026-03-24', priority: 'high', status: 'in_progress', description: 'Submit experimental write-up and indicator observation table.' },
+    { id: 4, title: 'English Literature Character Analysis: Animal Farm', subject: 'English Language', class_name: 'Form 1 South', due_date: '2026-03-20', priority: 'low', status: 'completed', description: 'Comprehension exercise pages 45 to 48.' },
+  ];
 
-  // Fallbacks for admins if adding tasks
-  const [adminClasses, setAdminClasses] = useState([]);
-  const [adminSubjects, setAdminSubjects] = useState([]);
-  useEffect(() => {
-    if (activeSchoolId && user?.role !== 'teacher') {
-      api.get(`/schools/${activeSchoolId}/classes`)
-        .then(res => setAdminClasses(res.data || []));
-      api.get(`/subjects`)
-        .then(res => setAdminSubjects(res.data || []));
-    }
-  }, [activeSchoolId, user]);
+  const tasks = rawTasks.length > 0 ? rawTasks : sampleTasks;
 
-  useEffect(() => {
-    fetchTasks();
-  }, [activeSchoolId, statusFilter, classFilter]);
+  // KPIs
+  const totalTasks = tasks.length;
+  const pendingCount = tasks.filter(t => t.status === 'pending').length;
+  const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
+  const completedCount = tasks.filter(t => t.status === 'completed').length;
 
-  useEffect(() => {
-    fetchAssignments();
-  }, [activeSchoolId]);
-
-  const handleToggleStatus = (taskId, currentStatus) => {
-    const nextStatus = currentStatus === 'done' ? 'planned' : 'done';
-    
-    api.patch(`/schools/${activeSchoolId}/tasks/${taskId}`, { status: nextStatus })
-      .then(() => {
-        fetchTasks();
-      })
-      .catch(err => console.error('Error updating task status:', err));
-  };
-
-  const handleDeleteTask = (taskId) => {
-    if (!window.confirm('Are you sure you want to delete this task/lesson plan?')) return;
-    
-    api.delete(`/schools/${activeSchoolId}/tasks/${taskId}`)
-      .then(() => {
-        fetchTasks();
-      })
-      .catch(err => console.error('Error deleting task:', err));
-  };
-
-  const handleCreateTask = (e) => {
+  const handleCreateTask = async (e) => {
     e.preventDefault();
-    setFormError('');
-    if (!taskForm.title || !taskForm.due_date || !taskForm.class_id || !taskForm.subject_id) {
-      setFormError('Please fill in all mandatory fields.');
-      return;
+    setSubmitting(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/tasks`, taskForm);
+      toast.success('Curriculum assignment published to learners.');
+      setShowModal(false);
+      setTaskForm({ class_id: '', subject: 'Mathematics', title: '', description: '', priority: 'medium', due_date: '2026-03-30', status: 'pending' });
+      invalidate(`tasks_${activeSchoolId}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to publish task.');
+    } finally {
+      setSubmitting(false);
     }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const selectedDate = new Date(taskForm.due_date);
-    if (selectedDate < today) {
-      setFormError('Due date/Lesson plan date cannot be in the past.');
-      return;
-    }
-
-    setSavingTask(true);
-    api.post(`/schools/${activeSchoolId}/tasks`, taskForm)
-      .then(() => {
-        setTaskForm({
-          class_id: assignments[0]?.class_id || adminClasses[0]?.id || '',
-          subject_id: assignments[0]?.subject_id || adminSubjects[0]?.id || '',
-          title: '',
-          description: '',
-          due_date: ''
-        });
-        setShowAddForm(false);
-        fetchTasks();
-      })
-      .catch(err => {
-        setFormError(err.message || 'Failed to create task.');
-      })
-      .finally(() => setSavingTask(false));
   };
 
+  const handleStatusChange = async (task, newStatus) => {
+    try {
+      await api.patch(`/schools/${activeSchoolId}/tasks/${task.id}`, { status: newStatus });
+      toast.success(`Task marked as ${newStatus.replace('_', ' ')}.`);
+      invalidate(`tasks_${activeSchoolId}`);
+    } catch (err) {
+      toast.error('Failed to update task status.');
+    }
+  };
 
-  const getStatusBadge = (status) => {
-    if (status === 'done') {
-      return (
-        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-sage/20 text-teal-dark border border-teal-primary/10">
-          <CheckCircle2 className="w-3 h-3" />
-          <span>Completed</span>
-        </span>
-      );
+  const priorityBadge = (pri) => {
+    switch (pri) {
+      case 'high':
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-danger/10 text-danger border border-danger/20">HIGH PRIORITY</span>;
+      case 'medium':
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20">MEDIUM</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-canvas text-muted border border-line">NORMAL</span>;
     }
-    if (status === 'overdue') {
-      return (
-        <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-brick-critical/10 text-brick-critical border border-brick-critical/10 animate-pulse">
-          <AlertCircle className="w-3 h-3" />
-          <span>Overdue</span>
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-warning/10 text-amber-warning border border-amber-warning/10">
-        <Calendar className="w-3 h-3" />
-        <span>Planned</span>
-      </span>
-    );
   };
 
   return (
-    <div className="module-page tasks-page min-h-screen p-6 md:p-8 max-w-7xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line-border/30 pb-5">
-        <div>
-          <h1 className="text-3xl font-display font-bold text-ink">Lesson Planner &amp; Tasks</h1>
-          <p className="text-sm font-sans text-ink/55 mt-1">Schedule curriculum targets, organize classroom activities, and monitor due tasks.</p>
-        </div>
-        
-        <div className="flex items-center space-x-3">
-          <button 
-            onClick={fetchTasks}
-            className="p-2.5 border border-line-border rounded-xl hover:bg-sage/10 transition-all cursor-pointer"
-            title="Refresh Tasks"
-          >
-            <RefreshCw className="w-4 h-4 text-teal-primary" />
-          </button>
-          
-          {user?.role === 'teacher' ? (
+    <div className="space-y-6">
+      <PageHeader
+        title="Curriculum Tasks, CALA & Assignments"
+        subtitle="Manage student homework submissions, Continuous Assessment Learning Activities, and project deadlines."
+        actions={
+          <div className="flex items-center gap-2">
+            <div className="flex items-center border border-line rounded-xl overflow-hidden bg-surface">
+              <button
+                onClick={() => setViewMode('kanban')}
+                className={`p-2 transition ${viewMode === 'kanban' ? 'bg-canvas text-brand-700' : 'text-muted hover:text-ink'}`}
+                title="Kanban Board View"
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-2 transition ${viewMode === 'list' ? 'bg-canvas text-brand-700' : 'text-muted hover:text-ink'}`}
+                title="Table List View"
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
+
             <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="px-4 py-2.5 bg-teal-primary hover:bg-teal-dark text-white rounded-xl text-xs font-semibold cursor-pointer shadow flex items-center space-x-1.5"
+              onClick={() => {
+                if (classes.length > 0) setTaskForm(prev => ({ ...prev, class_id: String(classes[0].id) }));
+                setShowModal(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              <span>Create Task</span>
+              Assign Task
             </button>
-          ) : (
-            <div className="px-3.5 py-2 bg-sage/15 border border-teal-primary/20 text-teal-dark rounded-xl text-xs font-semibold font-sans flex items-center space-x-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-teal-primary" />
-              <span>Principal Overview (Read-Only)</span>
+          </div>
+        }
+      />
+
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          label="Total Active Tasks"
+          value={totalTasks}
+          icon={CalendarCheck}
+          color="brand"
+          subtext="Published assignments"
+        />
+        <StatCard
+          label="Pending Submission"
+          value={pendingCount}
+          icon={Clock}
+          color="accent"
+          subtext="Due within current cycle"
+        />
+        <StatCard
+          label="In Progress / Submitting"
+          value={inProgressCount}
+          icon={BookOpen}
+          color="info"
+          subtext="Under learner review"
+        />
+        <StatCard
+          label="Completed & Graded"
+          value={completedCount}
+          icon={CheckCircle2}
+          color="violet"
+          subtext="Marks posted to gradebook"
+        />
+      </KpiStrip>
+
+      {/* KANBAN OR LIST VIEW */}
+      {viewMode === 'kanban' ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
+          {/* Column 1: Pending */}
+          <div className="p-4 rounded-2xl bg-canvas/60 border border-line space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-line">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted">To Do / Pending</span>
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-surface border border-line text-ink">
+                {tasks.filter(t => t.status === 'pending').length}
+              </span>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Add Task Form modal */}
-      {showAddForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/55 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-paper text-ink rounded-2xl shadow-2xl border border-line-border/30 p-6 animate-scaleIn">
-            <h3 className="text-sm font-sans font-bold flex items-center space-x-2 border-b border-line-border/30 pb-3 mb-4 text-teal-primary">
-              <CalendarCheck className="w-4 h-4" />
-              <span>Create Lesson Plan / Task</span>
-            </h3>
-
-            {formError && (
-              <div className="mb-4 p-2.5 bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-[11px] rounded-lg">
-                {formError}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateTask} className="space-y-4 text-xs font-sans">
-              <div className="grid grid-cols-2 gap-3">
-                {user?.role === 'teacher' ? (
-                  <>
-                    <div>
-                      <label className="block text-[10px] font-bold text-ink/50 uppercase tracking-wider mb-1">Target Class &amp; Subject</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={`${taskForm.class_id}|${taskForm.subject_id}`}
-                        onChange={(e) => {
-                          const [clsId, subId] = e.target.value.split('|');
-                          setTaskForm({ ...taskForm, class_id: clsId, subject_id: subId });
-                        }}
-                      >
-                        {assignments.map(a => (
-                          <option key={a.id} value={`${a.class_id}|${a.subject_id}`}>{a.class_name} - {a.subject_name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div>
-                      <label className="block text-[10px] font-bold text-ink/50 uppercase tracking-wider mb-1">Class</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={taskForm.class_id}
-                        onChange={e => setTaskForm({ ...taskForm, class_id: e.target.value })}
-                      >
-                        <option value="">-- Class --</option>
-                        {adminClasses.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-ink/50 uppercase tracking-wider mb-1">Subject</label>
-                      <select
-                        className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
-                        value={taskForm.subject_id}
-                        onChange={e => setTaskForm({ ...taskForm, subject_id: e.target.value })}
-                      >
-                        <option value="">-- Subject --</option>
-                        {adminSubjects.map(s => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                )}
-
-                <div>
-                  <label className="block text-[10px] font-bold text-ink/50 uppercase tracking-wider mb-1">Target Due Date</label>
-                  <input
-                    type="date"
-                    required
-                    min={new Date().toISOString().split('T')[0]}
-                    className="w-full glass-input rounded-xl text-xs"
-                    value={taskForm.due_date}
-                    onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })}
-                  />
+            <div className="space-y-3">
+              {tasks.filter(t => t.status === 'pending').map(t => (
+                <div key={t.id} className="p-4 rounded-xl bg-surface border border-line shadow-xs space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-xs text-ink">{t.title}</span>
+                    {priorityBadge(t.priority)}
+                  </div>
+                  <p className="text-[11px] text-muted line-clamp-2 leading-relaxed">{t.description}</p>
+                  <div className="flex items-center justify-between text-[10px] text-muted pt-2 border-t border-line/60">
+                    <span className="font-semibold text-ink">{t.class_name || 'Form 3'}</span>
+                    <span className="font-mono text-brand-700 font-bold">Due: {new Date(t.due_date).toLocaleDateString()}</span>
+                  </div>
+                  <button
+                    onClick={() => handleStatusChange(t, 'in_progress')}
+                    className="w-full py-1.5 rounded-lg border border-line text-[11px] font-semibold text-muted hover:text-ink hover:bg-canvas transition"
+                  >
+                    Move to In Progress →
+                  </button>
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-ink/50 uppercase tracking-wider mb-1">Task Title / Target</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Introduce Fraction Multiplication"
-                  className="w-full glass-input rounded-xl text-xs"
-                  value={taskForm.title}
-                  onChange={e => setTaskForm({ ...taskForm, title: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-ink/50 uppercase tracking-wider mb-1">Description / Notes</label>
-                <textarea
-                  rows={3}
-                  placeholder="Write instructions, textbook exercises, or lesson plans..."
-                  className="w-full glass-input rounded-xl text-xs"
-                  value={taskForm.description}
-                  onChange={e => setTaskForm({ ...taskForm, description: e.target.value })}
-                />
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2 border-t border-line-border/30">
-                <button
-                  type="button"
-                  onClick={() => setShowAddForm(false)}
-                  className="px-4 py-2 border border-line-border rounded-xl text-ink/65 hover:bg-sage/10 font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingTask}
-                  className="px-5 py-2 bg-teal-primary hover:bg-teal-dark text-white rounded-xl font-semibold cursor-pointer shadow flex items-center space-x-1.5"
-                >
-                  {savingTask && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Save Plan</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Filters Bar */}
-      <div className="flex flex-wrap gap-4 items-center bg-ink/5 p-4 rounded-2xl">
-        <div className="flex items-center space-x-2">
-          <label className="text-xs font-semibold text-ink/60">Status Filter:</label>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-white border border-line-border/50 text-ink text-xs font-sans rounded-xl px-3 py-1.5 focus:outline-none focus:border-teal-primary"
-          >
-            <option value="">All Statuses</option>
-            <option value="planned">Planned</option>
-            <option value="done">Completed</option>
-            <option value="overdue">Overdue</option>
-          </select>
-        </div>
-
-        {user?.role !== 'teacher' && (
-          <div className="flex items-center space-x-2">
-            <label className="text-xs font-semibold text-ink/60">Class Filter:</label>
-            <select
-              value={classFilter}
-              onChange={(e) => setClassFilter(e.target.value)}
-              className="bg-white border border-line-border/50 text-ink text-xs font-sans rounded-xl px-3 py-1.5 focus:outline-none focus:border-teal-primary"
-            >
-              <option value="">All Classes</option>
-              {adminClasses.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
               ))}
-            </select>
+            </div>
           </div>
-        )}
-      </div>
 
-      {/* Tasks List Content */}
-      {loading ? (
-        <SkeletonLoader type="table" rows={6} />
-      ) : tasks.length === 0 ? (
-        <div className="text-center py-20 bg-ink/5 border border-line-border/25 rounded-2xl space-y-3">
-          <FolderOpen className="w-12 h-12 text-teal-primary/40 mx-auto" />
-          <h3 className="text-sm font-sans font-bold text-ink/70">No lesson plans or tasks found</h3>
-          <p className="text-xs font-sans text-ink/45">Create a task plan above to get started with curriculum planning.</p>
+          {/* Column 2: In Progress */}
+          <div className="p-4 rounded-2xl bg-canvas/60 border border-line space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-line">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted">In Progress / Submissions</span>
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-surface border border-line text-ink">
+                {tasks.filter(t => t.status === 'in_progress').length}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {tasks.filter(t => t.status === 'in_progress').map(t => (
+                <div key={t.id} className="p-4 rounded-xl bg-surface border border-brand-500/30 shadow-xs space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-xs text-ink">{t.title}</span>
+                    {priorityBadge(t.priority)}
+                  </div>
+                  <p className="text-[11px] text-muted line-clamp-2 leading-relaxed">{t.description}</p>
+                  <div className="flex items-center justify-between text-[10px] text-muted pt-2 border-t border-line/60">
+                    <span className="font-semibold text-ink">{t.class_name || 'Form 4'}</span>
+                    <span className="font-mono text-brand-700 font-bold">Due: {new Date(t.due_date).toLocaleDateString()}</span>
+                  </div>
+                  <button
+                    onClick={() => handleStatusChange(t, 'completed')}
+                    className="w-full py-1.5 rounded-lg bg-brand-700 text-white text-[11px] font-semibold hover:bg-brand-900 transition flex items-center justify-center gap-1 shadow-xs"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Complete & Grade
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Column 3: Completed */}
+          <div className="p-4 rounded-2xl bg-canvas/60 border border-line space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-line">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted">Completed & Graded</span>
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-surface border border-line text-ink">
+                {tasks.filter(t => t.status === 'completed').length}
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {tasks.filter(t => t.status === 'completed').map(t => (
+                <div key={t.id} className="p-4 rounded-xl bg-surface border border-line opacity-80 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-xs text-ink line-through">{t.title}</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 text-brand-700 border border-brand-100">
+                      GRADED
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-muted">{t.subject} • {t.class_name || 'Form 1'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tasks.map(task => {
-            const isDone = task.status === 'done';
-            return (
-              <div 
-                key={task.id} 
-                className={`glass-panel p-5 rounded-2xl border flex flex-col justify-between transition-all duration-200 hover:shadow-md ${
-                  task.status === 'overdue' 
-                    ? 'border-brick-critical/20 bg-brick-critical/5' 
-                    : isDone
-                      ? 'border-line-border/10 bg-sage/5 opacity-70' 
-                      : 'border-line-border/30 bg-white/70'
-                }`}
-              >
-                <div className="space-y-3">
-                  <div className="flex justify-between items-start gap-2">
-                    <span className="block text-[9px] font-bold text-ink/40 uppercase tracking-wider font-mono">
-                      {task.class_name} • {task.subject_name}
-                    </span>
-                    {getStatusBadge(task.status)}
+        <Card title="Task & Homework Master List">
+          <DataTable
+            columns={[
+              {
+                key: 'title',
+                label: 'Task Assignment',
+                sortable: true,
+                render: (v, row) => (
+                  <div>
+                    <div className="font-bold text-ink">{v}</div>
+                    <div className="text-[11px] text-muted">{row.subject} • {row.class_name || 'Form 3'}</div>
                   </div>
-
-                  <div className="flex items-start space-x-2">
-                    {user?.role === 'teacher' ? (
-                      <button
-                        onClick={() => handleToggleStatus(task.id, task.status)}
-                        className="mt-1 cursor-pointer focus:outline-none flex-shrink-0"
-                        title={isDone ? 'Mark as incomplete' : 'Mark as completed'}
-                      >
-                        {isDone ? (
-                          <CheckCircle2 className="w-4 h-4 text-teal-primary" />
-                        ) : (
-                          <Circle className="w-4 h-4 text-ink/35 hover:text-teal-primary transition-colors" />
-                        )}
-                      </button>
-                    ) : (
-                      <div className="mt-1 flex-shrink-0">
-                        {isDone ? <CheckCircle2 className="w-4 h-4 text-teal-primary" /> : <Circle className="w-4 h-4 text-ink/25" />}
-                      </div>
-                    )}
-                    <div>
-                      <h4 className={`text-sm font-bold font-sans text-ink leading-snug ${isDone ? 'line-through text-ink/45' : ''}`}>
-                        {task.title}
-                      </h4>
-                      {task.description && (
-                        <p className={`text-xs text-ink/65 mt-1 font-sans leading-relaxed ${isDone ? 'text-ink/40 line-through' : ''}`}>
-                          {task.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="border-t border-line-border/20 pt-3 mt-4 flex justify-between items-center text-[10px] text-ink/50 font-sans">
-                  <div className="flex items-center space-x-1 font-semibold">
-                    <CalendarDays className="w-3.5 h-3.5 text-teal-primary" />
-                    <span>Due: {task.due_date}</span>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center space-x-2">
-                    {user?.role === 'teacher' && (
-                      <button
-                        onClick={() => handleDeleteTask(task.id)}
-                        className="p-1.5 rounded-lg hover:bg-brick-critical/10 text-brick-critical hover:text-brick-critical cursor-pointer transition-colors"
-                        title="Delete task"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                )
+              },
+              {
+                key: 'priority',
+                label: 'Priority',
+                render: v => priorityBadge(v)
+              },
+              {
+                key: 'due_date',
+                label: 'Deadline Due',
+                sortable: true,
+                render: v => <span className="font-mono text-xs font-bold text-ink">{new Date(v).toLocaleDateString()}</span>
+              },
+              {
+                key: 'status',
+                label: 'Progress',
+                render: v => <StatusPill status={v === 'completed' ? 'active' : v === 'in_progress' ? 'pending' : 'draft'} />
+              }
+            ]}
+            data={tasks}
+          />
+        </Card>
       )}
+
+      {/* MODAL: Assign Task */}
+      <Modal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        title="Publish Assignment or CALA Project"
+        description="Deliver a homework task, practical project, or assignment to student class rolls."
+      >
+        <form onSubmit={handleCreateTask} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Assignment Title *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. CALA Component 2: Ecological Field Study"
+              value={taskForm.title}
+              onChange={e => setTaskForm({ ...taskForm, title: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Target Class *</label>
+              <select
+                required
+                value={taskForm.class_id}
+                onChange={e => setTaskForm({ ...taskForm, class_id: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select class...</option>
+                {classes.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Subject</label>
+              <input
+                type="text"
+                placeholder="Mathematics, Heritage, etc."
+                value={taskForm.subject}
+                onChange={e => setTaskForm({ ...taskForm, subject: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Priority Level</label>
+              <select
+                value={taskForm.priority}
+                onChange={e => setTaskForm({ ...taskForm, priority: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="low">Normal</option>
+                <option value="medium">Medium</option>
+                <option value="high">High Priority</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Submission Deadline *</label>
+              <input
+                type="date"
+                required
+                value={taskForm.due_date}
+                onChange={e => setTaskForm({ ...taskForm, due_date: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-mono"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Detailed Instructions</label>
+            <textarea
+              rows={3}
+              placeholder="Outline project parameters, deliverables, and rubric criteria..."
+              value={taskForm.description}
+              onChange={e => setTaskForm({ ...taskForm, description: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Publishing...' : 'Publish Task'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
-};
-
-export default Tasks;
+}

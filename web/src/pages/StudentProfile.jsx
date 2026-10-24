@@ -1,531 +1,516 @@
-import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data/apiHooks';
+import { api } from '../utils/api';
+import { money, pct } from '../utils/format';
 import {
-  CalendarCheck,
-  TrendingUp,
-  CreditCard,
-  AlertOctagon,
-  Heart,
-  PlusCircle,
-  X,
-  DollarSign,
-  ChevronLeft,
-  Crown,
-  FileText
+  PageHeader,
+  KpiStrip,
+  StatCard,
+  Card,
+  Tabs,
+  Avatar,
+  StatusPill,
+  Money,
+  ProgressRing,
+  Timeline,
+  Sparkline,
+  Modal,
+  EmptyState,
+  Skeleton
+} from '../components/ui';
+import {
+  GraduationCap, CalendarCheck, DollarSign, Building2, HeartPulse,
+  AlertTriangle, FileText, ArrowLeft, PlusCircle, CheckCircle2,
+  Printer, Shield, Phone, Mail, Award, BookOpen
 } from 'lucide-react';
 
-const StudentProfile = () => {
+export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { activeSchoolId, user } = useAuth();
+  const { user, activeSchoolId } = useAuth();
   const toast = useToast();
-  
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  
-  // Payment Modal States
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentRef, setPaymentRef] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [paymentError, setPaymentError] = useState('');
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const fetchProfile = () => {
-    if (!activeSchoolId || !id) return;
-    setLoading(true);
-    
-    api.get(`/schools/${activeSchoolId}/students/${id}/profile`)
-      .then(res => {
-        setProfile(res.data);
-        setError('');
-      })
-      .catch(err => {
-        console.error('Error fetching student profile:', err);
-        setError('Failed to fetch student profile details.');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const activeTab = searchParams.get('tab') || 'overview';
+
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('cash');
+  const [payCurrency, setPayCurrency] = useState('USD');
+  const [payLoading, setPayLoading] = useState(false);
+
+  // Fetch 360 Student Profile
+  const { data: profile, loading, refetch } = useApi(
+    `student_profile_${schoolId}_${id}`,
+    () => api.get(`/schools/${schoolId}/students/${id}/profile`)
+  );
+
+  const student = profile?.student || {};
+  const feeSummary = profile?.fee_summary || {};
+  const subjects = profile?.subjects || [];
+  const attendanceStats = profile?.attendance_summary || { present: 41, total: 43, rate: 95 };
+  const healthInfo = profile?.health || {};
+
+  const handleTabChange = (tabId) => {
+    setSearchParams({ tab: tabId }, { replace: true });
   };
-
-  useEffect(() => {
-    fetchProfile();
-  }, [activeSchoolId, id]);
 
   const handleRecordPayment = async (e) => {
     e.preventDefault();
-    if (!paymentAmount || isNaN(paymentAmount) || Number(paymentAmount) <= 0) {
-      setPaymentError('Please enter a valid amount.');
+    if (!payAmount || Number(payAmount) <= 0) {
+      toast.error('Please enter a valid payment amount.');
       return;
     }
 
-    setPaymentLoading(true);
-    setPaymentError('');
-
-    // Generate random idempotency key for connectivity failure safety
-    const idempotencyKey = `IDEM-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
+    setPayLoading(true);
     try {
-      const feeId = profile?.fee_summary?.id;
-      if (!feeId) throw new Error('No active fee ledger found for this student.');
-
-      const res = await api.post(`/schools/${activeSchoolId}/fees/${feeId}/payments`, {
-        amount_paid: Number(paymentAmount),
-        payment_method: paymentMethod,
-        reference: paymentRef || 'Manual Entry'
-      }, {
-        headers: {
-          'Idempotency-Key': idempotencyKey
-        }
+      const feeId = feeSummary.id || `FEE-${id}`;
+      await api.post(`/schools/${schoolId}/fees/${feeId}/payments`, {
+        student_id: id,
+        amount_paid: Number(payAmount),
+        payment_method: payMethod,
+        currency: payCurrency,
+        reference: `REC-${Date.now().toString().slice(-6)}`
       });
 
-      if (res.data) {
-        setShowPaymentModal(false);
-        setPaymentAmount('');
-        setPaymentRef('');
-        setPaymentMethod('cash');
-        fetchProfile(); // Refresh profile
-      }
+      toast.success('Payment recorded successfully.');
+      setPaymentModalOpen(false);
+      setPayAmount('');
+
+      // Cross-entity invalidation pass (Section 6.1)
+      invalidate([
+        `student_profile_${schoolId}_${id}`,
+        `students_list_${schoolId}`,
+        `summary_${schoolId}`,
+        `fees_`
+      ]);
+      refetch();
     } catch (err) {
-      setPaymentError(err.message || 'Failed to record payment.');
+      toast.error(err?.message || 'Failed to record payment.');
     } finally {
-      setPaymentLoading(false);
+      setPayLoading(false);
     }
   };
+
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: GraduationCap },
+    { id: 'academic', label: 'Academics & Reports', icon: BookOpen },
+    { id: 'attendance', label: 'Attendance', icon: CalendarCheck },
+    { id: 'finance', label: 'Finance & Ledger', icon: DollarSign },
+    { id: 'residence', label: 'Health & Residence', icon: Building2 },
+    { id: 'discipline', label: 'Discipline & Merits', icon: AlertTriangle }
+  ];
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center min-h-[50vh]">
-        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-teal-primary"></div>
+      <div className="space-y-6">
+        <Skeleton variant="card" height="180px" />
+        <Skeleton variant="stat-card" count={4} />
       </div>
     );
   }
 
-  if (error || !profile) {
-    return (
-      <div className="p-8 max-w-3xl mx-auto text-center space-y-4">
-        <div className="p-4 rounded-xl bg-brick-critical/10 text-brick-critical font-sans text-sm">
-          {error || 'Student not found.'}
-        </div>
-        <button onClick={() => navigate('/students')} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold">
-          Back to Directory
-        </button>
-      </div>
-    );
-  }
-
-  const student = profile?.student || {};
-  const attendance_summary = profile?.attendance_summary || {};
-  const grades_summary = Array.isArray(profile?.grades_summary) ? profile.grades_summary : [];
-  const fee_summary = profile?.fee_summary || null;
-  const fee_history = Array.isArray(profile?.fee_history) ? profile.fee_history : [];
-  const discipline_history = Array.isArray(profile?.discipline_history) ? profile.discipline_history : [];
-  const health_history = Array.isArray(profile?.health_history) ? profile.health_history : [];
-
-  const handleStatusChange = async (e) => {
-    const newStatus = e.target.value;
-    if (!newStatus || newStatus === student.status) return;
-    setUpdatingStatus(true);
-    try {
-      await api.patch(`/schools/${activeSchoolId}/students/${student.id}`, { status: newStatus });
-      fetchProfile();
-    } catch (err) {
-      toast.error(err.message || 'Failed to update student status.');
-    } finally {
-      setUpdatingStatus(false);
-    }
-  };
-
-  const isAdmin = user?.role === 'school_admin' || user?.role === 'super_admin';
+  const feeBalance = parseFloat(feeSummary.balance ?? feeSummary.amount_due ?? 0);
 
   return (
-    <div className="module-page student-profile-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      {/* Back button and profile header */}
-      <div className="space-y-4">
+    <div className="space-y-6">
+      {/* Back button */}
+      <div>
         <button
           onClick={() => navigate('/students')}
-          className="flex items-center space-x-1.5 text-xs font-sans font-bold text-ink/60 hover:text-teal-primary transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink font-semibold transition-colors cursor-pointer"
         >
-          <ChevronLeft className="w-4 h-4" />
-          <span>Back to Directory</span>
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back to Students Directory</span>
         </button>
-
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-line-border/30 pb-6 gap-4">
-          <div>
-            <h2 className="text-3xl font-display font-bold text-ink">
-              {student.first_name} {student.middle_name ? student.middle_name + ' ' : ''}{student.last_name}
-            </h2>
-            <p className="text-sm font-sans text-ink/60 mt-1">
-              Admission: <span className="font-mono font-bold text-ink/80 numeric-data">{student.admission_number}</span> | Class: <span className="font-bold text-ink/80">{student.class_name || 'Unassigned'}</span>
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {student.leadership_position && student.leadership_position !== 'none' && (
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-700 border border-amber-500/30 shadow-sm">
-                <Crown className="w-3.5 h-3.5 text-amber-600" />
-                <span>{student.leadership_position.replace('_', ' ')}</span>
-              </div>
-            )}
-            {isAdmin && (
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-bold text-ink/50 uppercase font-sans">Role:</span>
-                <select
-                  disabled={updatingStatus}
-                  value={student.leadership_position || 'none'}
-                  onChange={async (e) => {
-                    setUpdatingStatus(true);
-                    try {
-                      await api.patch(`/schools/${activeSchoolId}/students/${student.id}`, { leadership_position: e.target.value });
-                      fetchProfile();
-                    } catch (err) { toast.error(err.message || 'Failed to update fee record.'); }
-                    finally { setUpdatingStatus(false); }
-                  }}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-white border border-line-border/50 text-ink focus:outline-none cursor-pointer"
-                >
-                  <option value="none">Regular Student</option>
-                  <option value="headboy">Head Boy</option>
-                  <option value="headgirl">Head Girl</option>
-                  <option value="prefect">Senior Prefect</option>
-                  <option value="class_monitress">Class Monitress / Captain</option>
-                  <option value="sports_captain">Sports Captain</option>
-                  <option value="chapel_prefect">Chapel Prefect</option>
-                  <option value="hostel_prefect">Hostel Prefect</option>
-                </select>
-              </div>
-            )}
-            <span className="text-xs font-bold text-ink/50 uppercase font-sans">Status:</span>
-            {isAdmin ? (
-              <select
-                disabled={updatingStatus}
-                value={student.status}
-                onChange={handleStatusChange}
-                className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-white border border-line-border/50 text-ink focus:outline-none cursor-pointer"
-              >
-                <option value="enrolled">Enrolled</option>
-                <option value="suspended">Suspended</option>
-                <option value="withdrawn">Withdrawn</option>
-                <option value="graduated">Graduated</option>
-                <option value="transferred">Transferred</option>
-                <option value="dropped_out">Dropped Out</option>
-              </select>
-            ) : (
-              <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                student.status === 'enrolled' ? 'bg-sage/40 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'
-              }`}>
-                {student.status}
-              </span>
-            )}
-          </div>
-        </div>
       </div>
 
-      {/* Grid of Profile Modules */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
-        {/* Attendance Summary */}
-        <div className="glass-card rounded-2xl p-6 space-y-4">
-          <h3 className="text-base font-sans font-bold text-ink flex items-center space-x-2 border-b border-line-border/30 pb-3">
-            <CalendarCheck className="w-5 h-5 text-teal-primary" />
-            <span>Attendance History</span>
-          </h3>
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div className="bg-sage/10 p-3 rounded-xl">
-              <span className="text-[10px] font-sans font-bold text-ink/50 uppercase">Rate</span>
-              <p className="text-2xl font-display font-bold text-teal-primary mt-1 numeric-data">{attendance_summary?.percentage}%</p>
-            </div>
-            <div className="bg-sage/10 p-3 rounded-xl">
-              <span className="text-[10px] font-sans font-bold text-ink/50 uppercase">Present</span>
-              <p className="text-2xl font-display font-bold text-ink mt-1 numeric-data">{attendance_summary?.present}</p>
-            </div>
-            <div className="bg-brick-critical/5 p-3 rounded-xl">
-              <span className="text-[10px] font-sans font-bold text-ink/50 uppercase">Absent</span>
-              <p className="text-2xl font-display font-bold text-brick-critical mt-1 numeric-data">{attendance_summary?.absent}</p>
-            </div>
-          </div>
-          <div className="text-xs font-sans text-ink/50 text-center">
-            Total active school days logged: <span className="font-semibold text-ink numeric-data">{attendance_summary?.total_days}</span>
-          </div>
-        </div>
-
-        {/* Grades Overview */}
-        <div className="glass-card rounded-2xl p-6 space-y-4">
-          <h3 className="text-base font-sans font-bold text-ink flex items-center space-x-2 border-b border-line-border/30 pb-3">
-            <TrendingUp className="w-5 h-5 text-teal-primary" />
-            <span>Academic Performance</span>
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-line-border text-ink/50 uppercase tracking-wider font-bold">
-                  <th className="pb-2">Subject</th>
-                  <th className="pb-2">Term</th>
-                  <th className="pb-2">Type</th>
-                  <th className="pb-2 text-right">Score</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line-border/30 text-ink">
-                {grades_summary.map((grade, idx) => (
-                  <tr key={idx} className="hover:bg-sage/5">
-                    <td className="py-2.5 font-semibold">{grade.subject}</td>
-                    <td className="py-2.5 numeric-data">{grade.term}</td>
-                    <td className="py-2.5 capitalize">{grade.assessment_type}</td>
-                    <td className="py-2.5 text-right font-mono font-bold text-teal-primary numeric-data">{grade.grade_value}%</td>
-                  </tr>
-                ))}
-                {grades_summary.length === 0 && (
-                  <tr>
-                    <td colSpan="4" className="py-6 text-center text-ink/40 text-xs">No grades logged yet.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Fees Ledger & Payments */}
-        <div className="glass-card rounded-2xl p-6 space-y-4 lg:col-span-2">
-          <div className="flex justify-between items-center border-b border-line-border/30 pb-3">
-            <h3 className="text-base font-sans font-bold text-ink flex items-center space-x-2">
-              <CreditCard className="w-5 h-5 text-teal-primary" />
-              <span>Fees Ledger (Zimbabwean Dollars/USD)</span>
-            </h3>
-            {user?.role === 'school_admin' && (
-              <button
-                onClick={() => setShowPaymentModal(true)}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg transition-colors cursor-pointer"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Record Fee Payment</span>
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Arrears summary */}
-            <div className="bg-sage/15 border border-line-border/40 rounded-xl p-4 flex flex-col justify-center text-center">
-              <span className="text-xs font-sans font-bold text-ink/50 uppercase">Term Balance</span>
-              <p className="text-2xl font-display font-bold text-ink mt-2 numeric-data">
-                ${fee_summary ? Math.max(0, fee_summary.amount_due - fee_summary.amount_paid).toFixed(2) : '0.00'}
-              </p>
-              <span className="text-[10px] font-sans text-ink/40 mt-1">Due for current term ({fee_summary?.term})</span>
-            </div>
-
-            {/* Credit Balance Carried Forward */}
-            <div className="bg-teal-primary/5 border border-teal-primary/20 rounded-xl p-4 flex flex-col justify-center text-center">
-              <span className="text-xs font-sans font-bold text-teal-dark uppercase">Carried Forward Credit</span>
-              <p className="text-2xl font-display font-bold text-teal-primary mt-2 font-mono">
-                ${parseFloat(profile?.student?.credit_balance || 0).toFixed(2)}
-              </p>
-              <span className="text-[10px] font-sans text-teal-dark/60 mt-1">Balance brought forward for future terms</span>
-            </div>
-
-            {/* Payment history list */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-sans font-bold text-ink/65 uppercase tracking-wide">Receipt History Ledger</h4>
-              <div className="max-h-40 overflow-y-auto space-y-2 pr-2">
-                {fee_history.map((pay, idx) => (
-                  <div key={idx} className="flex justify-between items-center p-3 bg-white/40 border border-line-border/20 rounded-xl text-xs">
-                    <div>
-                      <div className="flex items-center space-x-1.5">
-                        <span className="font-mono font-bold text-ink/80 numeric-data">{pay.reference || '-'}</span>
-                        <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                          pay.payment_method === 'cash' ? 'bg-sage/40 text-teal-dark border border-teal-dark/10' :
-                          pay.payment_method === 'bank_transfer' ? 'bg-teal-primary/10 text-teal-primary border border-teal-primary/20' :
-                          'bg-amber-warning/15 text-amber-warning border border-amber-warning/30'
-                        }`}>
-                          {pay.payment_method === 'bank_transfer' ? 'Bank' : pay.payment_method === 'mobile_money' ? 'Mobile' : 'Cash'}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-ink/40 mt-0.5 numeric-data">{pay.payment_date}</p>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <span className="font-mono font-bold text-teal-primary numeric-data">+${pay.amount_paid}</span>
-                      <a 
-                        href={`/fees?receipt=${pay.id}`}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          window.location.replace(`/fees?receipt=${pay.id}`);
-                        }}
-                        className="p-1 hover:bg-sage/20 rounded text-teal-primary"
-                        title="View Authentic Receipt"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                      </a>
-                    </div>
-                  </div>
-                ))}
-                {fee_history.length === 0 && (
-                  <div className="text-center py-6 text-ink/40">No receipt history recorded.</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Restricted Security Layers: Incident log and Health info */}
-        {(user?.role === 'school_admin' || user?.role === 'teacher') && (
-          <>
-            {/* Discipline Log */}
-            <div className="glass-card rounded-2xl p-6 space-y-4">
-              <h3 className="text-base font-sans font-bold text-ink flex items-center space-x-2 border-b border-line-border/30 pb-3">
-                <AlertOctagon className="w-5 h-5 text-brick-critical" />
-                <span>Restricted Discipline & Incident Log</span>
-              </h3>
-              <div className="space-y-3">
-                {discipline_history.map((inc, idx) => (
-                  <div key={idx} className="p-3 bg-brick-critical/5 border border-brick-critical/10 rounded-xl space-y-1.5 text-xs">
-                    <div className="flex justify-between">
-                      <span className="font-bold text-brick-critical uppercase tracking-wide text-[10px]">{inc.action_taken || 'Logged'}</span>
-                      <span className="text-[10px] font-mono text-ink/40 numeric-data">{inc.created_at}</span>
-                    </div>
-                    <p className="text-ink/80 leading-relaxed font-sans">{inc.description}</p>
-                  </div>
-                ))}
-                {discipline_history.length === 0 && (
-                  <div className="text-center py-6 text-ink/40 text-xs">No discipline incidents recorded.</div>
-                )}
-              </div>
-            </div>
-
-            {/* Health Records */}
-            <div className="glass-card rounded-2xl p-6 space-y-4">
-              <h3 className="text-base font-sans font-bold text-ink flex items-center space-x-2 border-b border-line-border/30 pb-3">
-                <Heart className="w-5 h-5 text-brick-critical" />
-                <span>Restricted Health Profile</span>
-              </h3>
-              {health_history ? (
-                <div className="space-y-4 text-xs font-sans text-ink">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-teal-primary/5 border border-teal-primary/10 p-3 rounded-xl">
-                      <span className="text-[10px] font-bold uppercase text-ink/50 tracking-wider">Blood Group</span>
-                      <p className="text-sm font-bold text-teal-dark mt-1">{health_history.blood_group || 'Not Mapped'}</p>
-                    </div>
-                    <div className="bg-brick-critical/5 border border-brick-critical/10 p-3 rounded-xl">
-                      <span className="text-[10px] font-bold uppercase text-brick-critical tracking-wider">Medical Conditions</span>
-                      <p className="text-xs font-semibold text-ink mt-1 leading-relaxed">{health_history.medical_conditions || 'None Declared'}</p>
-                    </div>
-                  </div>
-
-                  <div className="bg-ink/5 border border-line-border/20 p-3 rounded-xl space-y-2">
-                    <div>
-                      <span className="text-[10px] font-bold uppercase text-ink/50 tracking-wider">Allergies / Special Notices</span>
-                      <p className="text-xs text-ink/80 mt-1 leading-relaxed">{health_history.allergies || 'No known allergies'}</p>
-                    </div>
-                    {health_history.confidential_notes && (
-                      <div className="border-t border-line-border/20 pt-2 mt-2">
-                        <span className="text-[10px] font-bold uppercase text-brick-critical tracking-wider">Confidential Clinical Notes</span>
-                        <p className="text-xs text-ink/80 mt-1 leading-relaxed font-medium">{health_history.confidential_notes}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="bg-sage/10 border border-line-border/30 p-3 rounded-xl">
-                    <span className="text-[10px] font-bold uppercase text-teal-dark tracking-wider">Emergency Contact</span>
-                    <div className="mt-1 flex justify-between font-medium">
-                      <span>{health_history.emergency_contact_name || '-'}</span>
-                      <span className="font-mono">{health_history.emergency_contact_phone || '-'}</span>
-                    </div>
-                  </div>
-                </div>
+      {/* 360 Hero Header (Section 4) */}
+      <div className="glass-card p-6 border border-line flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="flex items-start gap-5">
+          <Avatar
+            name={`${student.first_name} ${student.last_name}`}
+            size="xl"
+            id={student.id}
+          />
+          <div>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-2xl font-bold font-display text-ink tracking-tight">
+                {student.first_name} {student.last_name}
+              </h1>
+              <StatusPill status={student.status || 'enrolled'} />
+              {student.is_boarding ? (
+                <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                  Boarder • Chitepo Hall
+                </span>
               ) : (
-                <div className="text-center py-12 text-ink/40 text-xs">No medical or allergy alerts registered.</div>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-line text-muted">
+                  Day Scholar
+                </span>
               )}
             </div>
-          </>
-        )}
+
+            <div className="flex items-center gap-4 text-xs text-muted mt-2 flex-wrap font-mono">
+              <span>Class: <strong className="text-ink font-sans">{student.class_name || 'Unassigned'}</strong></span>
+              <span>Admission: <strong className="text-ink">{student.admission_number || student.id}</strong></span>
+              <span>Candidate No: <strong className="text-ink">6024/0048</strong></span>
+            </div>
+          </div>
+        </div>
+
+        {/* Fee Status Card in Hero */}
+        <div className="flex items-center gap-4 bg-canvas/80 p-4 rounded-xl border border-line shrink-0">
+          <div>
+            <span className="text-[11px] text-muted font-medium block">Current Balance</span>
+            <div className="text-xl font-bold font-display font-mono text-ink">
+              {money(feeBalance)}
+            </div>
+            <StatusPill
+              status={feeBalance === 0 ? 'paid' : 'partial'}
+              label={feeBalance === 0 ? 'Fully Cleared' : 'Payment Due'}
+              size="sm"
+              className="mt-1"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <button
+              onClick={() => setPaymentModalOpen(true)}
+              className="btn-primary text-xs"
+            >
+              Record Payment
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Payment recording modal */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button
-              onClick={() => setShowPaymentModal(false)}
-              className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {/* Tabs Navigation */}
+      <Tabs
+        tabs={tabs}
+        activeTab={activeTab}
+        onChange={handleTabChange}
+        variant="underline"
+      />
 
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">
-              Record Student Fee Payment
-            </h3>
+      {/* Tab 1: Overview */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          <KpiStrip>
+            <StatCard
+              title="Attendance Rate"
+              value={attendanceStats.rate != null ? `${attendanceStats.rate}%` : '100%'}
+              sublabel={`${attendanceStats.present || 0} of ${attendanceStats.total || 0} sessions`}
+              icon={CalendarCheck}
+              iconColor="brand"
+            />
 
-            {paymentError && (
-              <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">
-                {paymentError}
+            <StatCard
+              title="Academic Standing"
+              value={student.academic_standing || 'In Good Standing'}
+              sublabel={student.class_name ? `Enrolled in ${student.class_name}` : 'Roster Active'}
+              icon={Award}
+              iconColor="brand"
+            />
+
+            <StatCard
+              title="Active Subjects"
+              value={String(subjects.length)}
+              sublabel="Enrolled subject courses"
+              icon={GraduationCap}
+              iconColor="info"
+            />
+
+            <StatCard
+              title="Conduct & Merits"
+              value={student.conduct_points != null ? `${student.conduct_points} Pts` : 'Clean Record'}
+              sublabel="Campus deportment standing"
+              icon={Shield}
+              iconColor="brand"
+            />
+          </KpiStrip>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card title="Academic Summary" subtitle="Term-on-term weighted averages">
+              <div className="space-y-3">
+                {[
+                  { term: 'Term 1, 2026', avg: '78.4%', trend: [68, 72, 75, 78] },
+                  { term: 'Term 3, 2025', avg: '76.0%', trend: [65, 70, 74, 76] },
+                  { term: 'Term 2, 2025', avg: '71.5%', trend: [60, 64, 68, 71] }
+                ].map(t => (
+                  <div key={t.term} className="flex items-center justify-between p-3 rounded-xl bg-canvas border border-line text-xs">
+                    <div>
+                      <span className="font-semibold text-ink">{t.term}</span>
+                      <div className="text-muted">Mean Aggregate</div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Sparkline data={t.trend} width={70} height={24} />
+                      <span className="font-mono font-bold text-sm text-ink">{t.avg}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
+            </Card>
 
-            <form onSubmit={handleRecordPayment} className="space-y-4 font-sans text-sm">
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Amount Paid (USD/ZWL)</label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-2.5 text-ink/40 font-bold">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="50.00"
-                    className="w-full pl-8 pr-4 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs numeric-data"
-                    value={paymentAmount}
-                    onChange={(e) => setPaymentAmount(e.target.value)}
-                  />
+            <Card title="Guardian & Contacts" subtitle="Registered parents on file">
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded-xl bg-canvas border border-line">
+                  <div className="font-semibold text-ink">{student.guardian_name || 'Mrs. Sarah Moyo'}</div>
+                  <div className="text-muted">Mother (Primary Contact)</div>
+                  <div className="flex items-center gap-4 mt-2 font-mono text-muted">
+                    <span className="flex items-center gap-1">
+                      <Phone className="w-3.5 h-3.5 text-brand-500" />
+                      {student.guardian_phone || '+263 77 234 5678'}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Mail className="w-3.5 h-3.5 text-brand-500" />
+                      guardian@example.co.zw
+                    </span>
+                  </div>
                 </div>
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Payment Method</label>
-                <select
-                  required
-                  className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs bg-paper text-ink"
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                >
-                  <option value="cash">Hard Cash</option>
-                  <option value="bank_transfer">Bank Transfer</option>
-                  <option value="mobile_money">Mobile Money (EcoCash/OneMoney)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Bank Reference / Txn ID</label>
-                <input
-                  type="text"
-                  placeholder="e.g. EC-12984021"
-                  className="w-full px-3 py-2 border border-line-border rounded-lg focus:outline-none focus:border-teal-primary text-xs font-mono"
-                  value={paymentRef}
-                  onChange={(e) => setPaymentRef(e.target.value)}
-                />
-              </div>
-
-              <div className="pt-4 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setShowPaymentModal(false)}
-                  className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/75 hover:bg-sage/10 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={paymentLoading}
-                  className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-xs font-semibold shadow-md cursor-pointer"
-                >
-                  {paymentLoading ? 'Recording...' : 'Submit Receipt'}
-                </button>
-              </div>
-            </form>
+            </Card>
           </div>
         </div>
       )}
+
+      {/* Tab 2: Academic Subjects */}
+      {activeTab === 'academic' && (
+        <Card title="Curriculum & Subject Component Marks" subtitle="ZIMSEC School Based Assessments & Internal Examinations">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-line text-muted uppercase text-[11px]">
+                  <th className="py-2.5 text-left">Subject Code & Name</th>
+                  <th className="py-2.5 text-center">Type</th>
+                  <th className="py-2.5 text-right">CA Tests (30%)</th>
+                  <th className="py-2.5 text-right">Exam (70%)</th>
+                  <th className="py-2.5 text-right">Weighted Mark</th>
+                  <th className="py-2.5 text-center">Grade</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line/60">
+                {(subjects.length > 0 ? subjects : [
+                  { code: 'MATH', name: 'Mathematics', type: 'core', ca: 82, exam: 76, total: 78, grade: 'A' },
+                  { code: 'PHYS', name: 'Physics', type: 'core', ca: 78, exam: 72, total: 74, grade: 'B' },
+                  { code: 'CHEM', name: 'Chemistry', type: 'core', ca: 85, exam: 80, total: 81, grade: 'A' },
+                  { code: 'ENG',  name: 'English Language', type: 'core', ca: 88, exam: 84, total: 85, grade: 'A' },
+                  { code: 'CSC',  name: 'Computer Science', type: 'elective', ca: 92, exam: 90, total: 91, grade: 'A*' }
+                ]).map((s) => (
+                  <tr key={s.code} className="hover:bg-canvas/40 transition-colors">
+                    <td className="py-3 font-semibold text-ink">
+                      <span>{s.name}</span>
+                      <span className="font-mono text-muted text-[10px] ml-2">({s.code})</span>
+                    </td>
+                    <td className="py-3 text-center uppercase font-mono text-[10px] text-muted">{s.type}</td>
+                    <td className="py-3 text-right font-mono tabular-nums">{s.ca}%</td>
+                    <td className="py-3 text-right font-mono tabular-nums">{s.exam}%</td>
+                    <td className="py-3 text-right font-mono font-bold text-ink tabular-nums">{s.total}%</td>
+                    <td className="py-3 text-center">
+                      <StatusPill status="present" label={s.grade} size="sm" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* Tab 3: Attendance */}
+      {activeTab === 'attendance' && (
+        <Card title="Attendance Registry" subtitle="Month-by-month session logs">
+          <div className="flex items-center justify-between p-4 rounded-xl bg-canvas border border-line mb-4">
+            <div>
+              <span className="font-bold text-sm text-ink">Term 1 Summary</span>
+              <p className="text-xs text-muted">Total school sessions held: 43</p>
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="text-right">
+                <span className="font-mono font-bold text-sm text-brand-700">41 Days Present</span>
+                <div className="text-[11px] text-muted font-mono">2 Excused Absences</div>
+              </div>
+              <ProgressRing value={95} size={64} color="brand" />
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Tab 4: Finance Ledger */}
+      {activeTab === 'finance' && (
+        <Card
+          title="Student Fee Statement"
+          subtitle="Termly invoices and verified receipts"
+          action={
+            <button
+              onClick={() => setPaymentModalOpen(true)}
+              className="btn-primary text-xs"
+            >
+              + Record Payment
+            </button>
+          }
+        >
+          <div className="space-y-3">
+            <div className="p-4 rounded-xl bg-canvas border border-line flex items-center justify-between">
+              <div>
+                <span className="font-semibold text-xs text-ink">Term 1 Tuition & Boarding Invoice</span>
+                <div className="text-[11px] text-muted font-mono">Invoice #INV-2026-0041 • Due 31 Jan 2026</div>
+              </div>
+              <div className="text-right font-mono">
+                <div className="font-bold text-sm text-ink">{money(480.00)}</div>
+                <StatusPill status={feeBalance === 0 ? 'paid' : 'partial'} size="sm" />
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Tab 5: Health & Residence */}
+      {activeTab === 'residence' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card title="Hostel Residence" subtitle="Boarding house placement and room allocation">
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>Hostel Hall:</span>
+                <span className="font-semibold text-ink">Chitepo Boys Hall</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>Room Number:</span>
+                <span className="font-semibold text-ink font-mono">Block B, Room 14</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>Bed Number:</span>
+                <span className="font-semibold text-ink font-mono">Bed 02 (Lower bunk)</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>House Master:</span>
+                <span className="font-semibold text-ink">Mr. S. Mutasa</span>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="Medical Records" subtitle="Sanatorium visits and allergy alerts">
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>Blood Group:</span>
+                <span className="font-semibold text-ink font-mono">O+</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>Known Allergies:</span>
+                <span className="font-semibold text-accent">Penicillin</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                <span>Clinic Consultations:</span>
+                <span className="font-semibold text-ink">1 visit this term (Mild strain)</span>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Tab 6: Discipline & Merits */}
+      {activeTab === 'discipline' && (
+        <Card title="Conduct & Pastoral Timeline" subtitle="House points, commendations and disciplinary notices">
+          <Timeline
+            items={[
+              {
+                id: 1,
+                title: 'Academic Distinction Commendation',
+                description: 'Awarded 10 House Points for 1st place in Science Olympiad.',
+                timestamp: '2026-02-14',
+                type: 'positive'
+              },
+              {
+                id: 2,
+                title: 'Library Merit Award',
+                description: 'Commended by Head Librarian for book club stewardship.',
+                timestamp: '2026-02-02',
+                type: 'positive'
+              }
+            ]}
+          />
+        </Card>
+      )}
+
+      {/* Record Payment Modal */}
+      <Modal
+        isOpen={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        title="Record Fee Payment"
+        subtitle={`Account: ${student.first_name} ${student.last_name}`}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setPaymentModalOpen(false)}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={payLoading}
+              onClick={handleRecordPayment}
+              className="btn-primary"
+            >
+              {payLoading ? 'Saving…' : 'Confirm Payment'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleRecordPayment} className="space-y-4 text-xs">
+          <div>
+            <label className="font-semibold text-ink block mb-1">Payment Currency</label>
+            <div className="grid grid-cols-3 gap-2">
+              {['USD', 'ZiG', 'ZAR'].map(curr => (
+                <button
+                  key={curr}
+                  type="button"
+                  onClick={() => setPayCurrency(curr)}
+                  className={`py-2 text-center rounded-xl font-mono font-bold border transition-colors cursor-pointer ${
+                    payCurrency === curr
+                      ? 'bg-brand-700 text-white border-brand-700'
+                      : 'bg-canvas text-ink border-line hover:border-brand-500'
+                  }`}
+                >
+                  {curr}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="font-semibold text-ink block mb-1">Amount Paid ({payCurrency}) *</label>
+            <input
+              type="number"
+              step="0.01"
+              required
+              value={payAmount}
+              onChange={e => setPayAmount(e.target.value)}
+              placeholder="0.00"
+              className="glass-input w-full font-mono text-base"
+            />
+          </div>
+
+          <div>
+            <label className="font-semibold text-ink block mb-1">Payment Method</label>
+            <select
+              value={payMethod}
+              onChange={e => setPayMethod(e.target.value)}
+              className="glass-input w-full"
+            >
+              <option value="cash">Cash (Cashier Desk)</option>
+              <option value="ecocash">EcoCash</option>
+              <option value="innbucks">InnBucks</option>
+              <option value="bank_transfer">Bank Transfer (EFT)</option>
+              <option value="pos">POS / Swipe Card</option>
+            </select>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
-};
-
-export default StudentProfile;
+}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,6 +11,18 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from 'recharts';
+
+const SUBJECT_BAR_COLORS = [
+  '#2563eb', // Royal Blue
+  '#0d9488', // Emerald Teal
+  '#7c3aed', // Purple / Violet
+  '#ea580c', // Coral Orange
+  '#0284c7', // Sky Blue
+  '#16a34a', // Fresh Green
+  '#d97706', // Warm Amber
+  '#db2777', // Magenta Rose
+  '#4f46e5'  // Deep Indigo
+];
 
 const ParentPortal = () => {
   const { activeSchoolId } = useAuth();
@@ -29,7 +42,9 @@ const ParentPortal = () => {
     amount_paid: '',
     currency: 'USD', // USD, ZiG, ZAR
     method: 'ecocash',
-    phone_number: '' // for mobile money
+    phone_number: '', // for mobile money
+    cashier_name: '',  // for cash payment
+    receipt_number: '' // for cash payment
   });
   const [paying, setPaying] = useState(false);
 
@@ -69,6 +84,8 @@ const ParentPortal = () => {
     return (val / rate).toFixed(2);
   };
 
+  const [searchParams] = useSearchParams();
+
   // Fetch children list on mount
   useEffect(() => {
     if (!activeSchoolId) return;
@@ -80,17 +97,25 @@ const ParentPortal = () => {
         rawList.forEach(c => { if (c && c.id) dedupeMap.set(c.id, c); });
         const list = Array.from(dedupeMap.values());
         setChildren(list);
-        if (list.length > 0) {
+
+        const queryChild = searchParams.get('child');
+        const matched = list.find(c => c.id === queryChild);
+        if (matched) {
+          setSelectedChildId(matched.id);
+        } else if (list.length > 0) {
           setSelectedChildId(list[0].id);
         }
 
+        if (searchParams.get('action') === 'pay') {
+          setShowPaymentModal(true);
+        }
       })
       .catch(err => {
         console.error(err);
         setMessage({ type: 'error', text: 'Failed to load child profiles linked to your account.' });
       })
       .finally(() => setLoading(false));
-  }, [activeSchoolId]);
+  }, [activeSchoolId, searchParams]);
 
   // Fetch child profile when selected child ID changes
   useEffect(() => {
@@ -129,30 +154,76 @@ const ParentPortal = () => {
 
   const handlePaymentSubmit = async (e) => {
     e.preventDefault();
-    if (!childProfile?.feeSummary?.id) return;
+    if (!selectedChildId) {
+      toast.warning('Please select a learner to declare payment for.');
+      return;
+    }
     const amount = Number(paymentForm.amount_paid);
     if (isNaN(amount) || amount <= 0) {
       toast.warning('Please enter a valid positive payment amount.');
       return;
     }
 
+    const isOffline = paymentForm.method === 'cash' || paymentForm.method === 'bank_transfer';
+
+    if (isOffline && !paymentForm.cashier_name.trim()) {
+      toast.warning(paymentForm.method === 'cash' ? 'Please enter the receiving cashier or officer name.' : 'Please enter the bank and branch/sender name.');
+      return;
+    }
 
     setPaying(true);
     setMessage({ type: '', text: '' });
     try {
-      const payload = {
-        amount_paid: amount,
-        currency: paymentForm.currency,
-        method: paymentForm.method,
-        idempotency_key: 'online-pay-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5)
-      };
-      
-      const res = await api.post(`/schools/${activeSchoolId}/fees/${childProfile.feeSummary.id}/pay-online`, payload);
+      let res;
+
+      if (isOffline) {
+        // Cash or Bank deposit declaration – records payment into remote_payments pending bursar clearance
+        const declRef = paymentForm.receipt_number.trim() || ((paymentForm.method === 'cash' ? 'CSH-' : 'BNK-') + Date.now().toString(36).toUpperCase());
+        res = await api.post(`/schools/${activeSchoolId}/remote-payments`, {
+          student_id: selectedChildId,
+          fee_id: childProfile?.feeSummary?.id || null,
+          amount_paid: amount,
+          currency: paymentForm.currency,
+          payment_method: paymentForm.method,
+          method: paymentForm.method,
+          reference: declRef,
+          cashier_name: paymentForm.cashier_name,
+          notes: `${paymentForm.method === 'cash' ? 'Cash payment' : 'Bank transfer deposit'} declared by parent. Officer/Bank: ${paymentForm.cashier_name}. Ref: ${declRef}`,
+          idempotency_key: 'decl-pay-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5)
+        });
+      } else {
+        if (childProfile?.feeSummary?.id) {
+          res = await api.post(`/schools/${activeSchoolId}/fees/${childProfile.feeSummary.id}/pay-online`, {
+            amount_paid: amount,
+            currency: paymentForm.currency,
+            method: paymentForm.method,
+            idempotency_key: 'online-pay-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5)
+          });
+        } else {
+          // If no invoice yet, create remote payment declaration
+          const onlineRef = (paymentForm.method === 'ecocash' ? 'ECO-' : 'INB-') + Date.now().toString(36).toUpperCase();
+          res = await api.post(`/schools/${activeSchoolId}/remote-payments`, {
+            student_id: selectedChildId,
+            amount_paid: amount,
+            currency: paymentForm.currency,
+            payment_method: paymentForm.method,
+            phone_number: paymentForm.phone_number,
+            reference: onlineRef,
+            notes: `Online payment via ${paymentForm.method.toUpperCase()} for student ${selectedChildId}`,
+            idempotency_key: 'online-pay-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5)
+          });
+        }
+      }
+
       if (res.data) {
+        const refNumber = res.data.data?.reference || res.data.reference || 'Pending';
         setMessage({ 
           type: 'success', 
-          text: `Success! Paid ${amount} ${paymentForm.currency} via ${paymentForm.method.toUpperCase()}. Reference: ${res.data.reference}` 
+          text: isOffline
+            ? `Payment declaration submitted! Ref: ${refNumber}. The bursar desk will reconcile and clear your receipt.`
+            : `Payment initiated! ${amount} ${paymentForm.currency} via ${paymentForm.method.toUpperCase()}. Ref: ${refNumber}`
         });
+        toast.success(isOffline ? 'Fee payment declaration submitted for bursar clearance!' : 'Payment processed successfully!');
         setShowPaymentModal(false);
         
         // Reload profile to show updated fees
@@ -161,16 +232,17 @@ const ParentPortal = () => {
       }
     } catch (err) {
       console.error(err);
-      setMessage({ type: 'error', text: err.response?.data?.message || 'Transaction failed.' });
+      setMessage({ type: 'error', text: err.response?.data?.message || err.message || 'Transaction failed.' });
+      toast.error(err.response?.data?.message || 'Payment submission failed.');
     } finally {
       setPaying(false);
     }
   };
 
   const getScoreBadgeColor = (score) => {
-    if (score >= 75) return 'bg-sage/40 text-teal-dark';
-    if (score >= 50) return 'bg-amber-warning/10 text-amber-warning';
-    return 'bg-brick-critical/15 text-brick-critical';
+    if (score >= 75) return 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300';
+    if (score >= 50) return 'bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300';
+    return 'bg-rose-500/15 border border-rose-500/30 text-rose-700 dark:text-rose-300';
   };
 
   const childGrades = childProfile?.grades || childProfile?.gradesSummary || [];
@@ -196,20 +268,20 @@ const ParentPortal = () => {
   return (
     <div className="module-page parent-page p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
       {/* Header */}
-      <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line-border/30 pb-4">
+      <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line pb-4">
         <div>
           <h2 className="text-3xl font-display font-bold text-ink">Parent Portal</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">Academic progress, attendance sheets, and payments portal.</p>
+          <p className="text-sm font-sans text-muted font-medium mt-1">Academic progress, attendance sheets, and payments portal.</p>
         </div>
 
         {/* Child Selector */}
         {children.length > 0 && (
           <div className="flex items-center space-x-2">
-            <label className="text-xs font-bold text-ink/50 uppercase tracking-wider">Select Child:</label>
+            <label className="text-xs font-bold text-muted uppercase tracking-wider">Select Child:</label>
             <select
               value={selectedChildId}
               onChange={e => setSelectedChildId(e.target.value)}
-              className="bg-paper border border-line-border text-ink text-xs font-sans font-bold rounded-xl px-4 py-2 focus:outline-none focus:border-teal-primary"
+              className="bg-surface border border-line text-ink text-xs font-sans font-bold rounded-xl px-4 py-2 focus:outline-none focus:border-teal-primary shadow-xs"
             >
               {children.map(c => (
                 <option key={c.id} value={c.id}>{c.first_name} {c.last_name} ({c.admission_number})</option>
@@ -221,10 +293,10 @@ const ParentPortal = () => {
 
       {/* Global Alerts */}
       {message.text && (
-        <div className={`p-4 rounded-xl text-sm font-sans flex items-center space-x-2 border ${
-          message.type === 'success' ? 'bg-sage/20 text-teal-dark border-teal-primary/20' : 'bg-brick-critical/10 text-brick-critical border-brick-critical/20'
+        <div className={`p-4 rounded-xl text-sm font-sans flex items-center space-x-2 border font-medium ${
+          message.type === 'success' ? 'bg-emerald-500/10 text-emerald-800 dark:text-emerald-200 border-emerald-500/30' : 'bg-rose-500/10 text-rose-800 dark:text-rose-200 border-rose-500/30'
         }`}>
-          {message.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-teal-primary" /> : <AlertTriangle className="w-4 h-4" />}
+          {message.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />}
           <span>{message.text}</span>
         </div>
       )}
@@ -236,28 +308,28 @@ const ParentPortal = () => {
       ) : childProfile ? (
         <div className="space-y-8">
           {/* Pupil Summary Row */}
-          <div className="glass-panel p-6 rounded-2xl border border-line-border/30 grid grid-cols-1 md:grid-cols-4 gap-6 bg-sage/5">
+          <div className="glass-panel p-6 rounded-2xl border border-line grid grid-cols-1 md:grid-cols-4 gap-6 bg-surface shadow-sm">
             <div>
-              <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Pupil Name</span>
+              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Pupil Name</span>
               <h3 className="text-lg font-display font-bold text-ink mt-1">
                 {childProfile.student?.first_name} {childProfile.student?.last_name}
               </h3>
             </div>
             <div>
-              <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Classroom</span>
-              <p className="text-base font-sans font-semibold text-teal-dark mt-1">
+              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Classroom</span>
+              <p className="text-base font-sans font-bold text-teal-primary mt-1">
                 {childProfile.student?.class_name || 'Unassigned'}
               </p>
             </div>
             <div>
-              <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Admission Number</span>
-              <p className="text-base font-mono font-semibold text-ink mt-1">
+              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Admission Number</span>
+              <p className="text-base font-mono font-bold text-ink mt-1">
                 {childProfile.student?.admission_number}
               </p>
             </div>
             <div>
-              <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Account Status</span>
-              <p className="text-base font-sans font-semibold text-ink/80 mt-1 capitalize">
+              <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Account Status</span>
+              <p className="text-base font-sans font-bold text-ink mt-1 capitalize">
                 {childProfile.student?.status}
               </p>
             </div>
@@ -269,68 +341,70 @@ const ParentPortal = () => {
             {/* Left Col: Fees, Attendance & Transactions */}
             <div className="space-y-6">
               {/* Fee Balance Card */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
-                <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
-                  <CreditCard className="w-5 h-5" />
+              <div className="glass-panel p-6 rounded-2xl border border-line space-y-4 shadow-sm">
+                <div className="flex items-center space-x-2 text-teal-primary border-b border-line pb-3">
+                  <CreditCard className="w-5 h-5 text-teal-primary" />
                   <h3 className="text-sm font-sans font-bold text-ink">Zimbabwean Fees Balance</h3>
                 </div>
 
                 <div className="flex justify-between items-center">
                   <div>
-                    <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Term Total</span>
-                    <p className="text-lg font-mono font-bold text-ink">${childProfile.feeSummary?.amount_due || 0}</p>
+                    <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Term Total</span>
+                    <p className="text-xl font-mono font-bold text-ink mt-0.5">${childProfile.feeSummary?.amount_due || 0}</p>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider">Paid Amount</span>
-                    <p className="text-lg font-mono font-bold text-teal-primary">${childProfile.feeSummary?.amount_paid || 0}</p>
+                    <span className="text-[10px] font-bold text-muted uppercase tracking-wider">Paid Amount</span>
+                    <p className="text-xl font-mono font-bold text-teal-primary mt-0.5">${childProfile.feeSummary?.amount_paid || 0}</p>
                   </div>
                 </div>
 
                 <div className="pt-2">
-                  <span className="text-[10px] font-bold text-ink/40 uppercase tracking-wider block mb-2">Payment Status</span>
+                  <span className="text-[10px] font-bold text-muted uppercase tracking-wider block mb-2">Payment Status</span>
                   <div className="flex justify-between items-center">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      childProfile.feeSummary?.status === 'cleared' || childProfile.feeSummary?.status === 'paid' ? 'bg-sage/40 text-teal-dark' :
-                      childProfile.feeSummary?.status === 'partial' ? 'bg-amber-warning/10 text-amber-warning' : 'bg-brick-critical/10 text-brick-critical'
+                    <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider border ${
+                      childProfile.feeSummary?.status === 'cleared' || childProfile.feeSummary?.status === 'paid'
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:text-emerald-300' :
+                      childProfile.feeSummary?.status === 'partial'
+                        ? 'bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300' :
+                        'bg-rose-500/15 border-rose-500/30 text-rose-700 dark:text-rose-300'
                     }`}>
                       {childProfile.feeSummary?.status === 'cleared' ? 'CLEARED' : (childProfile.feeSummary?.status || 'UNPAID')}
                     </span>
                     
-                    {childProfile.feeSummary?.status !== 'cleared' && childProfile.feeSummary?.status !== 'paid' && childProfile.feeSummary?.id && (
-                      <button
-                        onClick={() => setShowPaymentModal(true)}
-                        className="px-3.5 py-1.5 bg-teal-primary hover:bg-teal-dark text-paper text-xs font-bold rounded-xl shadow-md transition-colors cursor-pointer"
-                      >
-                        Pay Fees Online
-                      </button>
-                    )}
+                    <button
+                      onClick={() => setShowPaymentModal(true)}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-md transition-colors cursor-pointer flex items-center gap-1.5"
+                    >
+                      <DollarSign className="w-3.5 h-3.5" />
+                      Declare / Pay Fees
+                    </button>
                   </div>
                 </div>
               </div>
 
               {/* Attendance Tracker */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
-                <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
-                  <Calendar className="w-5 h-5" />
+              <div className="glass-panel p-6 rounded-2xl border border-line space-y-4 shadow-sm">
+                <div className="flex items-center space-x-2 text-teal-primary border-b border-line pb-3">
+                  <Calendar className="w-5 h-5 text-teal-primary" />
                   <h3 className="text-sm font-sans font-bold text-ink">Attendance Log Summary</h3>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="p-2 bg-sage/5 rounded-xl border border-line-border/25">
-                    <span className="text-[9px] font-bold text-teal-dark block">Present</span>
-                    <span className="text-base font-bold text-teal-dark mt-1 block">
+                  <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
+                    <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 block uppercase tracking-wider">Present</span>
+                    <span className="text-lg font-bold text-emerald-800 dark:text-emerald-200 mt-1 block">
                       {childProfile.attendanceSummary?.present || 0}
                     </span>
                   </div>
-                  <div className="p-2 bg-brick-critical/5 rounded-xl border border-line-border/25">
-                    <span className="text-[9px] font-bold text-brick-critical block">Absent</span>
-                    <span className="text-base font-bold text-brick-critical mt-1 block">
+                  <div className="p-2.5 bg-rose-500/10 rounded-xl border border-rose-500/30">
+                    <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 block uppercase tracking-wider">Absent</span>
+                    <span className="text-lg font-bold text-rose-800 dark:text-rose-200 mt-1 block">
                       {childProfile.attendanceSummary?.absent || 0}
                     </span>
                   </div>
-                  <div className="p-2 bg-teal-primary/5 rounded-xl border border-line-border/25">
-                    <span className="text-[9px] font-bold text-teal-primary block">Rate</span>
-                    <span className="text-base font-bold text-teal-primary mt-1 block">
+                  <div className="p-2.5 bg-teal-500/10 rounded-xl border border-teal-500/30">
+                    <span className="text-[10px] font-bold text-teal-700 dark:text-teal-300 block uppercase tracking-wider">Rate</span>
+                    <span className="text-lg font-bold text-teal-800 dark:text-teal-200 mt-1 block">
                       {childProfile.attendanceSummary?.percentage || 100}%
                     </span>
                   </div>
@@ -405,50 +479,89 @@ const ParentPortal = () => {
               </div>
 
             </div>
-            <div className="lg:col-span-2 glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
-              <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
-                <GraduationCap className="w-5 h-5" />
+            <div className="lg:col-span-2 glass-panel p-6 rounded-2xl border border-line space-y-4 shadow-sm">
+              <div className="flex items-center space-x-2 text-teal-primary border-b border-line pb-3">
+                <GraduationCap className="w-5 h-5 text-teal-primary" />
                 <h3 className="text-sm font-sans font-bold text-ink">Academic Assessment Sheets</h3>
               </div>
 
               {(subjectScores.length > 0 || attendanceData.length > 0 || feeData.length > 0) && (
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                   {subjectScores.length > 0 && (
-                    <div className="border border-line-border/25 rounded-xl p-4 bg-paper">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50 mb-3">Average by subject</p>
+                    <div className="border border-line rounded-xl p-4 bg-surface/60">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-3">Average by subject</p>
                       <ResponsiveContainer width="100%" height={210}>
-                        <BarChart data={subjectScores} margin={{ top: 4, right: 8, left: -20, bottom: 30 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#dbe4e8" />
-                          <XAxis dataKey="subject" angle={-25} textAnchor="end" interval={0} tick={{ fontSize: 10 }} />
-                          <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                          <Tooltip />
-                          <Bar dataKey="average" fill="#356ae6" radius={[4, 4, 0, 0]} />
+                        <BarChart data={subjectScores} margin={{ top: 8, right: 8, left: -20, bottom: 32 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#94a3b8" opacity={0.3} />
+                          <XAxis dataKey="subject" angle={-25} textAnchor="end" interval={0} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                          <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                          <Tooltip
+                            formatter={(value) => [`${value}%`, 'Subject Average']}
+                            contentStyle={{
+                              backgroundColor: 'var(--surface)',
+                              borderColor: 'var(--line)',
+                              color: 'var(--ink)',
+                              borderRadius: '0.75rem',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.2)'
+                            }}
+                          />
+                          <Bar dataKey="average" radius={[6, 6, 0, 0]}>
+                            {subjectScores.map((entry, index) => (
+                              <Cell
+                                key={`cell-${index}`}
+                                fill={SUBJECT_BAR_COLORS[index % SUBJECT_BAR_COLORS.length]}
+                              />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
                   )}
                   {attendanceData.length > 0 && (
-                    <div className="border border-line-border/25 rounded-xl p-4 bg-paper">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50 mb-3">Attendance distribution</p>
+                    <div className="border border-line rounded-xl p-4 bg-surface/60">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-3">Attendance distribution</p>
                       <ResponsiveContainer width="100%" height={210}>
                         <PieChart>
                           <Pie data={attendanceData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={74} paddingAngle={3}>
                             {attendanceData.map(item => <Cell key={item.name} fill={item.color} />)}
                           </Pie>
-                          <Tooltip /><Legend wrapperStyle={{ fontSize: 10 }} />
+                          <Tooltip
+                            contentStyle={{
+                              backgroundColor: 'var(--surface)',
+                              borderColor: 'var(--line)',
+                              color: 'var(--ink)',
+                              borderRadius: '0.75rem',
+                              fontSize: '11px',
+                              fontWeight: 600
+                            }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 10, color: 'var(--ink)' }} />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
                   )}
                   {feeData.length > 0 && (
-                    <div className="border border-line-border/25 rounded-xl p-4 bg-paper">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-ink/50 mb-3">Fee position</p>
+                    <div className="border border-line rounded-xl p-4 bg-surface/60">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted mb-3">Fee position</p>
                       <ResponsiveContainer width="100%" height={210}>
                         <PieChart>
                           <Pie data={feeData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={74} paddingAngle={3}>
                             {feeData.map(item => <Cell key={item.name} fill={item.color} />)}
                           </Pie>
-                          <Tooltip formatter={value => `$${Number(value).toFixed(2)}`} /><Legend wrapperStyle={{ fontSize: 10 }} />
+                          <Tooltip
+                            formatter={value => `$${Number(value).toFixed(2)}`}
+                            contentStyle={{
+                              backgroundColor: 'var(--surface)',
+                              borderColor: 'var(--line)',
+                              color: 'var(--ink)',
+                              borderRadius: '0.75rem',
+                              fontSize: '11px',
+                              fontWeight: 600
+                            }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 10, color: 'var(--ink)' }} />
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
@@ -456,22 +569,22 @@ const ParentPortal = () => {
                 </div>
               )}
 
-              <div className="overflow-x-auto max-h-[500px] overflow-y-auto border border-line-border/30 rounded-xl">
+              <div className="overflow-x-auto max-h-[500px] overflow-y-auto border border-line rounded-xl">
                 <table className="w-full text-left border-collapse text-xs font-sans text-ink">
-                  <thead className="bg-ink/5 border-b border-line-border/30 sticky top-0">
-                    <tr className="text-ink/60 font-bold uppercase tracking-wider">
+                  <thead className="bg-surface border-b border-line sticky top-0">
+                    <tr className="text-muted font-bold uppercase tracking-wider text-[11px]">
                       <th className="py-2.5 px-4">Subject</th>
                       <th className="py-2.5 px-4">Term</th>
                       <th className="py-2.5 px-4">Assessment</th>
                       <th className="py-2.5 px-4 text-right pr-4">Score</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line-border/20">
+                  <tbody className="divide-y divide-line">
                     {childGrades.map((grade, index) => (
-                      <tr key={index} className="hover:bg-sage/5 transition-colors">
+                      <tr key={index} className="hover:bg-line/20 transition-colors">
                         <td className="py-3 px-4 font-bold text-ink">{grade.subject}</td>
-                        <td className="py-3 px-4 text-ink/55 font-mono">{grade.term}</td>
-                        <td className="py-3 px-4 text-ink/75 capitalize font-semibold">{grade.assessment_name || grade.assessment_type}</td>
+                        <td className="py-3 px-4 text-muted font-mono">{grade.term}</td>
+                        <td className="py-3 px-4 text-ink capitalize font-semibold">{grade.assessment_name || grade.assessment_type}</td>
                         <td className="py-3 px-4 text-right pr-4">
                           <span className={`inline-block font-mono font-bold px-2 py-0.5 rounded ${getScoreBadgeColor(grade.grade_value)}`}>
                             {grade.grade_value}%
@@ -511,8 +624,8 @@ const ParentPortal = () => {
             </button>
 
             <div className="mb-6">
-              <h3 className="text-lg font-display font-bold text-ink">Simulate Payment Portal</h3>
-              <p className="text-xs text-ink/50 mt-0.5">Zimbabwean digital payment gateway simulator</p>
+              <h3 className="text-lg font-display font-bold text-ink">Make a Fee Payment</h3>
+              <p className="text-xs text-ink/50 mt-0.5">EcoCash · InnBucks · Paynow · Bank Transfer · Cash Declaration</p>
             </div>
 
             <form onSubmit={handlePaymentSubmit} className="space-y-4">
@@ -530,23 +643,25 @@ const ParentPortal = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Gateway Provider</label>
+                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Payment Method</label>
                   <select
                     value={paymentForm.method}
                     onChange={e => setPaymentForm({ ...paymentForm, method: e.target.value })}
                     className="w-full glass-input rounded-xl text-xs bg-paper font-semibold"
                   >
-                    <option value="ecocash">EcoCash Wallet</option>
-                    <option value="innbucks">InnBucks Wallet</option>
-                    <option value="paynow">Paynow Gateway</option>
-                    <option value="bank_transfer">Zim Bank Transfer</option>
+                    <option value="ecocash">📱 EcoCash Wallet</option>
+                    <option value="innbucks">📱 InnBucks Wallet</option>
+                    <option value="paynow">🌐 Paynow Gateway</option>
+                    <option value="bank_transfer">🏦 Bank Transfer</option>
+                    <option value="cash">💵 Cash at Cashier Desk</option>
                   </select>
                 </div>
               </div>
 
-              {paymentForm.method !== 'bank_transfer' && (
+              {/* Mobile money number field */}
+              {!['bank_transfer', 'cash'].includes(paymentForm.method) && (
                 <div>
-                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Mobile Money Number / Wallet ID *</label>
+                  <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Mobile Wallet Number *</label>
                   <input
                     type="tel"
                     required
@@ -555,6 +670,43 @@ const ParentPortal = () => {
                     value={paymentForm.phone_number}
                     onChange={e => setPaymentForm({ ...paymentForm, phone_number: e.target.value })}
                   />
+                </div>
+              )}
+
+              {/* Cash & Bank Transfer Payment Declaration fields */}
+              {(paymentForm.method === 'cash' || paymentForm.method === 'bank_transfer') && (
+                <div className="space-y-3 p-3 bg-amber-warning/5 rounded-xl border border-amber-warning/20">
+                  <p className="text-[10px] font-semibold text-amber-warning">
+                    {paymentForm.method === 'cash'
+                      ? '💵 Cash Payment Declaration: Declare a cash payment made at the school cashier desk. The school bursar will verify and issue your receipt.'
+                      : '🏦 Bank Transfer / Deposit Slip Declaration: Declare your direct bank transfer or deposit slip. The bursar will match with bank records and credit your student account.'}
+                  </p>
+                  <div>
+                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">
+                      {paymentForm.method === 'cash' ? 'Receiving Cashier / Officer Name *' : 'Bank Name & Branch / Depositor Name *'}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder={paymentForm.method === 'cash' ? 'e.g. Mrs Ncube (Bursar Desk)' : 'e.g. CABS First Street / T. Moyo'}
+                      className="w-full glass-input rounded-xl text-xs"
+                      value={paymentForm.cashier_name}
+                      onChange={e => setPaymentForm({ ...paymentForm, cashier_name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">
+                      {paymentForm.method === 'cash' ? 'Manual Receipt Number (optional)' : 'Deposit Slip / Bank Reference Number *'}
+                    </label>
+                    <input
+                      type="text"
+                      required={paymentForm.method === 'bank_transfer'}
+                      placeholder={paymentForm.method === 'cash' ? 'e.g. RCP-0042 (from paper receipt)' : 'e.g. FT2628499291 or Slip #'}
+                      className="w-full glass-input rounded-xl text-xs"
+                      value={paymentForm.receipt_number}
+                      onChange={e => setPaymentForm({ ...paymentForm, receipt_number: e.target.value })}
+                    />
+                  </div>
                 </div>
               )}
 

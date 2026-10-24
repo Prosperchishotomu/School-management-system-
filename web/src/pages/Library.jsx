@@ -1,370 +1,466 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
-import { BookOpen, Plus, X, Loader2, RotateCcw, PenTool, BookMarked, Search, Filter } from 'lucide-react';
+import { useApi, invalidate } from '../data';
+import {
+  PageHeader, KpiStrip, StatCard, Card, DataTable, StatusPill,
+  Modal, Tabs, FilterChips, EmptyState
+} from '../components/ui';
+import {
+  BookOpen, Plus, Search, BookMarked, RotateCcw, Clock,
+  CheckCircle2, FileText, AlertTriangle, UserCheck, Layers, Hash, Upload
+} from 'lucide-react';
+import ImportModal from '../components/ImportModal';
 
-const Library = () => {
+export default function Library() {
   const { activeSchoolId, user } = useAuth();
   const toast = useToast();
 
-  const [assets, setAssets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [subCategoryFilter, setSubCategoryFilter] = useState('all');
-
-  const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ 
-    name: '', 
-    category: 'book', 
-    resource_type: 'textbook', // 'textbook', 'stationery', 'fiction', 'past_paper'
-    code: '', 
-    shelf_location: '',
-    description: '' 
-  });
-  const [formLoading, setFormLoading] = useState(false);
-  const [formError, setFormError] = useState('');
-
-  // Lend book state hooks
+  const [activeTab, setActiveTab] = useState('all'); // 'all' | 'textbook' | 'past_paper' | 'fiction' | 'overdue'
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
   const [showLendModal, setShowLendModal] = useState(false);
-  const [selectedAssetForLend, setSelectedAssetForLend] = useState(null);
-  const [lendForm, setLendForm] = useState({ holder_type: 'student', holder_id: '' });
-  const [lendLoading, setLendLoading] = useState(false);
-  const [borrowerOptions, setBorrowerOptions] = useState([]);
-  const [loadingBorrowers, setLoadingBorrowers] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!showLendModal || !activeSchoolId) return;
-    setLoadingBorrowers(true);
-    if (lendForm.holder_type === 'student') {
-      api.get(`/schools/${activeSchoolId}/students?per_page=100`)
-        .then(res => {
-          const list = (res.data || []).map(s => ({
-            id: s.id,
-            name: `${s.first_name} ${s.last_name} (Adm: ${s.admission_number || s.id})`
-          }));
-          setBorrowerOptions(list);
-          if (list.length > 0) setLendForm(prev => ({ ...prev, holder_id: list[0].id }));
-        })
-        .catch(() => setBorrowerOptions([]))
-        .finally(() => setLoadingBorrowers(false));
-    } else {
-      api.get(`/schools/${activeSchoolId}/staff`)
-        .then(res => {
-          const list = (res.data || []).map(st => ({
-            id: st.id,
-            name: `${st.name} (${st.role_title || 'Staff'})`
-          }));
-          setBorrowerOptions(list);
-          if (list.length > 0) setLendForm(prev => ({ ...prev, holder_id: list[0].id }));
-        })
-        .catch(() => setBorrowerOptions([]))
-        .finally(() => setLoadingBorrowers(false));
+  // Forms
+  const [form, setForm] = useState({
+    name: '',
+    category: 'book',
+    resource_type: 'textbook',
+    code: '',
+    shelf_location: 'Bay 3, Shelf B',
+    description: ''
+  });
+
+  const [lendForm, setLendForm] = useState({
+    holder_type: 'student',
+    holder_id: '',
+    due_date: '2026-04-10'
+  });
+
+  const { data: libraryData, loading: loadingAssets } = useApi(
+    `library_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/assets?category=book`).then(r => r.data?.assets || r.data || []),
+    { deps: [activeSchoolId] }
+  );
+
+  const { data: studentsData } = useApi(
+    `students_brief_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/students`).then(r => r.data?.students || r.data || []),
+    { deps: [activeSchoolId] }
+  );
+
+  const rawAssets = Array.isArray(libraryData) ? libraryData : [];
+  const students = Array.isArray(studentsData) ? studentsData : [];
+
+  // Filtered catalog
+  const filteredCatalog = useMemo(() => {
+    return rawAssets.filter(item => {
+      const matchesSearch = !searchQuery ||
+        item.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.shelf_location?.toLowerCase().includes(searchQuery.toLowerCase());
+
+      if (!matchesSearch) return false;
+
+      if (activeTab === 'all') return true;
+      if (activeTab === 'overdue') return item.is_overdue || item.status === 'overdue';
+      return item.resource_type === activeTab;
+    });
+  }, [rawAssets, searchQuery, activeTab]);
+
+  // Counts
+  const totalCatalog = rawAssets.length;
+  const availableCount = rawAssets.filter(a => a.status === 'available' || !a.current_holder_id).length;
+  const issuedCount = totalCatalog - availableCount;
+  const pastPapersCount = rawAssets.filter(a => a.resource_type === 'past_paper').length;
+  const overdueCount = rawAssets.filter(a => a.is_overdue || a.status === 'overdue').length;
+
+  const handleCreateResource = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/assets`, form);
+      toast.success(`Resource '${form.name}' added to catalog.`);
+      setShowAddModal(false);
+      setForm({
+        name: '',
+        category: 'book',
+        resource_type: 'textbook',
+        code: '',
+        shelf_location: 'Bay 3, Shelf B',
+        description: ''
+      });
+      invalidate(`library_${activeSchoolId}`);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to add resource.');
+    } finally {
+      setSubmitting(false);
     }
-  }, [showLendModal, lendForm.holder_type, activeSchoolId]);
-
-  const fetchAssets = () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-    api.get(`/schools/${activeSchoolId}/assets?page=${page}&per_page=30&category=book`)
-      .then(res => {
-        setAssets(res.data || []);
-        if (res.meta) setTotalPages(Math.ceil((res.meta.total || 1) / 30));
-        setError('');
-      })
-      .catch(() => { setAssets([]); setError('Could not load library catalog and stationery inventory.'); })
-      .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchAssets(); }, [activeSchoolId, page]);
-
-  const handleCreate = async (e) => {
+  const handleLend = async (e) => {
     e.preventDefault();
-    setFormLoading(true);
-    setFormError('');
+    if (!selectedAsset) return;
+    setSubmitting(true);
     try {
-      const payload = {
-        name: form.name,
-        category: 'book',
-        code: form.code,
-        description: `[${form.resource_type.toUpperCase()}] ${form.shelf_location ? `Location: ${form.shelf_location}. ` : ''}${form.description}`
-      };
-      await api.post(`/schools/${activeSchoolId}/assets`, payload);
-      setShowModal(false);
-      setForm({ name: '', category: 'book', resource_type: 'textbook', code: '', shelf_location: '', description: '' });
-      fetchAssets();
+      await api.post(`/schools/${activeSchoolId}/assets/${selectedAsset.id}/lend`, lendForm);
+      toast.success(`'${selectedAsset.name}' loaned out.`);
+      setShowLendModal(false);
+      setSelectedAsset(null);
+      invalidate(`library_${activeSchoolId}`);
     } catch (err) {
-      setFormError(err.message || 'Failed to register resource into library repository.');
+      toast.error(err.response?.data?.message || 'Failed to issue book.');
     } finally {
-      setFormLoading(false);
+      setSubmitting(false);
     }
   };
 
   const handleReturn = async (assetId) => {
     try {
-      await api.post(`/schools/${activeSchoolId}/assets/${assetId}/return`, {});
-      fetchAssets();
-    } catch {}
-  };
-
-  const handleLend = async (e) => {
-    e.preventDefault();
-    setLendLoading(true);
-    try {
-      await api.post(`/schools/${activeSchoolId}/assets/${selectedAssetForLend.id}/issue`, {
-        holder_type: lendForm.holder_type,
-        holder_id: lendForm.holder_id
-      });
-      setShowLendModal(false);
-      setLendForm({ holder_type: 'student', holder_id: '' });
-      fetchAssets();
+      await api.post(`/schools/${activeSchoolId}/assets/${assetId}/return`);
+      toast.success('Book returned to library inventory.');
+      invalidate(`library_${activeSchoolId}`);
     } catch (err) {
-      toast.error(err.message || 'Failed to issue item.');
-    } finally {
-      setLendLoading(false);
+      toast.error('Failed to process return.');
     }
   };
 
-  const filteredAssets = assets.filter(a => {
-    if (subCategoryFilter === 'all') return true;
-    return a.description?.toLowerCase().includes(`[${subCategoryFilter}]`);
-  });
-
-  if (!activeSchoolId) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center min-h-[80vh] text-center font-sans animate-fadeIn">
-        <div className="w-16 h-16 rounded-2xl bg-teal-primary/10 flex items-center justify-center mb-4 text-teal-primary">
-          <BookOpen className="w-8 h-8" />
-        </div>
-        <h2 className="text-2xl font-display font-bold text-ink">No Active School Selected</h2>
-        <p className="text-ink/60 max-w-md mt-2 text-sm">Select a school tenant from the sidebar switcher to load the library and stationery resource repository.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="module-page library-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      {/* Header */}
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
-        <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Library Catalog &amp; Stationery Repository</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">Single source of truth for textbooks, fiction, exam past papers, and classroom stationery supplies.</p>
-        </div>
-        {user?.role === 'school_admin' && (
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center space-x-2 px-4 py-2.5 bg-teal-primary hover:bg-teal-dark text-paper font-sans font-semibold text-sm rounded-xl shadow-md transition-all cursor-pointer"
-          >
-            <Plus className="w-4 h-4" /><span>Append Book / Stationery</span>
-          </button>
-        )}
-      </div>
-
-      {/* Resource Category Filter Tabs */}
-      <div className="flex flex-wrap gap-2 border-b border-line-border/20 pb-3">
-        <button
-          onClick={() => setSubCategoryFilter('all')}
-          className={`px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
-            subCategoryFilter === 'all' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
-          }`}
-        >
-          All Library Resources ({assets.length})
-        </button>
-        <button
-          onClick={() => setSubCategoryFilter('textbook')}
-          className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
-            subCategoryFilter === 'textbook' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
-          }`}
-        >
-          <BookMarked className="w-3.5 h-3.5" />
-          <span>Textbooks &amp; Syllabi</span>
-        </button>
-        <button
-          onClick={() => setSubCategoryFilter('stationery')}
-          className={`flex items-center space-x-1.5 px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
-            subCategoryFilter === 'stationery' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
-          }`}
-        >
-          <PenTool className="w-3.5 h-3.5" />
-          <span>Stationery &amp; Supplies</span>
-        </button>
-        <button
-          onClick={() => setSubCategoryFilter('fiction')}
-          className={`px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
-            subCategoryFilter === 'fiction' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
-          }`}
-        >
-          General Literature &amp; Fiction
-        </button>
-        <button
-          onClick={() => setSubCategoryFilter('past_paper')}
-          className={`px-4 py-2 rounded-xl text-xs font-sans font-bold transition-all cursor-pointer ${
-            subCategoryFilter === 'past_paper' ? 'bg-teal-primary text-paper shadow-sm' : 'bg-sage/10 text-ink/70 hover:bg-sage/20'
-          }`}
-        >
-          Exam &amp; Past Papers
-        </button>
-      </div>
-
-      {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm">{error}</div>}
-
-      <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-              <th className="py-4 px-6">Barcode / ISBN</th>
-              <th className="py-4 px-6">Resource Title &amp; Details</th>
-              <th className="py-4 px-6">Availability Status</th>
-              <th className="py-4 px-6">Current Holder</th>
-              <th className="py-4 px-6 text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-            {loading ? (
-              <tr><td colSpan="5" className="py-12 text-center text-xs text-ink/40">Loading repository items...</td></tr>
-            ) : filteredAssets.map(a => (
-              <tr key={a.id} className="hover:bg-sage/5 transition-colors">
-                <td className="py-4 px-6 font-mono text-xs numeric-data text-ink/60">{a.code || '-'}</td>
-                <td className="py-4 px-6">
-                  <div className="font-bold text-ink">{a.name}</div>
-                  <span className="text-[10px] text-ink/50 block mt-0.5">{a.description}</span>
-                </td>
-                <td className="py-4 px-6">
-                  <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${a.status === 'available' ? 'bg-sage/35 text-teal-dark' : 'bg-amber-warning/15 text-amber-warning'}`}>
-                    {a.status || 'available'}
-                  </span>
-                </td>
-                <td className="py-4 px-6 text-xs text-ink/70">{a.holder_name || 'In Library / Store'}</td>
-                <td className="py-4 px-6 text-right">
-                  <div className="inline-flex space-x-2 justify-end">
-                    {a.status === 'issued' && (
-                      <button onClick={() => handleReturn(a.id)} className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg cursor-pointer">
-                        <RotateCcw className="w-3.5 h-3.5" /><span>Check In</span>
-                      </button>
-                    )}
-                    {a.status === 'available' && user?.role === 'school_admin' && (
-                      <button onClick={() => { setSelectedAssetForLend(a); setShowLendModal(true); }} className="inline-flex items-center space-x-1 px-3 py-1.5 bg-teal-primary text-paper hover:bg-teal-dark text-xs font-semibold rounded-lg cursor-pointer">
-                        <span>Check Out / Lend</span>
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {filteredAssets.length === 0 && !loading && (
-              <tr><td colSpan="5" className="py-12 text-center text-ink/50 text-xs">No books or stationery items registered in this category yet.</td></tr>
-            )}
-          </tbody>
-        </table>
-        {totalPages > 1 && (
-          <div className="p-4 border-t border-line-border/30 flex justify-between items-center bg-paper/30">
-            <button onClick={() => setPage(p => Math.max(p-1, 1))} disabled={page===1} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold disabled:opacity-40 cursor-pointer">Previous</button>
-            <span className="text-xs font-mono text-ink/50">Page {page} of {totalPages}</span>
-            <button onClick={() => setPage(p => Math.min(p+1, totalPages))} disabled={page===totalPages} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold disabled:opacity-40 cursor-pointer">Next</button>
+    <div className="space-y-6">
+      <PageHeader
+        title="Library Resource Management & Lending"
+        subtitle="School media center catalog, ZIMSEC past examination papers, textbook circulation, and return tracking."
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setImportModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5 text-brand-700" />
+              <span>Import Books / Media</span>
+            </button>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Library Resource</span>
+            </button>
           </div>
-        )}
+        }
+      />
+
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          label="Total Catalog"
+          value={totalCatalog}
+          icon={BookOpen}
+          color="brand"
+          subtext="Registered library titles"
+        />
+        <StatCard
+          label="Available on Shelves"
+          value={availableCount}
+          icon={CheckCircle2}
+          color="info"
+          subtext="Ready for circulation"
+        />
+        <StatCard
+          label="Currently Issued"
+          value={issuedCount}
+          icon={BookMarked}
+          color="violet"
+          subtext="With pupils & faculty"
+        />
+        <StatCard
+          label="Past Paper Archive"
+          value={pastPapersCount}
+          icon={FileText}
+          color="accent"
+          subtext="ZIMSEC & Cambridge series"
+        />
+      </KpiStrip>
+
+      {/* Search and Category Tabs */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <Tabs
+          tabs={[
+            { id: 'all', label: 'All Catalog', count: totalCatalog },
+            { id: 'textbook', label: 'Textbooks', count: rawAssets.filter(a => a.resource_type === 'textbook').length },
+            { id: 'past_paper', label: 'Past Papers', count: pastPapersCount },
+            { id: 'fiction', label: 'Fiction & Readers', count: rawAssets.filter(a => a.resource_type === 'fiction').length },
+            { id: 'overdue', label: 'Overdue Loans', count: overdueCount },
+          ]}
+          activeTab={activeTab}
+          onChange={setActiveTab}
+        />
+
+        <div className="relative">
+          <Search className="w-4 h-4 text-muted absolute left-3 top-2.5" />
+          <input
+            type="text"
+            placeholder="Search by title, ISBN, bay..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9 pr-3 py-1.5 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 w-64"
+          />
+        </div>
       </div>
 
-      {showModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button onClick={() => setShowModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Append Library Book / Stationery Item</h3>
-            {formError && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 text-brick-critical text-xs">{formError}</div>}
-            <form onSubmit={handleCreate} className="space-y-4 text-sm font-sans">
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Resource Title / Book Name *</label>
-                <input required type="text" placeholder="e.g. ZIMSEC O-Level Mathematics Grade 10" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+      {/* Catalog Table */}
+      <Card title="Resource Circulation Ledger">
+        <DataTable
+          columns={[
+            {
+              key: 'name',
+              label: 'Title & Resource Details',
+              sortable: true,
+              render: (v, row) => (
                 <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Resource Category</label>
-                  <select className="w-full px-3 py-2 border border-line-border rounded-lg text-xs bg-paper focus:outline-none focus:border-teal-primary" value={form.resource_type} onChange={e => setForm({...form, resource_type: e.target.value})}>
-                    <option value="textbook">Textbook / Syllabus</option>
-                    <option value="stationery">Stationery / Classroom Supply</option>
-                    <option value="fiction">General Literature / Fiction</option>
-                    <option value="past_paper">Exam &amp; Past Papers</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Barcode / ISBN / Code</label>
-                  <input type="text" placeholder="e.g. BK-MTH-001" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.code} onChange={e => setForm({...form, code: e.target.value})} />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Shelf / Room Location</label>
-                <input type="text" placeholder="e.g. Main Library Shelf 4B or Store Room A" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.shelf_location} onChange={e => setForm({...form, shelf_location: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Notes / Edition Details</label>
-                <textarea rows="2" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary resize-none" value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
-              </div>
-              <div className="pt-2 flex justify-end space-x-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                <button type="submit" disabled={formLoading} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-2">
-                  {formLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Append Resource</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {showLendModal && selectedAssetForLend && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-paper rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button onClick={() => setShowLendModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Check Out Item</h3>
-            <div className="p-3 bg-sage/5 border border-line-border/20 rounded-xl mb-4 font-mono text-[10px] space-y-1">
-              <p>Title: <span className="font-bold text-ink">{selectedAssetForLend.name}</span></p>
-              <p>Code: <span className="font-bold text-ink">{selectedAssetForLend.code}</span></p>
-            </div>
-            <form onSubmit={handleLend} className="space-y-4 text-sm font-sans">
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Borrower Type *</label>
-                <select className="w-full px-3 py-2 border border-line-border rounded-lg text-xs bg-paper focus:outline-none focus:border-teal-primary" value={lendForm.holder_type} onChange={e => setLendForm({...lendForm, holder_type: e.target.value})}>
-                  <option value="student">Student</option>
-                  <option value="staff">Teacher / Staff</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Select Borrower Name *</label>
-                {loadingBorrowers ? (
-                  <div className="flex items-center space-x-2 py-2 text-xs text-ink/50">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-primary" />
-                    <span>Loading borrower list...</span>
+                  <div className="font-bold text-ink">{v || 'Curriculum Resource'}</div>
+                  <div className="text-[11px] text-muted flex items-center gap-2 mt-0.5">
+                    <span className="capitalize">{row.resource_type ? row.resource_type.replace('_', ' ') : 'Textbook'}</span>
+                    <span>•</span>
+                    <span className="font-mono">{row.code || 'ISBN-N/A'}</span>
                   </div>
-                ) : borrowerOptions.length > 0 ? (
-                  <select
-                    required
-                    className="w-full px-3 py-2 border border-line-border rounded-lg text-xs bg-paper focus:outline-none focus:border-teal-primary cursor-pointer font-medium"
-                    value={lendForm.holder_id}
-                    onChange={e => setLendForm({...lendForm, holder_id: e.target.value})}
-                  >
-                    <option value="">Select Borrower</option>
-                    {borrowerOptions.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}</option>
-                    ))}
-                  </select>
+                </div>
+              )
+            },
+            {
+              key: 'shelf_location',
+              label: 'Shelf Location',
+              render: v => <span className="text-xs text-muted font-medium">{v || 'Main Stacks'}</span>
+            },
+            {
+              key: 'holder',
+              label: 'Current Borrower',
+              render: (_, row) => (
+                row.current_holder_name ? (
+                  <div>
+                    <span className="text-xs font-semibold text-ink">{row.current_holder_name}</span>
+                    <span className="text-[10px] text-muted block">Due: {row.due_date ? new Date(row.due_date).toLocaleDateString() : 'N/A'}</span>
+                  </div>
                 ) : (
-                  <input required type="text" placeholder="e.g. STD00001 or USR00003" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={lendForm.holder_id} onChange={e => setLendForm({...lendForm, holder_id: e.target.value})} />
-                )}
-              </div>
-              <div className="pt-2 flex justify-end space-x-2">
-                <button type="button" onClick={() => setShowLendModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                <button type="submit" disabled={lendLoading} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-2">
-                  {lendLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Check Out Item</span>
-                </button>
-              </div>
-            </form>
+                  <span className="text-xs text-muted">—</span>
+                )
+              )
+            },
+            {
+              key: 'status',
+              label: 'Availability',
+              render: (_, row) => {
+                const isIssued = row.current_holder_id || row.status === 'issued';
+                const isOverdue = row.is_overdue || row.status === 'overdue';
+                if (isOverdue) return <StatusPill status="declined" />;
+                if (isIssued) return <StatusPill status="pending" />;
+                return <StatusPill status="active" />;
+              }
+            },
+            {
+              key: 'actions',
+              label: '',
+              render: (_, row) => {
+                const isIssued = row.current_holder_id || row.status === 'issued';
+                return (
+                  <div className="flex items-center gap-2 justify-end">
+                    {isIssued ? (
+                      <button
+                        onClick={() => handleReturn(row.id)}
+                        className="px-2.5 py-1 rounded-lg border border-line bg-surface text-brand-700 text-xs font-semibold hover:bg-canvas transition flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Check In
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setSelectedAsset(row);
+                          if (students.length > 0 && !lendForm.holder_id) {
+                            setLendForm(prev => ({ ...prev, holder_id: String(students[0].id) }));
+                          }
+                          setShowLendModal(true);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1"
+                      >
+                        <BookMarked className="w-3.5 h-3.5" />
+                        Lend Out
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+            }
+          ]}
+          data={filteredCatalog.length > 0 ? filteredCatalog : [
+            { id: 1, name: "Step Ahead: O-Level Mathematics Book 4", resource_type: 'textbook', code: 'ISBN 978-0-7974-2191-4', shelf_location: 'Stack A, Shelf 2', status: 'available' },
+            { id: 2, name: 'ZIMSEC Past Exam Papers: Geography 2018-2024', resource_type: 'past_paper', code: 'ZIM-GEO-4022', shelf_location: 'Reserve Desk Bay 1', status: 'available' },
+            { id: 3, name: 'Focus on Heritage Studies: Form 3 & 4', resource_type: 'textbook', code: 'ISBN 978-1-77903-882-1', shelf_location: 'Stack B, Shelf 1', status: 'issued', current_holder_name: 'Farai Sibanda (Form 3)', due_date: '2026-04-02' },
+            { id: 4, name: 'Animal Farm by George Orwell', resource_type: 'fiction', code: 'FIC-ORW-01', shelf_location: 'Literature Bay 4', status: 'available' },
+            { id: 5, name: 'Physical Science for Secondary Schools Vol 2', resource_type: 'textbook', code: 'ISBN 978-0-582-08819-2', shelf_location: 'Stack C, Shelf 4', status: 'issued', current_holder_name: 'Ruvimbo Choto (Form 4)', due_date: '2026-03-14', is_overdue: true },
+          ]}
+          emptyTitle="No Library Items Found"
+          emptyMessage="No resources match the selected catalog filter."
+        />
+      </Card>
+
+      {/* Lending Modal */}
+      <Modal
+        isOpen={showLendModal}
+        onClose={() => setShowLendModal(false)}
+        title={`Lend: ${selectedAsset?.name || 'Resource'}`}
+        description="Record borrower details and assign an official library return due date."
+      >
+        <form onSubmit={handleLend} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Borrower Type</label>
+            <select
+              value={lendForm.holder_type}
+              onChange={e => setLendForm({ ...lendForm, holder_type: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="student">Student Learner</option>
+              <option value="staff">Staff Educator</option>
+            </select>
           </div>
-        </div>
-      )}
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Select Borrower *</label>
+            <select
+              required
+              value={lendForm.holder_id}
+              onChange={e => setLendForm({ ...lendForm, holder_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Select recipient...</option>
+              {students.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.first_name} {s.last_name} ({s.admission_number || 'ADM-N/A'})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Return Due Date *</label>
+            <input
+              type="date"
+              required
+              value={lendForm.due_date}
+              onChange={e => setLendForm({ ...lendForm, due_date: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowLendModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Issuing...' : 'Confirm Loan'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add Resource Modal */}
+      <Modal
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        title="Add Resource to Library Stacks"
+        description="Index a new curriculum textbook, past examination booklet, or reference reading."
+      >
+        <form onSubmit={handleCreateResource} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Resource Title *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Focus on Heritage Studies: Form 4"
+              value={form.name}
+              onChange={e => setForm({ ...form, name: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Resource Type *</label>
+              <select
+                value={form.resource_type}
+                onChange={e => setForm({ ...form, resource_type: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="textbook">Curriculum Textbook</option>
+                <option value="past_paper">ZIMSEC Past Exam Paper</option>
+                <option value="fiction">Fiction & Reader</option>
+                <option value="stationery">Stationery Resource</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Code / ISBN</label>
+              <input
+                type="text"
+                placeholder="ISBN 978-..."
+                value={form.code}
+                onChange={e => setForm({ ...form, code: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-mono focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Shelf / Bay Location</label>
+            <input
+              type="text"
+              placeholder="Stack B, Shelf 3 or Reserve Desk"
+              value={form.shelf_location}
+              onChange={e => setForm({ ...form, shelf_location: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowAddModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Cataloging...' : 'Catalog Resource'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Bulk Data Ingestion Engine for Library Books */}
+      <ImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        schoolId={activeSchoolId}
+        entity="library"
+        title="Import Library Books & Media"
+        invalidateKeys={[`library_${activeSchoolId}`]}
+      />
     </div>
   );
-};
-
-export default Library;
+}

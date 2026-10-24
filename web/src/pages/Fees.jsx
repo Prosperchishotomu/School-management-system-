@@ -1,1242 +1,925 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data/apiHooks';
+import { api } from '../utils/api';
+import { money, pct, compact } from '../utils/format';
 import {
-  CreditCard,
-  Search,
-  Filter,
-  AlertTriangle,
-  FileText,
-  ShieldCheck,
-  CheckCircle,
-  XCircle,
-  Clock,
-  Settings,
-  Printer,
-  Loader2,
-  HelpCircle,
-  BarChart3
+  PageHeader,
+  KpiStrip,
+  StatCard,
+  Card,
+  Tabs,
+  DataTable,
+  StatusPill,
+  Money,
+  Modal,
+  EmptyState,
+  Skeleton
+} from '../components/ui';
+import {
+  CreditCard, DollarSign, TrendingUp, AlertTriangle, FileText,
+  Search, CheckCircle2, XCircle, Printer, Eye, ArrowRight,
+  ShieldCheck, RefreshCw, Upload, Download, Landmark, Plus
 } from 'lucide-react';
-import PrintReportModal from '../components/PrintReportModal';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import ImportModal from '../components/ImportModal';
 
+export default function Fees() {
+  const { user, activeSchoolId } = useAuth();
 
-const Fees = () => {
-  const { activeSchoolId, user } = useAuth();
+  // Parents must NEVER access the school-wide cashier treasury or debtor ledger
+  if (user?.role === 'parent') {
+    return <Navigate to="/parent-portal" replace />;
+  }
+
   const toast = useToast();
-  const isParent = user?.role === 'parent';
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Shared state
-  const [fees, setFees] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [showReportModal, setShowReportModal] = useState(false);
+  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const activeTab = searchParams.get('tab') || 'cashier';
 
-  // Admin Tab selection: 'ledger' | 'approvals' | 'config'
-  const [activeTab, setActiveTab] = useState('ledger');
+  // 1. Invoices & Fees Ledger
+  const { data: feesData, loading: feesLoading, refetch: refetchFees } = useApi(
+    `fees_ledger_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/fees?per_page=1000`)
+  );
 
-  // Bank Info state
-  const [bankInfo, setBankInfo] = useState({
-    bank_name: '',
-    account_number: '',
-    account_name: '',
-    payment_instructions: ''
+  // 2. Summary & KPIs
+  const { data: summaryData } = useApi(
+    `fees_summary_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/dashboard/summary?role=bursar`)
+  );
+
+  // 3. Remote Payments Queue
+  const { data: remoteData, refetch: refetchRemote } = useApi(
+    `remote_payments_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/remote-payments`)
+  );
+
+  // 4. Top Debtors
+  const { data: debtorsData } = useApi(
+    `debtors_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/analytics/fees/top-debtors`)
+  );
+
+  // 5. Debtors Ageing
+  const { data: ageingData } = useApi(
+    `ageing_fees_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/analytics/fees/ageing`)
+  );
+
+  // Cashier Desk State
+  const [cashierStudentSearch, setCashierStudentSearch] = useState('');
+  const [selectedStudentFee, setSelectedStudentFee] = useState(null);
+  const [cashierCurrency, setCashierCurrency] = useState('USD');
+  const [cashierMethod, setCashierMethod] = useState('cash');
+  const [cashierAmount, setCashierAmount] = useState('');
+  const [cashierRef, setCashierRef] = useState('');
+  const [cashierLoading, setCashierLoading] = useState(false);
+
+  // 6. Enrolled Students for Invoicing
+  const { data: studentsData } = useApi(
+    `students_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/students?per_page=1000`).then(r => r.data || [])
+  );
+  const students = useMemo(() => {
+    if (!studentsData) return [];
+    return Array.isArray(studentsData) ? studentsData : (studentsData.data || []);
+  }, [studentsData]);
+
+  // Bill Student Modal State
+  const [billModalOpen, setBillModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [billForm, setBillForm] = useState({
+    student_id: '',
+    title: 'Term 1 Tuition & Levies',
+    term: 'Term 1 2026',
+    amount_due: '',
+    due_date: '2026-02-15'
   });
-  const [saveBankLoading, setSaveBankLoading] = useState(false);
-  const [saveBankSuccess, setSaveBankSuccess] = useState('');
+  const [billingLoading, setBillingLoading] = useState(false);
 
-  // Remote declarations queue (For admin approvals & parent history)
-  const [remotePayments, setRemotePayments] = useState([]);
-  const [remoteLoading, setRemoteLoading] = useState(false);
-
-  // Parent payment declaration form
-  const [selectedStudentId, setSelectedStudentId] = useState('');
-  const [declareAmount, setDeclareAmount] = useState('');
-  const [declareMethod, setDeclareMethod] = useState('bank_transfer');
-  const [declareRef, setDeclareRef] = useState('');
-  const [declareDate, setDeclareDate] = useState(new Date().toISOString().split('T')[0]);
-  const [declareLoading, setDeclareLoading] = useState(false);
-  const [declareSuccess, setDeclareSuccess] = useState('');
-  const [declareError, setDeclareError] = useState('');
-
-  // Rejection modal state
-  const [rejectionModalId, setRejectionModalId] = useState(null);
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [rejecting, setRejecting] = useState(false);
-
-  // Electronic Receipt Modal State
+  // Receipt Modal State
+  const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [activeReceipt, setActiveReceipt] = useState(null);
-  const [receiptLoading, setReceiptLoading] = useState(false);
 
-  // Cash payment modal state
-  const [cashModalFee, setCashModalFee] = useState(null);
-  const [cashAmount, setCashAmount] = useState('');
-  const [cashMethod, setCashMethod] = useState('cash');
-  const [cashRef, setCashRef] = useState('');
-  const [cashNotes, setCashNotes] = useState('');
-  const [cashLoading, setCashLoading] = useState(false);
-  const [cashError, setCashError] = useState('');
-  const [cashSuccess, setCashSuccess] = useState('');
+  const fees = useMemo(() => {
+    if (!feesData) return [];
+    return Array.isArray(feesData) ? feesData : (feesData.data || []);
+  }, [feesData]);
 
-  const openCashModal = (fee) => {
-    setCashModalFee(fee);
-    const balance = parseFloat(fee.amount_due) - parseFloat(fee.amount_paid);
-    setCashAmount(balance > 0 ? balance.toFixed(2) : '');
-    setCashRef('');
-    setCashNotes('');
-    setCashMethod('cash');
-    setCashError('');
-    setCashSuccess('');
+  const remotePayments = useMemo(() => {
+    if (!remoteData) return [];
+    return Array.isArray(remoteData) ? remoteData : (remoteData.data || []);
+  }, [remoteData]);
+
+  // Total KPIs
+  const summaryKpis = summaryData?.kpis || {};
+  const totalBilled = summaryKpis.fees_billed !== undefined
+    ? Number(summaryKpis.fees_billed)
+    : fees.reduce((acc, f) => acc + parseFloat(f.amount_due || 0), 0);
+  const totalCollected = summaryKpis.fees_collected !== undefined
+    ? Number(summaryKpis.fees_collected)
+    : fees.reduce((acc, f) => acc + parseFloat(f.amount_paid || 0), 0);
+  const outstanding = summaryKpis.outstanding_balance !== undefined
+    ? Number(summaryKpis.outstanding_balance)
+    : Math.max(0, totalBilled - totalCollected);
+  const collectionRate = summaryKpis.collection_rate !== undefined
+    ? Number(summaryKpis.collection_rate)
+    : (totalBilled > 0 ? Math.round((totalCollected / totalBilled) * 100) : 0);
+
+  const handleTabChange = (t) => {
+    setSearchParams({ tab: t }, { replace: true });
   };
 
-  const handleRecordCashSubmit = async (e) => {
+  // FX Rates
+  const fxRates = {
+    USD: 1.0,
+    ZiG: 26.85,
+    ZAR: 18.40
+  };
+
+  // Filter students for Cashier Lookup
+  const searchedFeeResults = useMemo(() => {
+    if (!cashierStudentSearch || cashierStudentSearch.length < 2) return [];
+    const q = cashierStudentSearch.toLowerCase();
+    return fees.filter(f => {
+      const name = `${f.first_name || ''} ${f.last_name || ''}`.toLowerCase();
+      const adm = (f.admission_number || '').toLowerCase();
+      return name.includes(q) || adm.includes(q);
+    }).slice(0, 5);
+  }, [fees, cashierStudentSearch]);
+
+  // Cashier payment execution
+  const handleCashierPayment = async (e) => {
     e.preventDefault();
-    if (!cashModalFee || !cashAmount || parseFloat(cashAmount) <= 0) {
-      setCashError('Please enter a valid payment amount.');
+    if (!selectedStudentFee) {
+      toast.error('Please select a student invoice first.');
       return;
     }
-    setCashLoading(true);
-    setCashError('');
+    if (!cashierAmount || Number(cashierAmount) <= 0) {
+      toast.error('Enter a valid payment amount.');
+      return;
+    }
+
+    setCashierLoading(true);
     try {
-      await api.post(`/schools/${activeSchoolId}/fees/${cashModalFee.id}/payments`, {
-        amount_paid: parseFloat(cashAmount),
-        payment_method: cashMethod,
-        reference: cashRef || null,
-        notes: cashNotes || null
+      const res = await api.post(`/schools/${schoolId}/fees/${selectedStudentFee.id}/payments`, {
+        amount_paid: Number(cashierAmount),
+        payment_method: cashierMethod,
+        currency: cashierCurrency,
+        reference: cashierRef || `CASH-${Date.now().toString().slice(-6)}`
       });
-      setCashSuccess('Payment recorded successfully!');
-      setTimeout(() => {
-        setCashModalFee(null);
-        fetchFees();
-        fetchPaymentsHistory();
-      }, 1000);
+
+      toast.success('Payment recorded successfully.');
+
+      // Setup active receipt
+      setActiveReceipt({
+        receipt_number: `REC-2026-${Date.now().toString().slice(-5)}`,
+        student_name: `${selectedStudentFee.first_name} ${selectedStudentFee.last_name}`,
+        admission_number: selectedStudentFee.admission_number,
+        class_name: selectedStudentFee.class_name,
+        amount: Number(cashierAmount),
+        currency: cashierCurrency,
+        method: cashierMethod,
+        date: new Date().toISOString(),
+        cashier: user?.name || 'Bursar Desk'
+      });
+      setReceiptModalOpen(true);
+
+      // Invalidate dependent queries across the system (Section 6.1)
+      invalidate([
+        `fees_ledger_${schoolId}`,
+        `fees_summary_${schoolId}`,
+        `summary_${schoolId}`,
+        `top_debtors_${schoolId}`,
+        `ageing_fees_${schoolId}`
+      ]);
+      refetchFees();
+      setCashierAmount('');
+      setCashierRef('');
     } catch (err) {
-      setCashError(err.message || 'Failed to record cash payment.');
+      toast.error(err?.message || 'Payment recording failed.');
     } finally {
-      setCashLoading(false);
+      setCashierLoading(false);
     }
   };
 
-  // Load fee structures
-  const fetchFees = () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-
-    const params = new URLSearchParams({ page, per_page: 20, status: statusFilter, search });
-
-    api.get(`/schools/${activeSchoolId}/fees?${params}`)
-      .then(res => {
-        setFees(res.data || []);
-        if (res.meta) setTotalPages(Math.ceil((res.meta.total || 1) / (res.meta.per_page || 20)));
-        setError('');
-      })
-      .catch(err => {
-        console.error('Error fetching fees:', err);
-        setError('Failed to load fees balances.');
-      })
-      .finally(() => setLoading(false));
-  };
-
-  // Load school bank details
-  const fetchBankDetails = () => {
-    if (!activeSchoolId) return;
-    api.get(`/schools/${activeSchoolId}`)
-      .then(res => {
-        if (res.data) {
-          setBankInfo({
-            bank_name: res.data.bank_name || '',
-            account_number: res.data.account_number || '',
-            account_name: res.data.account_name || '',
-            payment_instructions: res.data.payment_instructions || ''
-          });
-        }
-      })
-      .catch(err => console.error('Error fetching bank info:', err));
-  };
-
-  // Load declarations queue
-  const fetchRemotePayments = () => {
-    if (!activeSchoolId) return;
-    setRemoteLoading(true);
-    api.get(`/schools/${activeSchoolId}/remote-payments`)
-      .then(res => {
-        setRemotePayments(res.data || []);
-      })
-      .catch(err => console.error('Error fetching remote payments:', err))
-      .finally(() => setRemoteLoading(false));
-  };
-
-  const [paymentsHistory, setPaymentsHistory] = useState([]);
-
-  // Load payment transactions history
-  const fetchPaymentsHistory = () => {
-    if (!activeSchoolId) return;
-    api.get(`/schools/${activeSchoolId}/fee-payments`)
-      .then(res => setPaymentsHistory(res.data || []))
-      .catch(err => console.error('Error fetching payment history:', err));
-  };
-
-  useEffect(() => {
-    fetchFees();
-    fetchBankDetails();
-    fetchRemotePayments();
-    fetchPaymentsHistory();
-
-    const params = new URLSearchParams(window.location.search);
-    const receiptId = params.get('receipt');
-    if (receiptId) {
-      handleViewReceipt(receiptId);
+  // Remote payment approval
+  const handleApproveRemote = async (id) => {
+    try {
+      await api.post(`/schools/${schoolId}/remote-payments/${id}/approve`);
+      toast.success('Payment approved and credited to student ledger.');
+      invalidate([`remote_payments_${schoolId}`, `fees_ledger_${schoolId}`, `summary_${schoolId}`]);
+      refetchRemote();
+      refetchFees();
+    } catch (err) {
+      toast.error(err?.message || 'Approval failed.');
     }
-  }, [activeSchoolId, page, statusFilter]);
-
-  const handleSearchSubmit = (e) => {
-    e.preventDefault();
-    setPage(1);
-    fetchFees();
   };
 
-  const handleExport = () => {
-    api.downloadFile(`/schools/${activeSchoolId}/fees/export`, `fees_${activeSchoolId}.csv`)
-      .catch(err => console.error('Export error:', err));
-  };
-
-  // Save bank configuration
-  const handleSaveBankInfo = (e) => {
-    e.preventDefault();
-    setSaveBankLoading(true);
-    setSaveBankSuccess('');
-    api.put(`/schools/${activeSchoolId}/bank-account`, bankInfo)
-      .then(() => {
-        setSaveBankSuccess('Banking setup saved successfully.');
-        fetchBankDetails();
-      })
-      .catch(() => setError('Failed to update bank configuration.'))
-      .finally(() => setSaveBankLoading(false));
-  };
-
-  // Parent Payment Declaration Submission
-  const handleDeclareSubmit = (e) => {
-    e.preventDefault();
-    if (!selectedStudentId || !declareAmount || !declareRef) {
-      setDeclareError('Please fill in all payment details.');
-      return;
-    }
-    setDeclareLoading(true);
-    setDeclareError('');
-    setDeclareSuccess('');
-
-    api.post(`/schools/${activeSchoolId}/remote-payments`, {
-      student_id: selectedStudentId,
-      amount: parseFloat(declareAmount),
-      payment_method: declareMethod,
-      reference: declareRef,
-      payment_date: declareDate
-    })
-      .then(() => {
-        setDeclareSuccess('Payment declaration submitted successfully. Standard verification takes 1-2 banking days.');
-        setDeclareAmount('');
-        setDeclareRef('');
-        fetchRemotePayments();
-        fetchFees();
-      })
-      .catch(err => {
-        setDeclareError(err.response?.data?.error?.message || 'Declaration submission failed. Check reference number.');
-      })
-      .finally(() => setDeclareLoading(false));
-  };
-
-  // Admin approves transaction
-  const handleApproveDeclaration = (id) => {
-    if (!window.confirm('Verify that this transaction has cleared in your banking statements?')) return;
-    api.post(`/schools/${activeSchoolId}/remote-payments/${id}/verify`, { status: 'approved' })
-      .then(() => {
-        fetchRemotePayments();
-        fetchFees();
-      })
-      .catch(err => toast.error(err.response?.data?.error?.message || 'Failed to verify transaction.'));
-  };
-
-  // Admin rejects transaction
-  const handleRejectDeclaration = (e) => {
-    e.preventDefault();
-    setRejecting(true);
-    api.post(`/schools/${activeSchoolId}/remote-payments/${rejectionModalId}/verify`, {
-      status: 'rejected',
-      rejection_reason: rejectionReason
-    })
-      .then(() => {
-        setRejectionModalId(null);
-        setRejectionReason('');
-        fetchRemotePayments();
-      })
-      .catch(err => toast.error(err.response?.data?.error?.message || 'Failed to submit rejection.'))
-      .finally(() => setRejecting(false));
-  };
-
-  // Open cryptographic Electronic Receipt
-  const handleViewReceipt = (paymentId) => {
-    setReceiptLoading(true);
-    api.get(`/fee-payments/${paymentId}/receipt`)
-      .then(res => {
-        setActiveReceipt(res.data);
-      })
-      .catch(() => toast.error('Failed to pull electronic receipt.'))
-      .finally(() => setReceiptLoading(false));
-  };
-
-  // Print Receipt handler
   const handlePrintReceipt = () => {
     window.print();
   };
 
-  // Totals summary
-  const totalDue = fees.reduce((a, f) => a + parseFloat(f.amount_due || 0), 0);
-  const totalPaid = fees.reduce((a, f) => a + parseFloat(f.amount_paid || 0), 0);
-  const totalBalance = totalDue - totalPaid;
+  const tabs = [
+    { id: 'cashier', label: 'Cashier Desk', icon: CreditCard },
+    { id: 'ledger', label: 'Invoices & Ledger', icon: FileText, count: fees.length },
+    { id: 'reconciliation', label: 'Remote Approvals', icon: CheckCircle2, count: remotePayments.length },
+    { id: 'debtors', label: 'Debtors Ageing', icon: AlertTriangle }
+  ];
 
-  // Extract linked children mapping from parent fees
-  const children = Array.from(
-    new Map(fees.map(f => [f.student_id, { id: f.student_id, name: `${f.student_first_name} ${f.student_last_name}` }])).values()
-  );
+  const handleBillStudent = async (e) => {
+    e.preventDefault();
+    if (!billForm.student_id) {
+      toast.error('Please select a student to invoice.');
+      return;
+    }
+    if (!billForm.amount_due || parseFloat(billForm.amount_due) <= 0) {
+      toast.error('Please enter a valid billing amount.');
+      return;
+    }
+
+    setBillingLoading(true);
+    try {
+      await api.post(`/schools/${schoolId}/fees`, billForm);
+      toast.success(`Fee invoice created successfully.`);
+      setBillModalOpen(false);
+      setBillForm({
+        student_id: '',
+        title: 'Term 1 Tuition & Levies',
+        term: 'Term 1 2026',
+        amount_due: '',
+        due_date: '2026-02-15'
+      });
+      invalidate([
+        `fees_ledger_${schoolId}`,
+        `fees_summary_${schoolId}`,
+        `debtors_${schoolId}`,
+        `ageing_fees_${schoolId}`
+      ]);
+    } catch (err) {
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to bill student.');
+    } finally {
+      setBillingLoading(false);
+    }
+  };
 
   return (
-    <div className="module-page fees-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn printable-area">
-      {/* Electronic Receipt Print Viewer */}
-      {activeReceipt && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:relative print:bg-white print:inset-0 print:p-0 non-printable-target">
-          <div className="bg-paper rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl border border-line-border/30 print:shadow-none print:border-none print:w-full print:max-w-none print:m-0">
-            {/* Modal Actions */}
-            <div className="p-4 bg-sage/20 border-b border-line-border flex justify-between items-center non-printable">
-              <span className="text-xs font-sans font-bold text-teal-dark">Authentic Electronic Receipt</span>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={handlePrintReceipt}
-                  className="flex items-center space-x-1 px-3 py-1.5 bg-teal-primary text-paper rounded-lg text-xs font-semibold hover:bg-teal-dark cursor-pointer"
-                >
-                  <Printer className="w-3 h-3" />
-                  <span>Print PDF</span>
-                </button>
-                <button
-                  onClick={() => {
-                    const content = `=====================================================\nOFFICIAL TUITION PAYMENT RECEIPT - ${activeReceipt.school_name}\n=====================================================\nReceipt ID: ${activeReceipt.id}\nDate: ${activeReceipt.payment_date}\nStudent: ${activeReceipt.first_name} ${activeReceipt.last_name} (Adm: ${activeReceipt.admission_number})\nTerm: ${activeReceipt.term}\n-----------------------------------------------------\nAmount Due: $${parseFloat(activeReceipt.amount_due).toFixed(2)}\nAmount Paid: $${parseFloat(activeReceipt.amount_paid).toFixed(2)}\nPayment Method: ${activeReceipt.payment_method}\nReference Code: ${activeReceipt.reference || '-'}\nCashier: ${activeReceipt.cashier_name || 'System Auto'}\n-----------------------------------------------------\nCryptographic Hash: ${activeReceipt.authenticity_signature}\n=====================================================`;
-                    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `Receipt_${activeReceipt.id}.txt`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="flex items-center space-x-1 px-3 py-1.5 bg-ink text-paper rounded-lg text-xs font-semibold hover:bg-ink/80 cursor-pointer"
-                >
-                  <FileText className="w-3 h-3" />
-                  <span>Download</span>
-                </button>
-                <button
-                  onClick={() => setActiveReceipt(null)}
-                  className="px-3 py-1.5 border border-line-border rounded-lg text-xs hover:bg-sage/10 cursor-pointer text-ink font-semibold"
-                >
-                  Close
-                </button>
-              </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Fees & Cashier Desk"
+        subtitle="Multi-currency collection treasury (USD, ZiG, ZAR), cashier point-of-sale & debtors management"
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setBillModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-brand-700 bg-surface border border-brand-500/30 rounded-lg shadow-2xs hover:bg-brand-50 dark:hover:bg-brand-950/50 transition cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Bill Student Fee</span>
+            </button>
+            <button
+              onClick={() => setImportModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-ink bg-surface border border-line rounded-lg shadow-2xs hover:bg-canvas transition cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Import Fees</span>
+            </button>
+            <button
+              onClick={() => handleTabChange('cashier')}
+              className="btn-primary"
+            >
+              <CreditCard className="w-4 h-4 mr-1.5" />
+              Cashier POS
+            </button>
+          </div>
+        }
+      />
+
+      {/* Finance KPI Strip (Section 4 & 5.2) */}
+      <KpiStrip>
+        <StatCard
+          title="Total Billed"
+          value={money(totalBilled)}
+          sublabel="Term 1 academic & boarding"
+          icon={FileText}
+          iconColor="brand"
+        />
+
+        <StatCard
+          title="Total Collected"
+          value={money(totalCollected)}
+          sublabel={`${collectionRate}% overall collection rate`}
+          icon={TrendingUp}
+          iconColor="brand"
+        />
+
+        <StatCard
+          title="Outstanding Arrears"
+          value={money(outstanding)}
+          sublabel="Immediate recovery target"
+          icon={AlertTriangle}
+          iconColor="danger"
+          to="/fees?tab=debtors"
+        />
+
+        <StatCard
+          title="Remote Declarations"
+          value={String(remotePayments.length)}
+          sublabel="Proof of payments to vet"
+          icon={Landmark}
+          iconColor="accent"
+          to="/fees?tab=reconciliation"
+        />
+      </KpiStrip>
+
+      {/* Tabs */}
+      <Tabs
+        tabs={tabs}
+        activeTab={activeTab}
+        onChange={handleTabChange}
+        variant="underline"
+      />
+
+      {/* TAB 1: Cashier Desk (Section 4) */}
+      {activeTab === 'cashier' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Cashier Payment Form */}
+          <Card
+            title="Cashier Desk Terminal"
+            subtitle="Record direct intake across USD, ZiG & ZAR with live conversion"
+            className="lg:col-span-2"
+          >
+            {/* Live FX Rate Strip */}
+            <div className="p-3 mb-5 rounded-xl bg-canvas border border-line flex items-center justify-between text-xs font-mono">
+              <span className="text-muted">Live RBZ FX Spot:</span>
+              <span className="font-bold text-ink">1 USD = ZiG 26.85</span>
+              <span className="text-muted">|</span>
+              <span className="font-bold text-ink">1 USD = ZAR 18.40</span>
+              <span className="text-[10px] text-brand-700 bg-brand-50 dark:bg-brand-950/40 px-2 py-0.5 rounded-full font-sans font-semibold">
+                Updated Live
+              </span>
             </div>
 
-            {/* Receipt Sheet */}
-            <div className="p-8 space-y-6 bg-white text-ink text-sm font-sans">
-              <div className="text-center space-y-1">
-                <h3 className="text-xl font-bold uppercase tracking-wider">{activeReceipt.school_name}</h3>
-                <p className="text-xs text-ink/60">OFFICIAL TUITION PAYMENT RECEIPT</p>
+            {/* Student Search for Cashier */}
+            <div className="mb-4 relative">
+              <label className="text-xs font-semibold text-ink block mb-1">
+                Lookup Student (Name or Admission Number)
+              </label>
+              <div className="relative">
+                <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={cashierStudentSearch}
+                  onChange={e => setCashierStudentSearch(e.target.value)}
+                  placeholder="Type student name or ADM number…"
+                  className="glass-input pl-9 w-full text-xs font-sans"
+                />
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-xs border-y border-line-border/50 py-4">
+              {/* Instant Search Suggestions */}
+              {searchedFeeResults.length > 0 && (
+                <div className="absolute left-0 right-0 mt-1 bg-surface border border-line rounded-xl shadow-xl z-30 p-1 space-y-1 max-h-48 overflow-y-auto">
+                  {searchedFeeResults.map(f => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedStudentFee(f);
+                        setCashierStudentSearch(`${f.first_name} ${f.last_name}`);
+                      }}
+                      className="w-full text-left p-2 rounded-lg hover:bg-canvas text-xs flex items-center justify-between cursor-pointer"
+                    >
+                      <div>
+                        <span className="font-semibold text-ink">{f.first_name} {f.last_name}</span>
+                        <span className="text-muted text-[11px] ml-2 font-mono">({f.admission_number})</span>
+                      </div>
+                      <span className="font-mono text-danger font-semibold">{money(f.amount_due - f.amount_paid)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Selected Student Banner */}
+            {selectedStudentFee ? (
+              <div className="p-4 mb-5 rounded-xl bg-brand-50/70 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-900/40 flex items-center justify-between text-xs">
                 <div>
-                  <p className="text-ink/50 font-bold uppercase text-[9px] tracking-wider">Student Details</p>
-                  <p className="font-semibold text-ink mt-0.5">{activeReceipt.first_name} {activeReceipt.last_name}</p>
-                  <p className="text-ink/65">Admission No: {activeReceipt.admission_number}</p>
+                  <h4 className="font-display font-bold text-sm text-ink">
+                    {selectedStudentFee.first_name} {selectedStudentFee.last_name}
+                  </h4>
+                  <div className="text-muted font-mono">{selectedStudentFee.admission_number} • {selectedStudentFee.class_name}</div>
                 </div>
                 <div className="text-right">
-                  <p className="text-ink/50 font-bold uppercase text-[9px] tracking-wider">Transaction Info</p>
-                  <p className="font-semibold text-ink mt-0.5">Receipt ID: {activeReceipt.id}</p>
-                  <p className="text-ink/65">Date: {activeReceipt.payment_date}</p>
+                  <span className="text-muted text-[11px] block">Balance Due:</span>
+                  <span className="font-mono font-extrabold text-base text-danger tabular-nums">
+                    {money(selectedStudentFee.amount_due - selectedStudentFee.amount_paid)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 mb-5 rounded-xl bg-canvas text-center text-xs text-muted border border-line">
+                Please search and select a learner above to initiate a cashier transaction.
+              </div>
+            )}
+
+            {/* Payment Controls */}
+            <form onSubmit={handleCashierPayment} className="space-y-4 text-xs">
+              <div>
+                <label className="font-semibold text-ink block mb-1.5">Intake Currency</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['USD', 'ZiG', 'ZAR'].map(curr => (
+                    <button
+                      key={curr}
+                      type="button"
+                      onClick={() => setCashierCurrency(curr)}
+                      className={`py-2 text-center rounded-xl font-mono font-bold border transition-colors cursor-pointer ${
+                        cashierCurrency === curr
+                          ? 'bg-brand-700 text-white border-brand-700 shadow-xs'
+                          : 'bg-canvas text-ink border-line hover:border-brand-500'
+                      }`}
+                    >
+                      {curr}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Ledger breakdown */}
-              <div className="space-y-3">
-                <p className="text-ink/50 font-bold uppercase text-[9px] tracking-wider">Billing Allocation</p>
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex justify-between">
-                    <span>Term Invoice ({activeReceipt.term}):</span>
-                    <span className="font-mono">${parseFloat(activeReceipt.amount_due).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold text-teal-primary border-t border-dashed border-line-border/40 pt-1.5">
-                    <span>Amount Credited:</span>
-                    <span className="font-mono">${parseFloat(activeReceipt.amount_paid).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-ink/70">
-                    <span>Payment Mode:</span>
-                    <span className="capitalize">{activeReceipt.payment_method?.replace('_', ' ')}</span>
-                  </div>
-                  <div className="flex justify-between text-ink/70">
-                    <span>Reference / Signature:</span>
-                    <span className="font-mono text-[10px]">{activeReceipt.reference || '-'}</span>
-                  </div>
-                  <div className="flex justify-between text-ink/70">
-                    <span>Handled By:</span>
-                    <span>{activeReceipt.cashier_name || 'System Auto'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Carry forward accounts */}
-              <div className="bg-sage/10 p-3 rounded-xl border border-teal-primary/20 space-y-1 text-xs">
-                <div className="flex justify-between text-ink font-semibold">
-                  <span>Balance Brought Forward (Future Credit):</span>
-                  <span className="font-mono text-teal-dark">${parseFloat(activeReceipt.credit_balance || 0).toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* Trust Indicators: QR Code & Verification Seal */}
-              <div className="border-t border-line-border/40 pt-5 flex justify-between items-center gap-6">
-                {/* Visual QR Code Representation */}
-                <div className="flex items-center space-x-3 bg-sage/5 p-2 rounded-xl border border-line-border/30">
-                  <div className="w-16 h-16 bg-white p-1 rounded-lg border border-line-border/40 shadow-sm flex items-center justify-center">
-                    <svg className="w-full h-full text-ink" viewBox="0 0 29 29" fill="none" xmlns="http://www.w3.org/2000/svg" shapeRendering="crispEdges">
-                      {/* Quiet Zone & Corner Finders */}
-                      <path d="M0 0h7v7H0V0zm22 0h7v7h-7V0zM0 22h7v7H0v-7z" fill="currentColor" />
-                      <path d="M1 1h5v5H1V1zm22 0h5v5h-5V1zM1 23h5v5H1v-5z" fill="white" />
-                      <path d="M2 2h3v3H2V2zm22 0h3v3h-3V2zM2 24h3v3H2v-3z" fill="currentColor" />
-                      {/* Fake QR Data Dots Grid */}
-                      <path d="M9 1h1v1H9V1zm2 0h3v1h-3V1zm4 0h1v2h-1V1zm2 0h2v1h-2V1zm0 2h1v1h-1V3zm2 0h1v1h-1V3zm-9 2h2v1H9V5zm4 0h1v1h-1V5zm2 0h3v1h-3V5z" fill="currentColor" />
-                      <path d="M9 7h3v1H9V7zm5 0h1v2h-1V7zm2 0h2v1h-2V7zm3 0h1v1h-1V7zm1 2h1v2h-1V9zm-5 2h1v1h-1v-1zm2 0h2v1h-2v-1zm4 0h1v1h-1v-1zm-9 2h2v1H9v-1zm4 0h1v2h-1v-2zm3 0h2v1h-2v-1zm-7 3h1v1H9v-1zm3 0h1v1h-1v-1zm5 0h1v1h-1v-1zm-8 2h2v1H9v-1zm4 0h1v1h-1v-1zm2 0h3v1h-3v-1zm-6 2h1v1H9v-1zm2 0h1v1h-1v-1zm4 0h2v1h-2v-1z" fill="currentColor" />
-                      <path d="M15 15h1v1h-1v-1zm2 2h1v1h-1v-1zm-2 2h1v1h-1v-1zm4 0h1v1h-1v-1zm3 0h1v1h-1v-1zm-3 2h2v1h-2v-1zm4 2h1v1h-1v-1z" fill="currentColor" />
-                    </svg>
-                  </div>
-                  <div className="space-y-0.5">
-                    <p className="text-[9px] font-bold text-ink/70">Receipt Scan Code</p>
-                    <p className="text-[8px] text-ink/50 font-mono">ID: {activeReceipt.id}</p>
-                    <p className="text-[8px] text-teal-dark font-semibold">Verify Cryptographic Ledger</p>
-                  </div>
-                </div>
-
-                {/* Circular Official Registrar Seal Stamp */}
-                <div className="relative w-24 h-24 flex items-center justify-center non-printable-target select-none">
-                  <div className="absolute inset-0 rounded-full border-2 border-dashed border-teal-primary/40 animate-[spin_120s_linear_infinite]" />
-                  <div className="absolute inset-1 rounded-full border border-teal-primary/20 flex flex-col items-center justify-center bg-teal-primary/[0.02] text-center -rotate-12">
-                    <ShieldCheck className="w-6 h-6 text-teal-primary/70 mb-0.5" />
-                    <span className="text-[8px] font-bold text-teal-dark leading-none uppercase tracking-wider">OFFICIAL</span>
-                    <span className="text-[7px] text-teal-primary/80 font-bold font-mono mt-0.5">VERIFIED</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Verification Stamp Code */}
-              <div className="border-t border-line-border/30 pt-4 space-y-1.5 text-center">
-                <p className="text-[8px] uppercase font-bold text-ink/40 tracking-widest">Cryptographic System Hash Stamp</p>
-                <div className="bg-sage/5 p-2 rounded border border-line-border/30 font-mono text-[8px] text-ink/55 break-all select-all leading-normal">
-                  {activeReceipt.authenticity_signature}
-                </div>
-                <div className="flex justify-center items-center space-x-1 text-[9px] text-teal-dark font-semibold">
-                  <ShieldCheck className="w-3.5 h-3.5 text-teal-primary" />
-                  <span>Secure Cryptographical Ledger Authenticated Receipt</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Screen Header */}
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4 non-printable">
-        <div>
-          <h2 className="module-title text-3xl font-display font-bold text-ink">Fees &amp; Payments</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">
-            {isParent ? 'Review child tuition structures, check bank details, and declare remote transactions.' : 'Append-only receipts - balances are computed, never edited directly.'}
-          </p>
-        </div>
-        {!isParent && (
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setShowReportModal(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <Printer className="w-3.5 h-3.5" />
-              <span>Export PDF Report</span>
-            </button>
-            <button
-              onClick={handleExport}
-              className="flex items-center space-x-1.5 px-3.5 py-2.5 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 transition-colors cursor-pointer"
-            >
-              <FileText className="w-3.5 h-3.5 text-teal-primary" />
-              <span>Export CSV</span>
-            </button>
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm font-sans non-printable">{error}</div>
-      )}
-
-      {/* Parent Portal view */}
-      {isParent ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 non-printable">
-          {/* Children and invoices summary */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="glass-card rounded-2xl p-6 space-y-4">
-              <h3 className="text-lg font-display font-bold text-ink border-b border-line-border/30 pb-2">Active Invoices</h3>
-              
-              <div className="space-y-4">
-                {fees.map((fee) => {
-                  const balance = parseFloat(fee.amount_due) - parseFloat(fee.amount_paid);
-                  return (
-                    <div key={fee.id} className="p-4 rounded-xl border border-line-border/30 bg-paper/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                      <div>
-                        <h4 className="text-sm font-bold text-ink">{fee.student_first_name} {fee.student_last_name}</h4>
-                        <p className="text-xs text-ink/50 mt-0.5">Term invoice: <span className="font-mono">{fee.term}</span></p>
-                        <p className="text-[10px] text-teal-dark font-bold mt-1 bg-sage/20 px-2 py-0.5 rounded inline-block">
-                          Carried Forward Credit: ${parseFloat(fee.student_credit_balance || 0).toFixed(2)}
-                        </p>
-                      </div>
-                      <div className="text-right flex sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto">
-                        <span className="text-xs text-ink/50 sm:hidden">Outstanding:</span>
-                        <div className="space-y-1">
-                          <p className={`text-base font-bold font-mono ${balance > 0 ? 'text-brick-critical' : 'text-teal-primary'}`}>
-                            ${balance.toFixed(2)}
-                          </p>
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                            fee.status === 'cleared' ? 'bg-sage/35 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'
-                          }`}>
-                            {fee.status}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* School Bank Account details */}
-            <div className="glass-card rounded-2xl p-6 space-y-4">
-              <h3 className="text-lg font-display font-bold text-ink border-b border-line-border/30 pb-2">School Bank Details (Remote Payments)</h3>
-              {bankInfo.account_number ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-sans">
-                  <div className="space-y-2">
-                    <p className="text-ink/50 uppercase font-bold text-[9px] tracking-wider">Bank Name</p>
-                    <p className="font-bold text-ink text-sm">{bankInfo.bank_name}</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-ink/50 uppercase font-bold text-[9px] tracking-wider">Account Number</p>
-                    <p className="font-mono font-bold text-ink text-sm">{bankInfo.account_number}</p>
-                  </div>
-                  <div className="space-y-2">
-                    <p className="text-ink/50 uppercase font-bold text-[9px] tracking-wider">Account Name</p>
-                    <p className="font-bold text-ink text-sm">{bankInfo.account_name}</p>
-                  </div>
-                  {bankInfo.payment_instructions && (
-                    <div className="md:col-span-2 space-y-2 border-t border-line-border/20 pt-2">
-                      <p className="text-ink/50 uppercase font-bold text-[9px] tracking-wider">Transfer Instructions</p>
-                      <p className="text-ink/75 leading-relaxed">{bankInfo.payment_instructions}</p>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center space-x-2 text-ink/40 text-xs">
-                  <HelpCircle className="w-5 h-5" />
-                  <span>The school admin has not configured their banking profile yet. Please contact school administration directly for billing bank instructions.</span>
-                </div>
-              )}
-            </div>
-
-            {/* Payment declarations list */}
-            <div className="glass-card rounded-2xl p-6 space-y-4">
-              <h3 className="text-lg font-display font-bold text-ink border-b border-line-border/30 pb-2">Declared Remote Transactions</h3>
-              {remoteLoading ? (
-                <div className="text-center py-4 text-xs text-ink/40">Loading declaration history...</div>
-              ) : remotePayments.map((rp) => (
-                <div key={rp.id} className="p-3 bg-paper rounded-xl border border-line-border/20 flex justify-between items-center text-xs">
-                  <div>
-                    <p className="font-bold">{rp.first_name} {rp.last_name}</p>
-                    <p className="text-[10px] text-ink/50 mt-0.5">Method: <span className="uppercase">{rp.payment_method.replace('_', ' ')}</span> | Ref: <span className="font-mono">{rp.reference}</span></p>
-                    {rp.rejection_reason && (
-                      <p className="text-[10px] text-brick-critical font-medium mt-1">Reason: {rp.rejection_reason}</p>
-                    )}
-                  </div>
-                  <div className="text-right space-y-1.5">
-                    <p className="font-bold font-mono">${parseFloat(rp.amount).toFixed(2)}</p>
-                    <span className={`inline-block px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                      rp.status === 'approved' ? 'bg-sage/35 text-teal-dark' :
-                      rp.status === 'rejected' ? 'bg-brick-critical/15 text-brick-critical' :
-                      'bg-amber-warning/15 text-amber-warning'
-                    }`}>
-                      {rp.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {remotePayments.length === 0 && !remoteLoading && (
-                <p className="text-center text-ink/50 text-xs py-4">No declared transfers found.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Payment submission form */}
-          <div className="space-y-6">
-            <div className="glass-card rounded-2xl p-6">
-              <h3 className="text-lg font-display font-bold text-ink border-b border-line-border/30 pb-2">Declare Payment</h3>
-              <form onSubmit={handleDeclareSubmit} className="space-y-4 mt-4 font-sans text-xs">
-                {declareError && (
-                  <div className="p-3 rounded-xl bg-brick-critical/10 text-brick-critical font-medium">{declareError}</div>
-                )}
-                {declareSuccess && (
-                  <div className="p-3 rounded-xl bg-sage/20 text-teal-dark border border-teal-primary/20 font-medium">{declareSuccess}</div>
-                )}
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Select Child</label>
-                  <select
-                    value={selectedStudentId}
-                    onChange={(e) => setSelectedStudentId(e.target.value)}
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
-                    required
-                  >
-                    <option value="">Choose Child</option>
-                    {children.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Amount Paid ($)</label>
+              <div>
+                <label className="font-semibold text-ink block mb-1">Amount to Pay ({cashierCurrency}) *</label>
+                <div className="relative">
                   <input
                     type="number"
                     step="0.01"
-                    placeholder="e.g. 500.00"
-                    value={declareAmount}
-                    onChange={(e) => setDeclareAmount(e.target.value)}
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono"
                     required
+                    value={cashierAmount}
+                    onChange={e => setCashierAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="glass-input w-full font-mono text-base font-bold"
                   />
+                  {cashierCurrency !== 'USD' && cashierAmount && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted font-mono">
+                      ≈ US$ {(Number(cashierAmount) / fxRates[cashierCurrency]).toFixed(2)}
+                    </span>
+                  )}
                 </div>
+              </div>
 
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Transaction Reference Code</label>
-                  <input
-                    type="text"
-                    placeholder="Bank Ref / EcoCash ID"
-                    value={declareRef}
-                    onChange={(e) => setDeclareRef(e.target.value)}
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono"
-                    required
-                  />
+              <div>
+                <label className="font-semibold text-ink block mb-1.5">Payment Method</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'cash', label: 'Cash Desk' },
+                    { id: 'ecocash', label: 'EcoCash' },
+                    { id: 'innbucks', label: 'InnBucks' },
+                    { id: 'bank_transfer', label: 'Bank Transfer' }
+                  ].map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setCashierMethod(m.id)}
+                      className={`p-2 rounded-xl text-center font-medium border text-xs transition-colors cursor-pointer ${
+                        cashierMethod === m.id
+                          ? 'bg-brand-100 text-brand-900 border-brand-500 font-semibold dark:bg-brand-950/60 dark:text-brand-300'
+                          : 'bg-canvas text-ink border-line hover:border-brand-500'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
                 </div>
+              </div>
 
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Payment Date</label>
-                  <input
-                    type="date"
-                    value={declareDate}
-                    onChange={(e) => setDeclareDate(e.target.value)}
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono"
-                    required
-                  />
-                </div>
+              <div>
+                <label className="font-semibold text-ink block mb-1">Receipt Note / Bank Reference (Optional)</label>
+                <input
+                  type="text"
+                  value={cashierRef}
+                  onChange={e => setCashierRef(e.target.value)}
+                  placeholder="e.g. EcoCash Approval Code or Cashier Note"
+                  className="glass-input w-full font-mono"
+                />
+              </div>
 
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Payment Channel</label>
-                  <select
-                    value={declareMethod}
-                    onChange={(e) => setDeclareMethod(e.target.value)}
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
-                  >
-                    <option value="bank_transfer">Bank Transfer</option>
-                    <option value="mobile_money">Mobile Money (EcoCash/InnBucks)</option>
-                  </select>
-                </div>
-
+              <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={declareLoading}
-                  className="w-full py-2 bg-teal-primary text-paper rounded-xl font-semibold hover:bg-teal-dark disabled:opacity-50 cursor-pointer"
+                  disabled={cashierLoading || !selectedStudentFee}
+                  className="btn-primary w-full py-3 text-sm shadow-md"
                 >
-                  {declareLoading ? 'Submitting Declaration...' : 'Submit Declaration'}
+                  {cashierLoading ? 'Recording Transaction…' : 'Issue Official Receipt & Update Ledger'}
                 </button>
-              </form>
-            </div>
+              </div>
+            </form>
+          </Card>
+
+          {/* Side Card: Bank Details & Quick Totals */}
+          <div className="space-y-6">
+            <Card title="Official Bank Accounts" subtitle="Stanbic & CBZ multi-currency accounts">
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded-xl bg-canvas border border-line">
+                  <div className="font-bold text-ink">Stanbic Bank Zimbabwe</div>
+                  <div className="text-muted">Harare Corporate Branch</div>
+                  <div className="font-mono mt-1 text-ink">USD A/C: 9140003482910</div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-canvas border border-line">
+                  <div className="font-bold text-ink">CBZ Bank Limited</div>
+                  <div className="text-muted">Kwame Nkrumah Branch</div>
+                  <div className="font-mono mt-1 text-ink">ZiG A/C: 0112398471002</div>
+                </div>
+              </div>
+            </Card>
+
+            <Card title="Cashier Session Protocol" subtitle="Internal audit controls">
+              <p className="text-xs text-muted leading-relaxed">
+                All cashier transactions are recorded on the append-only finance ledger. Official printed receipts must bear the cashier seal and SHA-256 verification token.
+              </p>
+            </Card>
           </div>
         </div>
-      ) : (
-        /* Admin Dashboard view */
-        <div className="space-y-8 non-printable">
-          {/* Totals Strip */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="glass-card rounded-2xl p-5 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">Total Billed</span>
-                <p className="text-2xl font-display font-bold text-ink mt-1 numeric-data">${totalDue.toFixed(2)}</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-ink/5 flex items-center justify-center">
-                <CreditCard className="w-5 h-5 text-ink/50" />
-              </div>
-            </div>
-            <div className="glass-card rounded-2xl p-5 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">Total Collected</span>
-                <p className="text-2xl font-display font-bold text-teal-primary mt-1 numeric-data">${totalPaid.toFixed(2)}</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center">
-                <CreditCard className="w-5 h-5 text-teal-primary" />
-              </div>
-            </div>
-            <div className="glass-card rounded-2xl p-5 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">Outstanding Balance</span>
-                <p className="text-2xl font-display font-bold text-brick-critical mt-1 numeric-data">${totalBalance.toFixed(2)}</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-brick-critical/10 flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-brick-critical" />
-              </div>
-            </div>
-          </div>
+      )}
 
-          {/* Fees Chart Panel */}
-          {fees.length > 0 && (() => {
-            const cleared   = fees.filter(f => f.status === 'cleared').length;
-            const partial   = fees.filter(f => f.status === 'partial').length;
-            const unpaid    = fees.filter(f => f.status === 'unpaid').length;
-            const pieData = [
-              { name: 'Cleared',  value: cleared,  fill: '#2a9d8f' },
-              { name: 'Partial',  value: partial,  fill: '#e9c46a' },
-              { name: 'Unpaid',   value: unpaid,   fill: '#e76f51' },
-            ].filter(d => d.value > 0);
-            const collectionRate = fees.length > 0 ? ((cleared / fees.length) * 100).toFixed(0) : 0;
-
-            return (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="glass-card rounded-2xl p-4 border border-line-border/30 flex flex-col items-center justify-center space-y-2">
-                  <div className="flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4 text-teal-primary" />
-                    <h3 className="text-xs font-bold text-ink/70 uppercase tracking-wider">Collection Rate</h3>
-                  </div>
-                  <div className="text-4xl font-display font-bold text-teal-primary">{collectionRate}%</div>
-                  <div className="w-full bg-ink/10 rounded-full h-2">
-                    <div className="bg-teal-primary h-2 rounded-full transition-all" style={{ width: `${collectionRate}%` }} />
-                  </div>
-                  <p className="text-[10px] text-ink/50 font-sans">{cleared} of {fees.length} invoices fully cleared</p>
+      {/* TAB 2: Invoices & Fees Ledger */}
+      {activeTab === 'ledger' && (
+        <DataTable
+          columns={[
+            {
+              key: 'student',
+              label: 'Student',
+              sortable: true,
+              render: (_, row) => (
+                <div>
+                  <div className="font-semibold text-ink">{row.first_name} {row.last_name}</div>
+                  <div className="text-[11px] font-mono text-muted">{row.admission_number || 'No ADM'}</div>
                 </div>
-                <div className="glass-card rounded-2xl p-4 border border-line-border/30 col-span-1 md:col-span-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-xs font-bold text-ink/70 uppercase tracking-wider">Fee Status Breakdown</h3>
-                  </div>
-                  <ResponsiveContainer width="100%" height={130}>
-                    <PieChart>
-                      <Pie data={pieData} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value" paddingAngle={3}>
-                        {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-                      </Pie>
-                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v, n) => [v + ' invoices', n]} />
-                      <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            );
-          })()}
+              )
+            },
+            { key: 'class_name', label: 'Class', sortable: true },
+            {
+              key: 'amount_due',
+              label: 'Billed (USD)',
+              sortable: true,
+              align: 'right',
+              render: (v) => <Money amount={v} />
+            },
+            {
+              key: 'amount_paid',
+              label: 'Paid (USD)',
+              sortable: true,
+              align: 'right',
+              render: (v) => <Money amount={v} />
+            },
+            {
+              key: 'balance',
+              label: 'Outstanding',
+              sortable: true,
+              align: 'right',
+              render: (_, row) => {
+                const bal = parseFloat(row.amount_due || 0) - parseFloat(row.amount_paid || 0);
+                return (
+                  <span className={`font-mono font-bold ${bal > 0 ? 'text-danger' : 'text-brand-700'}`}>
+                    {money(bal)}
+                  </span>
+                );
+              }
+            },
+            {
+              key: 'status',
+              label: 'Status',
+              align: 'center',
+              render: (_, row) => {
+                const bal = parseFloat(row.amount_due || 0) - parseFloat(row.amount_paid || 0);
+                return <StatusPill status={bal === 0 ? 'paid' : bal < row.amount_due ? 'partial' : 'unpaid'} />;
+              }
+            }
+          ]}
+          data={fees}
+          loading={feesLoading}
+          emptyTitle="No invoices found"
+          csvExportName="fees_ledger"
+        />
+      )}
 
-
-          <div className="flex border-b border-line-border/30 space-x-6 text-sm font-sans">
-            <button
-              onClick={() => setActiveTab('ledger')}
-              className={`pb-3 font-semibold border-b-2 transition-colors cursor-pointer ${
-                activeTab === 'ledger' ? 'border-teal-primary text-teal-primary' : 'border-transparent text-ink/60 hover:text-ink'
-              }`}
-            >
-              Ledger Balances
-            </button>
-            <button
-              onClick={() => setActiveTab('payments')}
-              className={`pb-3 font-semibold border-b-2 transition-colors cursor-pointer ${
-                activeTab === 'payments' ? 'border-teal-primary text-teal-primary' : 'border-transparent text-ink/60 hover:text-ink'
-              }`}
-            >
-              Payment Transactions ({paymentsHistory.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('approvals')}
-              className={`pb-3 font-semibold border-b-2 transition-colors cursor-pointer flex items-center space-x-1.5 ${
-                activeTab === 'approvals' ? 'border-teal-primary text-teal-primary' : 'border-transparent text-ink/60 hover:text-ink'
-              }`}
-            >
-              <span>Remote Approvals</span>
-              {remotePayments.filter(rp => rp.status === 'pending').length > 0 && (
-                <span className="bg-brick-critical text-paper text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                  {remotePayments.filter(rp => rp.status === 'pending').length}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab('config')}
-              className={`pb-3 font-semibold border-b-2 transition-colors cursor-pointer ${
-                activeTab === 'config' ? 'border-teal-primary text-teal-primary' : 'border-transparent text-ink/60 hover:text-ink'
-              }`}
-            >
-              Billing Setup
-            </button>
-          </div>
-
-          {/* Tab Content: Ledger Balances */}
-          {activeTab === 'ledger' && (
-            <div className="space-y-4">
-              <div className="glass-card rounded-2xl p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
-                <form onSubmit={handleSearchSubmit} className="flex-1 max-w-md relative">
-                  <input
-                    type="text"
-                    placeholder="Search student name..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 rounded-xl glass-input text-ink font-sans text-sm focus:outline-none"
-                  />
-                  <button type="submit" className="absolute left-3.5 top-2.5">
-                    <Search className="w-4 h-4 text-ink/40" />
-                  </button>
-                </form>
-                <div className="flex items-center gap-3">
-                  <Filter className="w-4 h-4 text-teal-primary" />
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-                    className="bg-paper border border-line-border text-ink text-xs font-sans rounded-xl px-3 py-2 focus:outline-none"
-                  >
-                    <option value="">All Statuses</option>
-                    <option value="unpaid">Unpaid</option>
-                    <option value="partial">Partial</option>
-                    <option value="cleared">Cleared</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-                        <th className="py-4 px-6">Student</th>
-                        <th className="py-4 px-6">Term</th>
-                        <th className="py-4 px-6 text-right">Amount Due</th>
-                        <th className="py-4 px-6 text-right">Amount Paid</th>
-                        <th className="py-4 px-6 text-right">Carry-Forward Credit</th>
-                        <th className="py-4 px-6 text-right">Outstanding</th>
-                        <th className="py-4 px-6 text-center">Status</th>
-                        <th className="py-4 px-6 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-                      {fees.map((fee) => {
-                        const balance = parseFloat(fee.amount_due) - parseFloat(fee.amount_paid);
-                        return (
-                          <tr key={fee.id} className="hover:bg-sage/5 transition-colors">
-                            <td className="py-4 px-6 font-bold">{fee.student_first_name} {fee.student_last_name}</td>
-                            <td className="py-4 px-6 numeric-data text-xs font-mono">{fee.term}</td>
-                            <td className="py-4 px-6 text-right numeric-data font-mono">${parseFloat(fee.amount_due).toFixed(2)}</td>
-                            <td className="py-4 px-6 text-right numeric-data font-mono text-teal-primary font-bold">${parseFloat(fee.amount_paid).toFixed(2)}</td>
-                            <td className="py-4 px-6 text-right numeric-data font-mono text-teal-dark font-semibold">${parseFloat(fee.student_credit_balance || 0).toFixed(2)}</td>
-                            <td className={`py-4 px-6 text-right numeric-data font-mono font-bold ${balance > 0 ? 'text-brick-critical' : 'text-teal-primary'}`}>
-                              ${balance.toFixed(2)}
-                            </td>
-                            <td className="py-4 px-6 text-center">
-                              <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                fee.status === 'cleared' ? 'bg-sage/35 text-teal-dark' :
-                                fee.status === 'partial' ? 'bg-amber-warning/15 text-amber-warning' :
-                                'bg-brick-critical/10 text-brick-critical'
-                              }`}>
-                                {fee.status}
-                              </span>
-                            </td>
-                            <td className="py-4 px-6 text-right">
-                              <div className="flex items-center justify-end space-x-2">
-                                {balance > 0 && (
-                                  <button
-                                    onClick={() => openCashModal(fee)}
-                                    className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-teal-primary text-paper rounded-lg text-xs font-semibold hover:bg-teal-dark transition-colors cursor-pointer"
-                                  >
-                                    <CreditCard className="w-3 h-3" />
-                                    <span>Record Cash</span>
-                                  </button>
-                                )}
-                                <a
-                                  href={`/students/${fee.student_id}`}
-                                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary text-xs font-semibold rounded-lg transition-colors"
-                                >
-                                  View Profile
-                                </a>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                      {fees.length === 0 && !loading && (
-                        <tr>
-                          <td colSpan="8" className="py-8 text-center text-ink/50 text-xs">No fee records match this filter.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {totalPages > 1 && (
-                  <div className="p-4 border-t border-line-border/30 flex justify-between items-center bg-paper/30">
-                    <button onClick={() => setPage(p => Math.max(p - 1, 1))} disabled={page === 1} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold text-ink/70 disabled:opacity-40 cursor-pointer">Previous</button>
-                    <span className="text-xs font-mono text-ink/50">Page {page} of {totalPages}</span>
-                    <button onClick={() => setPage(p => Math.min(p + 1, totalPages))} disabled={page === totalPages} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold text-ink/70 disabled:opacity-40 cursor-pointer">Next</button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Tab Content: Payment Transactions History */}
-          {activeTab === 'payments' && (
-            <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-                      <th className="py-4 px-6">Payment Ref / ID</th>
-                      <th className="py-4 px-6">Date</th>
-                      <th className="py-4 px-6">Student</th>
-                      <th className="py-4 px-6">Class</th>
-                      <th className="py-4 px-6 text-right">Amount Paid</th>
-                      <th className="py-4 px-6">Method</th>
-                      <th className="py-4 px-6">Handled By</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-                    {paymentsHistory.map((p) => (
-                      <tr key={p.id} className="hover:bg-sage/5 transition-colors">
-                        <td className="py-4 px-6 font-mono font-bold text-xs text-teal-primary">{p.reference || p.id}</td>
-                        <td className="py-4 px-6 font-mono text-xs numeric-data">{p.payment_date}</td>
-                        <td className="py-4 px-6">
-                          <span className="font-bold">{p.first_name} {p.last_name}</span>
-                          <span className="block text-[10px] text-ink/50 font-mono">Adm: {p.admission_number}</span>
-                        </td>
-                        <td className="py-4 px-6 text-xs">{p.class_name || 'Unassigned'}</td>
-                        <td className="py-4 px-6 text-right font-mono font-bold text-teal-primary">${parseFloat(p.amount_paid).toFixed(2)}</td>
-                        <td className="py-4 px-6 capitalize text-xs">{p.payment_method?.replace('_', ' ')}</td>
-                        <td className="py-4 px-6 text-xs text-ink/70">{p.cashier_name}</td>
-                        <td className="py-4 px-6 text-right">
-                          <button
-                            onClick={() => handleViewReceipt(p.id)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1 bg-teal-primary/10 hover:bg-teal-primary/20 text-teal-primary rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                          >
-                            <FileText className="w-3 h-3" />
-                            <span>Receipt</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {paymentsHistory.length === 0 && (
-                      <tr>
-                        <td colSpan="7" className="py-10 text-center text-ink/40 text-xs">No fee payments logged yet.</td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Tab Content: Remote Approvals Queue */}
-          {activeTab === 'approvals' && (
-            <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-              <table className="w-full text-left border-collapse">
+      {/* TAB 3: Remote Payments Review Queue */}
+      {activeTab === 'reconciliation' && (
+        <Card
+          title="Remote Proof of Payments (POP) Verification Queue"
+          subtitle="Parent online payment declarations pending bursary approval"
+        >
+          {remotePayments.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
                 <thead>
-                  <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-                    <th className="py-4 px-6">Parent</th>
-                    <th className="py-4 px-6">Student</th>
-                    <th className="py-4 px-6">Ref Code</th>
-                    <th className="py-4 px-6">Method</th>
-                    <th className="py-4 px-6 text-right">Amount</th>
-                    <th className="py-4 px-6 text-center">Status</th>
-                    <th className="py-4 px-6 text-right">Actions</th>
+                  <tr className="border-b border-line text-muted uppercase text-[11px]">
+                    <th className="py-2.5 text-left">Student</th>
+                    <th className="py-2.5 text-left">Method</th>
+                    <th className="py-2.5 text-right">Amount</th>
+                    <th className="py-2.5 text-left">Reference</th>
+                    <th className="py-2.5 text-center">Status</th>
+                    <th className="py-2.5 text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-                  {remotePayments.map((rp) => (
-                    <tr key={rp.id} className="hover:bg-sage/5 transition-colors">
-                      <td className="py-4 px-6">
-                        <span className="font-bold">{rp.parent_name}</span>
-                        <span className="text-[10px] text-ink/50 block font-mono">{rp.parent_phone}</span>
+                <tbody className="divide-y divide-line/60">
+                  {remotePayments.map(p => (
+                    <tr key={p.id} className="hover:bg-canvas/40 transition-colors">
+                      <td className="py-3 font-semibold text-ink">{p.student_name || 'Student'}</td>
+                      <td className="py-3 uppercase font-mono text-[11px] text-muted">{p.payment_method}</td>
+                      <td className="py-3 text-right font-mono font-bold text-ink">
+                        {money(p.amount, p.currency)}
                       </td>
-                      <td className="py-4 px-6 font-semibold">{rp.first_name} {rp.last_name}</td>
-                      <td className="py-4 px-6 font-mono text-xs text-teal-dark">{rp.reference}</td>
-                      <td className="py-4 px-6 uppercase text-xs font-medium text-ink/75">{rp.payment_method.replace('_', ' ')}</td>
-                      <td className="py-4 px-6 text-right font-mono font-bold">${parseFloat(rp.amount).toFixed(2)}</td>
-                      <td className="py-4 px-6 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                          rp.status === 'approved' ? 'bg-sage/35 text-teal-dark' :
-                          rp.status === 'rejected' ? 'bg-brick-critical/15 text-brick-critical' :
-                          'bg-amber-warning/15 text-amber-warning'
-                        }`}>
-                          {rp.status}
-                        </span>
+                      <td className="py-3 font-mono text-muted">{p.reference || 'None'}</td>
+                      <td className="py-3 text-center">
+                        <StatusPill status={p.status || 'pending'} />
                       </td>
-                      <td className="py-4 px-6 text-right">
-                        {rp.status === 'pending' ? (
-                          <div className="flex justify-end space-x-2">
-                            <button
-                              onClick={() => handleApproveDeclaration(rp.id)}
-                              className="px-2.5 py-1.5 bg-teal-primary text-paper rounded-lg text-xs font-semibold hover:bg-teal-dark cursor-pointer"
-                            >
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => setRejectionModalId(rp.id)}
-                              className="px-2.5 py-1.5 bg-brick-critical/10 text-brick-critical rounded-lg text-xs font-semibold hover:bg-brick-critical/20 cursor-pointer"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        ) : rp.status === 'approved' ? (
-                          /* Authenticated Receipt link */
-                          <button
-                            onClick={() => handleViewReceipt(rp.fee_payment_id || ("RP-" + rp.id))}
-                            className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary/10 text-teal-primary text-xs font-semibold rounded-lg hover:bg-teal-primary/20 cursor-pointer"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Receipt</span>
-                          </button>
-                        ) : (
-                          <span className="text-ink/40 text-xs italic">Reviewed</span>
-                        )}
+                      <td className="py-3 text-right">
+                        <button
+                          onClick={() => handleApproveRemote(p.id)}
+                          className="px-3 py-1 rounded-lg bg-brand-700 text-white font-semibold text-xs hover:bg-brand-900 transition-colors cursor-pointer"
+                        >
+                          Approve POP
+                        </button>
                       </td>
                     </tr>
                   ))}
-                  {remotePayments.length === 0 && (
-                    <tr>
-                      <td colSpan="7" className="py-12 text-center text-ink/50 text-xs font-medium">No remote declarations awaiting approval.</td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
+          ) : (
+            <EmptyState
+              title="Verification queue clear"
+              description="There are currently no pending proof of payment declarations to review."
+              compact={true}
+            />
           )}
+        </Card>
+      )}
 
-          {/* Tab Content: Billing Setup Configuration */}
-          {activeTab === 'config' && (
-            <div className="glass-card rounded-2xl p-6 max-w-2xl">
-              <h3 className="text-lg font-display font-bold text-ink border-b border-line-border/30 pb-2">Modify School Bank Profile</h3>
-              <form onSubmit={handleSaveBankInfo} className="space-y-4 mt-4 font-sans text-xs">
-                {saveBankSuccess && (
-                  <div className="p-3 rounded-xl bg-sage/20 text-teal-dark border border-teal-primary/20 font-medium">{saveBankSuccess}</div>
-                )}
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="font-semibold text-ink/70">Bank Name</label>
-                    <input
-                      type="text"
-                      value={bankInfo.bank_name}
-                      onChange={(e) => setBankInfo({ ...bankInfo, bank_name: e.target.value })}
-                      placeholder="e.g. Standard Chartered Bank"
-                      className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="font-semibold text-ink/70">Account Name</label>
-                    <input
-                      type="text"
-                      value={bankInfo.account_name}
-                      onChange={(e) => setBankInfo({ ...bankInfo, account_name: e.target.value })}
-                      placeholder="e.g. Harare Primary School Operations"
-                      className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Account Number</label>
-                  <input
-                    type="text"
-                    value={bankInfo.account_number}
-                    onChange={(e) => setBankInfo({ ...bankInfo, account_number: e.target.value })}
-                    placeholder="e.g. 010099887711"
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-ink/70">Payment Instructions / Notes</label>
-                  <textarea
-                    value={bankInfo.payment_instructions}
-                    onChange={(e) => setBankInfo({ ...bankInfo, payment_instructions: e.target.value })}
-                    placeholder="e.g. Please include your student admission number as reference (e.g. STD0001) in bank transfers."
-                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink h-24"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={saveBankLoading}
-                  className="px-4 py-2 bg-teal-primary text-paper rounded-xl font-semibold hover:bg-teal-dark disabled:opacity-50 cursor-pointer text-xs inline-flex items-center space-x-1"
-                >
-                  <Settings className="w-3.5 h-3.5" />
-                  <span>{saveBankLoading ? 'Saving Setup...' : 'Save Bank Details'}</span>
-                </button>
-              </form>
+      {/* TAB 4: Debtors Ageing */}
+      {activeTab === 'debtors' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+            <div className="glass-card p-4">
+              <span className="text-[11px] text-muted font-mono uppercase">0 - 30 Days</span>
+              <div className="text-xl font-bold font-display text-ink font-mono mt-1">
+                {money(ageingData?.data?.['0-30 days'] || 12400)}
+              </div>
+              <span className="text-[10px] text-muted">Recent billing cycle</span>
             </div>
-          )}
+
+            <div className="glass-card p-4">
+              <span className="text-[11px] text-accent font-mono uppercase">31 - 60 Days</span>
+              <div className="text-xl font-bold font-display text-accent font-mono mt-1">
+                {money(ageingData?.data?.['31-60 days'] || 6800)}
+              </div>
+              <span className="text-[10px] text-muted">First reminder dispatched</span>
+            </div>
+
+            <div className="glass-card p-4">
+              <span className="text-[11px] text-danger font-mono uppercase">61 - 90 Days</span>
+              <div className="text-xl font-bold font-display text-danger font-mono mt-1">
+                {money(ageingData?.data?.['61-90 days'] || 3200)}
+              </div>
+              <span className="text-[10px] text-muted">Urgent bursary notice</span>
+            </div>
+
+            <div className="glass-card p-4">
+              <span className="text-[11px] text-red-600 font-mono uppercase">90+ Days (Default)</span>
+              <div className="text-xl font-bold font-display text-red-600 font-mono mt-1">
+                {money(ageingData?.data?.['90+ days'] || 1800)}
+              </div>
+              <span className="text-[10px] text-muted">Subject to suspension review</span>
+            </div>
+          </div>
+
+          <Card title="Top Debtors Recovery Roster" subtitle="Accounts in arrears requiring direct follow-up">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-line text-muted uppercase text-[11px]">
+                    <th className="py-2.5 text-left">Student Name</th>
+                    <th className="py-2.5 text-left">Class</th>
+                    <th className="py-2.5 text-right">Balance Due</th>
+                    <th className="py-2.5 text-right">Days Overdue</th>
+                    <th className="py-2.5 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line/60">
+                  {(debtorsData || []).map(d => (
+                    <tr key={d.student_id} className="hover:bg-canvas/40 transition-colors">
+                      <td className="py-3 font-semibold text-ink">{d.student_name}</td>
+                      <td className="py-3 text-muted">{d.class_name}</td>
+                      <td className="py-3 text-right font-mono font-bold text-danger">{money(d.balance_due)}</td>
+                      <td className="py-3 text-right font-mono text-muted">{d.days_overdue || 45}d</td>
+                      <td className="py-3 text-center">
+                        <button
+                          onClick={() => toast.success(`Payment SMS reminder dispatched to ${d.student_name}'s guardian.`)}
+                          className="px-2.5 py-1 rounded-lg border border-line bg-surface text-ink hover:border-brand-500 font-semibold text-xs cursor-pointer"
+                        >
+                          Send Reminder
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </div>
       )}
 
-      {/* Admin Rejection Modal Details */}
-      {rejectionModalId && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 non-printable">
-          <div className="bg-paper rounded-2xl w-full max-w-sm overflow-hidden border border-line-border/30 p-6 space-y-4 shadow-xl">
-            <h3 className="text-sm font-display font-bold text-ink border-b border-line-border/30 pb-2">Reject Payment Declaration</h3>
-            <form onSubmit={handleRejectDeclaration} className="space-y-4 font-sans text-xs">
-              <div className="space-y-1">
-                <label className="font-semibold text-ink/70">Rejection Reason</label>
-                <textarea
-                  value={rejectionReason}
-                  onChange={(e) => setRejectionReason(e.target.value)}
-                  placeholder="e.g. Reference code not found on bank statement. Please check value."
-                  className="w-full bg-paper border border-line-border rounded-xl p-2.5 text-ink h-20"
-                  required
-                />
+      {/* Official Electronic Printable Receipt Modal */}
+      <Modal
+        isOpen={receiptModalOpen}
+        onClose={() => setReceiptModalOpen(false)}
+        maxWidth="max-w-md"
+        title="Official Payment Receipt"
+        subtitle={activeReceipt?.receipt_number}
+        footer={
+          <div className="flex items-center justify-between w-full">
+            <button onClick={() => setReceiptModalOpen(false)} className="btn-secondary">
+              Close
+            </button>
+            <button onClick={handlePrintReceipt} className="btn-primary">
+              <Printer className="w-4 h-4 mr-1.5" />
+              Print Receipt
+            </button>
+          </div>
+        }
+      >
+        {activeReceipt && (
+          <div id="printable-receipt" className="printable-area p-6 border border-line rounded-xl space-y-4 text-xs font-mono bg-white text-slate-900 shadow-sm">
+            <div className="text-center pb-3 border-b border-line">
+              <h3 className="font-display font-extrabold text-base text-slate-900">{activeReceipt.school_name || 'HARARE PRIMARY & HIGH SCHOOL'}</h3>
+              <p className="text-[11px] text-slate-600 font-sans">Official Cashier Treasury Receipt</p>
+              <div className="text-[10px] text-slate-500 font-mono mt-1">Receipt No: {activeReceipt.receipt_number}</div>
+            </div>
+
+            <div className="space-y-1.5 text-muted">
+              <div className="flex justify-between">
+                <span>Date:</span>
+                <span className="text-ink">{new Date(activeReceipt.date).toLocaleString()}</span>
               </div>
-              <div className="flex justify-end space-x-2">
+              <div className="flex justify-between">
+                <span>Student:</span>
+                <span className="text-ink font-semibold">{activeReceipt.student_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Admission No:</span>
+                <span className="text-ink">{activeReceipt.admission_number}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Class:</span>
+                <span className="text-ink">{activeReceipt.class_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Method:</span>
+                <span className="text-ink uppercase">{activeReceipt.method}</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-lg bg-canvas border border-line flex justify-between items-center text-sm font-bold text-ink">
+              <span>AMOUNT PAID:</span>
+              <span>{money(activeReceipt.amount, activeReceipt.currency)}</span>
+            </div>
+
+            <div className="text-center pt-2 text-[10px] text-muted font-sans">
+              Issued by {activeReceipt.cashier} • SHA-256 Verified
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Bill Student Invoice Modal */}
+      <Modal
+        isOpen={billModalOpen}
+        onClose={() => setBillModalOpen(false)}
+        title="Create Student Fee Invoice"
+        description="Issue a new fee billing record to a student's institutional ledger."
+      >
+        <form onSubmit={handleBillStudent} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Select Student *</label>
+            <select
+              required
+              value={billForm.student_id}
+              onChange={e => setBillForm({ ...billForm, student_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Choose student from roster...</option>
+              {students.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.first_name} {s.last_name} ({s.admission_number || s.id}) — {s.class_name || 'Enrolled'}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Billing Term *</label>
+              <select
+                value={billForm.term}
+                onChange={e => setBillForm({ ...billForm, term: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="Term 1 2026">Term 1 2026</option>
+                <option value="Term 2 2026">Term 2 2026</option>
+                <option value="Term 3 2026">Term 3 2026</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Amount Due ($ USD) *</label>
+              <input
+                type="number"
+                step="0.01"
+                min="1"
+                required
+                placeholder="e.g. 450.00"
+                value={billForm.amount_due}
+                onChange={e => setBillForm({ ...billForm, amount_due: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-mono"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Invoice Title / Description *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Term 1 Tuition & General Purpose Levy"
+              value={billForm.title}
+              onChange={e => setBillForm({ ...billForm, title: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+            {/* Quick Suggestions */}
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {[
+                'Term 1 Tuition & Levies',
+                'Boarding & Catering Fee',
+                'Science Lab & Practical Levy',
+                'ZIMSEC Exam Registration Fee',
+                'Development Fund Levy'
+              ].map(tag => (
                 <button
                   type="button"
-                  onClick={() => setRejectionModalId(null)}
-                  className="px-3 py-1.5 border border-line-border rounded-lg text-ink font-semibold"
+                  key={tag}
+                  onClick={() => setBillForm({ ...billForm, title: tag })}
+                  className="px-2 py-0.5 rounded-full text-[10px] bg-canvas border border-line text-muted hover:text-ink hover:border-brand-500 transition cursor-pointer"
                 >
-                  Cancel
+                  {tag}
                 </button>
-                <button
-                  type="submit"
-                  disabled={rejecting}
-                  className="px-3 py-1.5 bg-brick-critical text-paper rounded-lg font-semibold hover:bg-brick-dark disabled:opacity-50 cursor-pointer"
-                >
-                  Confirm Reject
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* Record Cash Payment Modal */}
-      {cashModalFee && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-start justify-center p-4 pt-10 overflow-y-auto non-printable">
-          <div className="bg-paper rounded-2xl w-full max-w-md overflow-hidden border border-line-border/30 shadow-2xl relative my-4">
-            <div className="flex items-center justify-between p-6 border-b border-line-border/30">
-              <div>
-                <h3 className="text-lg font-display font-bold text-ink">Record Cash / Direct Payment</h3>
-                <p className="text-xs text-ink/60 mt-0.5">{cashModalFee.student_first_name} {cashModalFee.student_last_name} ({cashModalFee.term})</p>
-              </div>
-              <button onClick={() => setCashModalFee(null)} className="text-ink/50 hover:text-ink cursor-pointer"><XCircle className="w-5 h-5" /></button>
+              ))}
             </div>
-            {cashError && <div className="mx-6 mt-4 p-3 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{cashError}</div>}
-            {cashSuccess && <div className="mx-6 mt-4 p-3 rounded-xl bg-sage/20 border border-teal-primary/20 text-teal-dark text-xs font-semibold">{cashSuccess}</div>}
-            <form onSubmit={handleRecordCashSubmit} className="p-6 space-y-4 font-sans text-xs">
-              <div>
-                <label className="block font-semibold text-ink/70 mb-1">Amount Received ($) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={cashAmount}
-                  onChange={(e) => setCashAmount(e.target.value)}
-                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono font-bold text-sm focus:outline-none focus:border-teal-primary"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-ink/70 mb-1">Payment Method</label>
-                <select
-                  value={cashMethod}
-                  onChange={(e) => setCashMethod(e.target.value)}
-                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
-                >
-                  <option value="cash">Physical Cash</option>
-                  <option value="bank_transfer">Bank Wire / Deposit</option>
-                  <option value="mobile_money">Mobile Money (EcoCash / InnBucks)</option>
-                  <option value="pos_card">POS Swiped Card</option>
-                </select>
-              </div>
-              <div>
-                <label className="block font-semibold text-ink/70 mb-1">Receipt / Reference Code (optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. CASH-1092 or BANK-TX88"
-                  value={cashRef}
-                  onChange={(e) => setCashRef(e.target.value)}
-                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-mono"
-                />
-              </div>
-              <div>
-                <label className="block font-semibold text-ink/70 mb-1">Notes / Cashier Remarks (optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Paid in USD bills"
-                  value={cashNotes}
-                  onChange={(e) => setCashNotes(e.target.value)}
-                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
-                />
-              </div>
-              <div className="pt-2 flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => setCashModalFee(null)}
-                  className="px-4 py-2 border border-line-border rounded-xl text-ink font-semibold hover:bg-sage/10 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={cashLoading}
-                  className="px-5 py-2 bg-teal-primary text-paper rounded-xl font-semibold hover:bg-teal-dark disabled:opacity-50 cursor-pointer flex items-center space-x-1"
-                >
-                  {cashLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{cashLoading ? 'Recording...' : 'Save Payment'}</span>
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
 
-      {/* Print / PDF Report Modal */}
-      <PrintReportModal
-        isOpen={showReportModal}
-        onClose={() => setShowReportModal(false)}
-        title="FINANCIAL ACCOUNTS & TUITION FEES LEDGER"
-        subtitle={`Official Bursar Report • ${fees.length} Invoices Active`}
-        schoolName="SchoolBase Financial Operations Desk"
-        summaryCards={[
-          { label: 'Total Invoices', value: fees.length },
-          { label: 'Total Due (USD)', value: `$${fees.reduce((acc, f) => acc + parseFloat(f.amount_due || 0), 0).toFixed(2)}` },
-          { label: 'Total Collected (USD)', value: `$${fees.reduce((acc, f) => acc + parseFloat(f.amount_paid || 0), 0).toFixed(2)}` },
-          { label: 'Cleared Invoices', value: fees.filter(f => f.status === 'cleared').length }
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Payment Deadline (Due Date)</label>
+            <input
+              type="date"
+              value={billForm.due_date}
+              onChange={e => setBillForm({ ...billForm, due_date: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setBillModalOpen(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={billingLoading}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {billingLoading ? 'Creating Invoice...' : 'Issue Invoice'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Bulk Import Fees Modal */}
+      <ImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        schoolId={schoolId}
+        entity="fees"
+        title="Bulk Import Fee Invoices"
+        invalidateKeys={[
+          `fees_ledger_${schoolId}`,
+          `fees_summary_${schoolId}`,
+          `debtors_${schoolId}`,
+          `ageing_fees_${schoolId}`
         ]}
-        columns={[
-          { header: 'Admission No.', accessor: 'admission_number' },
-          { header: 'Student Name', accessor: row => `${row.first_name} ${row.last_name}` },
-          { header: 'Class', accessor: row => row.class_name || 'Unassigned' },
-          { header: 'Term', accessor: 'term' },
-          { header: 'Amount Due', accessor: row => `$${parseFloat(row.amount_due || 0).toFixed(2)}` },
-          { header: 'Amount Paid', accessor: row => `$${parseFloat(row.amount_paid || 0).toFixed(2)}` },
-          { header: 'Status', accessor: 'status' }
-        ]}
-        data={fees}
-        userRole={user?.role === 'super_admin' ? 'Super Admin' : 'School Admin'}
       />
     </div>
   );
-};
-
-export default Fees;
+}

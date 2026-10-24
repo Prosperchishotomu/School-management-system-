@@ -1,0 +1,7 @@
+name,category,code,serial_number,value,location
+Dell OptiPlex 7090 Desktop Computer,it_hardware,AST-IT-101,SN-DELL-9011,650,Computer Lab 1
+HP LaserJet Enterprise M507 Printer,it_hardware,AST-IT-102,SN-HP-8412,480,Bursar & Administration Office
+Compound Monocular Microscope Olympus CX23,science_lab,AST-LAB-101,SN-OLY-4410,390,Biology Lab
+Digital Analytical Laboratory Balance Mettler,science_lab,AST-LAB-102,SN-MET-7712,520,Chemistry Lab
+Student Double Desks & Chairs (Hardwood),furniture,AST-FUR-101,TAG-DSK-01,65,Block B Room 1
+Toyota Coaster School Bus 32 Seater,plant_vehicle,AST-VEH-101,VIN-AEH-4491,42000,Main Parking Garage

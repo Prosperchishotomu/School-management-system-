@@ -5,6 +5,7 @@ const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 const { requireIdempotencyKey, idempotencyMiddleware } = require('../utils/idempotency');
 const { initializePayment } = require('../services/payments');
+const { broadcastInvalidation } = require('../services/realtime');
 
 const getTermFromDate = (dateVal = new Date()) => {
   const d = new Date(dateVal);
@@ -14,13 +15,314 @@ const getTermFromDate = (dateVal = new Date()) => {
   return 'Term 3';
 };
 
+// GET /schools/:schoolId/fees/calculator
+router.get('/schools/:schoolId/fees/calculator', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+
+    const phaseRows = await query(`
+      SELECT 
+        COALESCE(c.level, 'junior') as phase,
+        COUNT(st.id) as total_students,
+        SUM(CASE WHEN st.is_boarding = 1 THEN 1 ELSE 0 END) as boarding_students,
+        SUM(CASE WHEN st.gender = 'female' THEN 1 ELSE 0 END) as female_students,
+        SUM(CASE WHEN st.gender = 'male' THEN 1 ELSE 0 END) as male_students
+      FROM students st
+      LEFT JOIN classes c ON st.class_id = c.id
+      WHERE st.school_id = ? AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
+      GROUP BY COALESCE(c.level, 'junior')
+    `, [schoolId]);
+
+    const defaultTuition = {
+      infant: 180.00,
+      junior: 260.00,
+      ordinary: 380.00,
+      advanced: 460.00
+    };
+
+    const alevelStudents = await query(`
+      SELECT 
+        st.id,
+        st.first_name,
+        st.last_name,
+        c.name as class_name,
+        COUNT(DISTINCT ss.subject_id) as subject_count,
+        GROUP_CONCAT(DISTINCT s.code SEPARATOR ', ') as subjects_list,
+        CASE 
+          WHEN c.name LIKE '%Sci%' OR c.name LIKE '%Science%' THEN 'SCIENCES'
+          WHEN c.name LIKE '%Com%' OR c.name LIKE '%Commercial%' THEN 'COMMERCIAL'
+          ELSE 'ARTS'
+        END as stream
+      FROM students st
+      JOIN classes c ON st.class_id = c.id
+      JOIN student_subjects ss ON st.id = ss.student_id
+      JOIN subjects s ON ss.subject_id = s.id
+      WHERE st.school_id = ? AND c.level = 'advanced' AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
+      GROUP BY st.id, st.first_name, st.last_name, c.name
+    `, [schoolId]);
+
+    const alevelStats = {
+      total: alevelStudents.length,
+      streams: {
+        ARTS: { count: 0, taking_3: 0, taking_4: 0, taking_5_plus: 0, sample_students: [] },
+        COMMERCIAL: { count: 0, taking_3: 0, taking_4: 0, taking_5_plus: 0, sample_students: [] },
+        SCIENCES: { count: 0, taking_3: 0, taking_4: 0, taking_5_plus: 0, sample_students: [] }
+      },
+      distribution: {
+        taking_3: 0,
+        taking_4: 0,
+        taking_5_plus: 0
+      }
+    };
+
+    alevelStudents.forEach(st => {
+      const stream = st.stream;
+      const count = Number(st.subject_count);
+      if (alevelStats.streams[stream]) {
+        alevelStats.streams[stream].count++;
+        if (count <= 3) {
+          alevelStats.streams[stream].taking_3++;
+          alevelStats.distribution.taking_3++;
+        } else if (count === 4) {
+          alevelStats.streams[stream].taking_4++;
+          alevelStats.distribution.taking_4++;
+        } else {
+          alevelStats.streams[stream].taking_5_plus++;
+          alevelStats.distribution.taking_5_plus++;
+        }
+        if (alevelStats.streams[stream].sample_students.length < 5) {
+          alevelStats.streams[stream].sample_students.push({
+            id: st.id,
+            name: `${st.first_name} ${st.last_name}`,
+            class_name: st.class_name,
+            subject_count: count,
+            subjects: st.subjects_list
+          });
+        }
+      }
+    });
+
+    const chargedSubjects = await query(`
+      SELECT 
+        s.id,
+        s.code,
+        s.name,
+        s.category,
+        s.level,
+        CAST(s.subject_fee AS DECIMAL(10,2)) as fee,
+        COUNT(DISTINCT ss.student_id) as enrolled_students,
+        CAST(COUNT(DISTINCT ss.student_id) * s.subject_fee AS DECIMAL(10,2)) as total_subject_revenue
+      FROM subjects s
+      JOIN student_subjects ss ON s.id = ss.subject_id
+      JOIN students st ON ss.student_id = st.id AND st.school_id = ? AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
+      WHERE s.subject_fee > 0
+      GROUP BY s.id, s.code, s.name, s.category, s.level, s.subject_fee
+      ORDER BY s.subject_fee DESC
+    `, [schoolId]);
+
+    const ledgerTotals = await queryOne(`
+      SELECT 
+        COUNT(f.id) as total_invoices,
+        COALESCE(SUM(f.amount_due), 0) as total_billed,
+        COALESCE(SUM(f.amount_paid), 0) as total_collected,
+        COALESCE(SUM(f.amount_due - f.amount_paid), 0) as total_outstanding,
+        COUNT(CASE WHEN f.status = 'paid' THEN 1 END) as paid_invoices,
+        COUNT(CASE WHEN f.status = 'partially_paid' OR f.status = 'part_paid' THEN 1 END) as part_paid_invoices,
+        COUNT(CASE WHEN f.status = 'unpaid' THEN 1 END) as unpaid_invoices
+      FROM fees f
+      WHERE f.school_id = ?
+    `, [schoolId]);
+
+    const phaseMap = {};
+    let grandTotalStudents = 0;
+    let grandTotalBoarding = 0;
+    let grandTuitionRevenue = 0;
+
+    phaseRows.forEach(row => {
+      const p = row.phase;
+      const count = Number(row.total_students || 0);
+      const boarding = Number(row.boarding_students || 0);
+      const rate = defaultTuition[p] || 250;
+      const tuitionRev = count * rate;
+
+      grandTotalStudents += count;
+      grandTotalBoarding += boarding;
+      grandTuitionRevenue += tuitionRev;
+
+      phaseMap[p] = {
+        phase: p,
+        label: p === 'infant' ? 'Early Childhood Development (ECD)'
+             : p === 'junior' ? 'Primary School (Grades 1-7)'
+             : p === 'ordinary' ? 'O-Level (Forms 1-4)'
+             : 'A-Level (Forms 5-6)',
+        student_count: count,
+        boarding_count: boarding,
+        rate_per_student: rate,
+        projected_tuition: tuitionRev
+      };
+    });
+
+    ['infant', 'junior', 'ordinary', 'advanced'].forEach(ph => {
+      if (!phaseMap[ph]) {
+        phaseMap[ph] = {
+          phase: ph,
+          label: ph === 'infant' ? 'Early Childhood Development (ECD)'
+               : ph === 'junior' ? 'Primary School (Grades 1-7)'
+               : ph === 'ordinary' ? 'O-Level (Forms 1-4)'
+               : 'A-Level (Forms 5-6)',
+          student_count: 0,
+          boarding_count: 0,
+          rate_per_student: defaultTuition[ph],
+          projected_tuition: 0
+        };
+      }
+    });
+
+    const totalSubjectFeeRevenue = chargedSubjects.reduce((acc, curr) => acc + Number(curr.total_subject_revenue || 0), 0);
+    const boardingFeeRate = 550.00;
+    const totalBoardingRevenue = grandTotalBoarding * boardingFeeRate;
+    const sdaLevyRate = 30.00;
+    const totalSdaRevenue = grandTotalStudents * sdaLevyRate;
+
+    const projectedGrandTotal = grandTuitionRevenue + totalSubjectFeeRevenue + totalBoardingRevenue + totalSdaRevenue;
+
+    return res.json({
+      data: {
+        summary: {
+          total_students: grandTotalStudents,
+          boarding_students: grandTotalBoarding,
+          day_students: grandTotalStudents - grandTotalBoarding,
+          projected_total_revenue: projectedGrandTotal,
+          projected_tuition_revenue: grandTuitionRevenue,
+          projected_subject_fees: totalSubjectFeeRevenue,
+          projected_boarding_revenue: totalBoardingRevenue,
+          projected_sda_levy: totalSdaRevenue,
+          actual_billed: Number(ledgerTotals?.total_billed || 0),
+          actual_collected: Number(ledgerTotals?.total_collected || 0),
+          actual_outstanding: Number(ledgerTotals?.total_outstanding || 0),
+          collection_rate_pct: ledgerTotals?.total_billed > 0 
+            ? Math.round((Number(ledgerTotals.total_collected) / Number(ledgerTotals.total_billed)) * 100)
+            : 0
+        },
+        phases: Object.values(phaseMap),
+        alevel_breakdown: alevelStats,
+        charged_subjects: chargedSubjects,
+        rates_applied: {
+          tuition: defaultTuition,
+          boarding_fee: boardingFeeRate,
+          sda_levy: sdaLevyRate
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Fees calculator error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to compute dynamic fees.' } });
+  }
+});
+
+// POST /schools/:schoolId/fees/calculator/simulate
+router.post('/schools/:schoolId/fees/calculator/simulate', authenticateToken, async (req, res) => {
+  try {
+    const {
+      infant_count = 0, infant_rate = 180,
+      junior_count = 0, junior_rate = 260,
+      ordinary_count = 0, ordinary_rate = 380,
+      advanced_arts_count = 0, advanced_com_count = 0, advanced_sci_count = 0, advanced_rate = 460,
+      boarding_count = 0, boarding_rate = 550,
+      sda_rate = 30,
+      subject_charges = []
+    } = req.body;
+
+    const nInfant = Math.max(0, Number(infant_count) || 0);
+    const nJunior = Math.max(0, Number(junior_count) || 0);
+    const nOrdinary = Math.max(0, Number(ordinary_count) || 0);
+    const nArts = Math.max(0, Number(advanced_arts_count) || 0);
+    const nCom = Math.max(0, Number(advanced_com_count) || 0);
+    const nSci = Math.max(0, Number(advanced_sci_count) || 0);
+    const nAdvanced = nArts + nCom + nSci;
+    const totalStudents = nInfant + nJunior + nOrdinary + nAdvanced;
+
+    const rInfant = Number(infant_rate) || 0;
+    const rJunior = Number(junior_rate) || 0;
+    const rOrdinary = Number(ordinary_rate) || 0;
+    const rAdvanced = Number(advanced_rate) || 0;
+    const rBoarding = Number(boarding_rate) || 0;
+    const rSda = Number(sda_rate) || 0;
+
+    const infantRev = nInfant * rInfant;
+    const juniorRev = nJunior * rJunior;
+    const ordinaryRev = nOrdinary * rOrdinary;
+    const advancedRev = nAdvanced * rAdvanced;
+    const tuitionRev = infantRev + juniorRev + ordinaryRev + advancedRev;
+
+    const boardingRev = Math.max(0, Number(boarding_count) || 0) * rBoarding;
+    const sdaRev = totalStudents * rSda;
+
+    let subjectRev = 0;
+    const processedSubjects = (subject_charges || []).map(sc => {
+      const count = Math.max(0, Number(sc.enrolled_count) || 0);
+      const fee = Math.max(0, Number(sc.fee) || 0);
+      const rev = count * fee;
+      subjectRev += rev;
+      return {
+        id: sc.id,
+        name: sc.name,
+        category: sc.category,
+        fee,
+        enrolled_count: count,
+        total_revenue: rev
+      };
+    });
+
+    const grandTotal = tuitionRev + boardingRev + sdaRev + subjectRev;
+
+    return res.json({
+      data: {
+        simulation: {
+          total_students: totalStudents,
+          projected_total: grandTotal,
+          average_fee_per_student: totalStudents > 0 ? Math.round(grandTotal / totalStudents) : 0,
+          tuition_breakdown: {
+            infant: { count: nInfant, rate: rInfant, total: infantRev },
+            junior: { count: nJunior, rate: rJunior, total: juniorRev },
+            ordinary: { count: nOrdinary, rate: rOrdinary, total: ordinaryRev },
+            advanced: {
+              count: nAdvanced,
+              rate: rAdvanced,
+              total: advancedRev,
+              arts_count: nArts,
+              commercial_count: nCom,
+              sciences_count: nSci
+            },
+            total_tuition: tuitionRev
+          },
+          ancillary_fees: {
+            boarding: { count: Number(boarding_count) || 0, rate: rBoarding, total: boardingRev },
+            sda_levy: { count: totalStudents, rate: rSda, total: sdaRev },
+            subject_charges: { items: processedSubjects, total: subjectRev }
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Simulate fees error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to simulate fee calculation.' } });
+  }
+});
+
 // GET /schools/:schoolId/fees
 router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { class_id, term } = req.query;
+    const { class_id, term, student_id } = req.query;
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const perPage = Math.min(100, Math.max(1, Number.parseInt(req.query.per_page || req.query.limit, 10) || 50));
+    const userRole = req.user?.role;
+
+    // Teachers do not manage school accounting
+    if (userRole === 'teacher') {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Teachers do not have access to fee ledgers.' } });
+    }
 
     let sql = `
       SELECT f.*, c.name as class_name, st.first_name, st.last_name, st.admission_number
@@ -31,10 +333,53 @@ router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
     `;
     const params = [schoolId];
 
-    if (class_id) {
-      sql += ' AND st.class_id = ?';
-      params.push(class_id);
+    // PARENT SCOPING: A parent MUST ONLY see invoices and fees belonging to their linked children
+    if (userRole === 'parent') {
+      const parentUser = req.user;
+      const linkedStudents = await query(
+        `SELECT DISTINCT st.id FROM students st
+         JOIN student_guardians sg ON st.id = sg.student_id
+         JOIN guardians g ON sg.guardian_id = g.id
+         WHERE (
+           g.user_id = ?
+           OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+           OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)
+         ) AND st.school_id = ?`,
+        [parentUser.id, parentUser.email || '', parentUser.phone || '', schoolId]
+      );
+
+      if (!linkedStudents || linkedStudents.length === 0) {
+        return res.json({ data: [], meta: { page: 1, per_page: perPage, total: 0, request_id: req.requestId } });
+      }
+
+      const allowedIds = linkedStudents.map(s => s.id);
+      if (student_id) {
+        if (!allowedIds.includes(student_id)) {
+          return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied: You can only view fees for your linked children.' } });
+        }
+        sql += ' AND f.student_id = ?';
+        params.push(student_id);
+      } else {
+        const placeholders = allowedIds.map(() => '?').join(',');
+        sql += ` AND f.student_id IN (${placeholders})`;
+        params.push(...allowedIds);
+      }
+    } else if (userRole === 'student') {
+      // Student can only see their own fees
+      sql += ' AND (f.student_id = ? OR st.user_id = ?)';
+      params.push(req.user.id, req.user.id);
+    } else {
+      // Admin / Bursar can filter by student_id or class_id
+      if (student_id) {
+        sql += ' AND f.student_id = ?';
+        params.push(student_id);
+      }
+      if (class_id) {
+        sql += ' AND st.class_id = ?';
+        params.push(class_id);
+      }
     }
+
     if (term) {
       sql += ' AND f.term = ?';
       params.push(term);
@@ -44,8 +389,7 @@ router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
     sql += ` ORDER BY st.first_name ASC, f.created_at DESC LIMIT ${perPage} OFFSET ${offset}`;
 
     const fees = await query(sql, params);
-    const totalRow = await queryOne('SELECT COUNT(*) AS total FROM fees f JOIN students st ON f.student_id = st.id WHERE f.school_id = ?', [schoolId]);
-    return res.json({ data: fees, meta: { page, per_page: perPage, total: Number(totalRow?.total || 0), request_id: req.requestId } });
+    return res.json({ data: fees, meta: { page, per_page: perPage, total: fees.length, request_id: req.requestId } });
   } catch (err) {
     console.error('Get fees error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch fee ledgers.' } });
@@ -53,7 +397,7 @@ router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
 });
 
 // POST /schools/:schoolId/fees
-router.post('/schools/:schoolId/fees', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.post('/schools/:schoolId/fees', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
     const { student_id, title, amount_due, term, due_date } = req.body;
@@ -68,6 +412,8 @@ router.post('/schools/:schoolId/fees', authenticateToken, requireRoles('school_a
        VALUES (?, ?, ?, ?, ?, 0.00, ?, ?, 'unpaid')`,
       [feeId, schoolId, student_id, title.trim(), parseFloat(amount_due), term || getTermFromDate(), due_date || null]
     );
+
+    broadcastInvalidation(schoolId, ['fees', 'fees_ledger', 'fees_summary', 'summary', 'top_debtors', 'ageing_fees'], 'fee_billed');
 
     const created = await queryOne('SELECT * FROM fees WHERE id = ?', [feeId]);
     return res.status(201).json({ data: created });
@@ -88,46 +434,70 @@ router.post('/schools/:schoolId/fees/:feeId/payments', authenticateToken, requir
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Valid payment amount is required.' } });
     }
 
-    const fee = await queryOne('SELECT * FROM fees WHERE id = ? AND school_id = ?', [feeId, schoolId]);
+    let fee = await queryOne('SELECT * FROM fees WHERE id = ? AND school_id = ?', [feeId, schoolId]);
+    if (!fee) {
+      // Auto-initialize fee record if student exists (or feeId is synthetic like FEE-<studentId>)
+      const extractedStudentId = req.body.student_id || (feeId && feeId.startsWith('FEE-') ? feeId.replace('FEE-', '') : null);
+      if (extractedStudentId) {
+        const student = await queryOne('SELECT * FROM students WHERE id = ? AND school_id = ?', [extractedStudentId, schoolId]);
+        if (student) {
+          // Look for existing fee record for student
+          fee = await queryOne('SELECT * FROM fees WHERE student_id = ? AND school_id = ? ORDER BY created_at DESC LIMIT 1', [extractedStudentId, schoolId]);
+          if (!fee) {
+            const actualFeeId = feeId.startsWith('FEE-') ? feeId : ('FEE-' + extractedStudentId);
+            await query(
+              `INSERT INTO fees (id, school_id, student_id, term, year, amount_due, amount_paid, status, currency)
+               VALUES (?, ?, ?, 'Term 1', YEAR(NOW()), 450.00, 0.00, 'unpaid', ?)`,
+              [actualFeeId, schoolId, extractedStudentId, req.body.currency || 'USD']
+            );
+            fee = await queryOne('SELECT * FROM fees WHERE id = ?', [actualFeeId]);
+          }
+        }
+      }
+    }
     if (!fee) {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Fee record not found.' } });
     }
 
+    const actualFeeId = fee.id;
     const payAmount = parseFloat(amount_paid);
     const newPaid = parseFloat(fee.amount_paid || 0) + payAmount;
     const dueAmount = parseFloat(fee.amount_due || 0);
 
     let newStatus = 'unpaid';
     if (newPaid >= dueAmount) {
-      newStatus = 'paid';
+      newStatus = 'cleared';
     } else if (newPaid > 0) {
-      newStatus = 'partially_paid';
+      newStatus = 'partial';
     }
 
     const paymentId = 'PAY' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const paymentDate = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const idempotencyKey = (req.headers['idempotency-key'] || ('IDEM-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6))).slice(0, 95);
     const userId = req.user && req.user.id ? req.user.id : null;
+    const payCurrency = req.body.currency || 'USD';
 
     try {
       await query(
-        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, reference, idempotency_key, payment_date, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [paymentId, schoolId, feeId, fee.student_id, payAmount, payment_method || 'cash', reference || null, idempotencyKey, paymentDate, userId]
+        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, payment_currency, reference, idempotency_key, payment_date, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, schoolId, actualFeeId, fee.student_id, payAmount, payment_method || 'cash', payCurrency, reference || null, idempotencyKey, paymentDate, userId]
       );
     } catch (dbErr) {
       // Fallback without created_by if FK fails
       await query(
-        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, reference, idempotency_key, payment_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [paymentId, schoolId, feeId, fee.student_id, payAmount, payment_method || 'cash', reference || null, idempotencyKey, paymentDate]
+        `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, payment_currency, reference, idempotency_key, payment_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, schoolId, actualFeeId, fee.student_id, payAmount, payment_method || 'cash', payCurrency, reference || null, idempotencyKey, paymentDate]
       );
     }
 
     await query(
       `UPDATE fees SET amount_paid = ?, status = ? WHERE id = ?`,
-      [newPaid, newStatus, feeId]
+      [newPaid, newStatus, actualFeeId]
     );
+
+    broadcastInvalidation(schoolId, ['fees', 'fees_ledger', 'fees_summary', 'summary', 'top_debtors', 'ageing_fees', 'dashboard'], 'payment_recorded');
 
     const receipt = await queryOne(
       `SELECT fp.*, s.name as school_name, st.first_name, st.last_name, st.admission_number, f.amount_due, f.term,
@@ -157,18 +527,145 @@ router.post('/schools/:schoolId/fees/:feeId/payments', authenticateToken, requir
 router.get('/schools/:schoolId/remote-payments', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
+    let parentKidFilter = '';
+    const queryParams = [schoolId];
+
+    if (req.user.role === 'parent') {
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      const guardianIds = guardianRows.map(g => g.id);
+      if (guardianIds.length > 0) {
+        const gPlaceholders = guardianIds.map(() => '?').join(',');
+        const kids = await query(`SELECT student_id FROM student_guardians WHERE guardian_id IN (${gPlaceholders})`, guardianIds);
+        const kidIds = [...new Set(kids.map(k => k.student_id))];
+        if (kidIds.length > 0) {
+          const kPlaceholders = kidIds.map(() => '?').join(',');
+          parentKidFilter = ` AND rp.student_id IN (${kPlaceholders})`;
+          queryParams.push(...kidIds);
+        } else {
+          return res.json({ data: [] });
+        }
+      } else {
+        return res.json({ data: [] });
+      }
+    }
+
     const payments = await query(
-      `SELECT fp.*, st.first_name, st.last_name, st.admission_number, c.name as class_name
-       FROM fee_payments fp
-       JOIN students st ON fp.student_id = st.id
+      `SELECT rp.*, st.first_name, st.last_name, st.admission_number, c.name as class_name
+       FROM remote_payments rp
+       LEFT JOIN students st ON rp.student_id = st.id
        LEFT JOIN classes c ON st.class_id = c.id
-       WHERE fp.school_id = ? AND fp.payment_method IN ('mobile_money', 'bank_transfer', 'online')
-       ORDER BY fp.payment_date DESC`,
-      [schoolId]
+       WHERE rp.school_id = ? ${parentKidFilter}
+       ORDER BY rp.created_at DESC`,
+      queryParams
     );
     return res.json({ data: payments });
   } catch (err) {
+    console.error('Fetch remote payments error:', err);
     return res.json({ data: [] });
+  }
+});
+
+// POST /schools/:schoolId/remote-payments/:id/approve
+router.post(['/schools/:schoolId/remote-payments/:id/approve', '/schools/:schoolId/remote-payments/:id/verify'], authenticateToken, requireRoles('bursar', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { notes } = req.body || {};
+
+    const rp = await queryOne('SELECT * FROM remote_payments WHERE id = ? AND school_id = ?', [id, schoolId]);
+    if (!rp) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Remote payment declaration record not found.' } });
+    }
+
+    try { await query('ALTER TABLE remote_payments ADD COLUMN verified_at DATETIME NULL'); } catch(e) {}
+    try { await query('ALTER TABLE remote_payments ADD COLUMN verified_by VARCHAR(50) NULL'); } catch(e) {}
+    try { await query('ALTER TABLE remote_payments ADD COLUMN notes TEXT NULL'); } catch(e) {}
+
+    await query(
+      `UPDATE remote_payments SET status = 'approved', notes = ?, verified_at = NOW(), verified_by = ? WHERE id = ? AND school_id = ?`,
+      [notes || 'Declaration approved by cashier / administration', req.user?.id || null, id, schoolId]
+    );
+
+    // Credit student fee ledger
+    let targetFeeId = rp.fee_id;
+    if (!targetFeeId && rp.student_id) {
+      const studentFee = await queryOne('SELECT id FROM fees WHERE student_id = ? AND school_id = ? ORDER BY created_at DESC LIMIT 1', [rp.student_id, schoolId]);
+      targetFeeId = studentFee?.id || null;
+      if (!targetFeeId) {
+        targetFeeId = 'FEE-' + rp.student_id;
+        await query(
+          `INSERT INTO fees (id, school_id, student_id, term, year, amount_due, amount_paid, status, currency)
+           VALUES (?, ?, ?, 'Term 1', YEAR(NOW()), 450.00, 0, 'unpaid', ?)`,
+          [targetFeeId, schoolId, rp.student_id, rp.currency || 'USD']
+        );
+      }
+    }
+
+    if (targetFeeId) {
+      const payId = 'PAY' + Date.now().toString(36).toUpperCase();
+      const amountPaid = parseFloat(rp.amount || 0);
+      try {
+        await query(
+          `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, payment_currency, reference, payment_date, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)`,
+          [payId, schoolId, targetFeeId, rp.student_id, amountPaid, rp.payment_method || 'bank_transfer', rp.currency || 'USD', rp.reference || id, req.user?.id || null]
+        );
+      } catch (insertErr) {
+        await query(
+          `INSERT INTO fee_payments (id, school_id, fee_id, student_id, amount_paid, payment_method, payment_currency, reference, payment_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURDATE())`,
+          [payId, schoolId, targetFeeId, rp.student_id, amountPaid, rp.payment_method || 'bank_transfer', rp.currency || 'USD', rp.reference || id]
+        );
+      }
+
+      await query(
+        `UPDATE fees SET amount_paid = amount_paid + ?, status = CASE WHEN amount_paid + ? >= amount_due THEN 'cleared' ELSE 'partial' END WHERE id = ?`,
+        [amountPaid, amountPaid, targetFeeId]
+      );
+    }
+
+    broadcastInvalidation(schoolId, ['remote_payments', 'fees', 'fees_ledger', 'fees_summary', 'summary', 'top_debtors', 'dashboard'], 'payment_approved');
+
+    return res.json({
+      data: {
+        id,
+        status: 'approved',
+        message: 'Payment approved and successfully credited to student ledger.'
+      }
+    });
+  } catch (err) {
+    console.error('Approve remote payment error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to approve remote payment.' } });
+  }
+});
+
+// POST /schools/:schoolId/remote-payments/:id/reject
+router.post('/schools/:schoolId/remote-payments/:id/reject', authenticateToken, requireRoles('bursar', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { notes, rejection_reason } = req.body || {};
+    const reason = notes || rejection_reason || 'Proof of payment rejected.';
+
+    try { await query('ALTER TABLE remote_payments ADD COLUMN verified_at DATETIME NULL'); } catch(e) {}
+    try { await query('ALTER TABLE remote_payments ADD COLUMN verified_by VARCHAR(50) NULL'); } catch(e) {}
+    try { await query('ALTER TABLE remote_payments ADD COLUMN notes TEXT NULL'); } catch(e) {}
+
+    await query(
+      `UPDATE remote_payments SET status = 'rejected', notes = ?, verified_at = NOW(), verified_by = ? WHERE id = ? AND school_id = ?`,
+      [reason, req.user?.id || null, id, schoolId]
+    );
+
+    broadcastInvalidation(schoolId, ['remote_payments', 'fees_summary', 'summary', 'dashboard'], 'payment_rejected');
+
+    return res.json({ data: { id, status: 'rejected', message: 'Remote payment declaration rejected.' } });
+  } catch (err) {
+    console.error('Reject remote payment error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to reject remote payment.' } });
   }
 });
 
@@ -287,7 +784,7 @@ router.post('/schools/:schoolId/fees/:feeId/pay-online', authenticateToken, requ
 });
 
 // GET /schools/:schoolId/fees/export
-router.get('/schools/:schoolId/fees/export', authenticateToken, async (req, res) => {
+router.get('/schools/:schoolId/fees/export', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
     const fees = await query(

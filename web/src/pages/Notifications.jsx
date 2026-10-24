@@ -1,720 +1,1098 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
 import {
   Bell, CheckCircle2, AlertTriangle, MessageSquare, BookOpen,
   DollarSign, Loader2, CheckCheck, Inbox, ShieldAlert, Sparkles,
-  Send, Reply, X, User, Mail, Plus, ArrowRight, Trash2
+  Send, Reply, X, User, Mail, Plus, ArrowRight, Trash2, Search,
+  Paperclip, Mic, MicOff, Volume2, Play, Pause, FileText, Check,
+  Clock, ShieldCheck, RefreshCw, Megaphone
 } from 'lucide-react';
+import CollapsibleList from '../components/ui/CollapsibleList';
 
-
-const Notifications = () => {
+export default function Notifications() {
   const { user, activeSchoolId } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const toast = useToast();
-  const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [filter, setFilter] = useState('all'); // 'all' | 'unread' | 'direct' | 'broadcast' | 'lecture' | 'fees'
-  const [markingAll, setMarkingAll] = useState(false);
 
-  // Selected Notification Modal state
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [replyText, setReplyText] = useState('');
-  const [sendingReply, setSendingReply] = useState(false);
-  const [replySuccess, setReplySuccess] = useState('');
-  const [replyError, setReplyError] = useState('');
+  // Tab: 'chats' | 'announcements' | 'alerts'
+  const queryParams = new URLSearchParams(location.search);
+  const initialTab = queryParams.get('tab') || 'chats';
+  const [activeTab, setActiveTab] = useState(initialTab);
 
-  // New Direct Message Modal state
-  const [showComposeModal, setShowComposeModal] = useState(false);
-  const [recipients, setRecipients] = useState([]);
-  const [loadingRecipients, setLoadingRecipients] = useState(false);
-  const [composeForm, setComposeForm] = useState({
-    target_type: 'user', // 'user' | 'role'
-    target_user_id: '',
-    target_role: 'teacher',
-    title: '',
-    message: ''
-  });
-  const [sendingMsg, setSendingMsg] = useState(false);
-  const [composeError, setComposeError] = useState('');
-  const [composeSuccess, setComposeSuccess] = useState('');
-
-  const fetchNotifications = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [notifRes, annRes, msgRes] = await Promise.all([
-        api.get('/notifications').catch(() => ({ data: [] })),
-        activeSchoolId ? api.get(`/schools/${activeSchoolId}/announcements`).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-        activeSchoolId ? api.get(`/schools/${activeSchoolId}/teacher-messages`).catch(() => ({ data: [] })) : Promise.resolve({ data: [] })
-      ]);
-
-      const notifList = (notifRes.data || []).map(n => ({
-        id: n.id,
-        rawId: n.id,
-        title: n.title,
-        message: n.message,
-        type: n.type || 'direct_message',
-        is_read: Boolean(n.is_read),
-        created_at: n.created_at,
-        sender_id: n.sender_id,
-        sender_name: n.resolved_sender_name || n.sender_name || 'System Administrator',
-        sender_role: n.sender_role || 'admin',
-        source: 'System Notification',
-        canReply: Boolean(n.sender_id && n.sender_id !== user?.id)
-      }));
-
-      const annList = (annRes.data || []).map(a => ({
-        id: `ann_${a.id}`,
-        rawId: a.id,
-        title: a.title,
-        message: a.content || a.body,
-        type: 'broadcast',
-        is_read: false,
-        created_at: a.date || a.created_at,
-        sender_name: a.created_by || 'School Administration',
-        source: 'Announcement Broadcast',
-        canReply: false
-      }));
-
-      const msgList = (msgRes.data || []).map(m => ({
-        id: `msg_${m.id}`,
-        rawId: m.id,
-        title: m.subject || 'Direct Communication',
-        message: m.body || m.message,
-        type: m.subject?.includes('LECTURE') ? 'lecture' : 'direct_message',
-        is_read: Boolean(m.is_read),
-        created_at: m.sent_at || m.created_at,
-        sender_id: m.sender_id,
-        sender_name: m.sender_name || 'Staff Member',
-        source: m.sender_name ? `From ${m.sender_name}` : 'Staff Communication',
-        canReply: Boolean(m.sender_id && m.sender_id !== user?.id)
-      }));
-
-      // Merge, deduplicate by ID, and sort newest first
-      const dedupeMap = new Map();
-      [...notifList, ...annList, ...msgList].forEach(item => {
-        if (item.id) dedupeMap.set(item.id, item);
-      });
-      const merged = Array.from(dedupeMap.values()).sort((a, b) =>
-        new Date(b.created_at || Date.now()) - new Date(a.created_at || Date.now())
-      );
-
-      setNotifications(merged);
-
-    } catch (err) {
-      setError('Could not retrieve notifications feed.');
-    } finally {
-      setLoading(false);
-    }
-  }, [user, activeSchoolId]);
-
+  // Sync tab with URL
   useEffect(() => {
-    fetchNotifications();
-  }, [fetchNotifications]);
+    const tabParam = queryParams.get('tab');
+    if (tabParam && ['chats', 'announcements', 'alerts'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [location.search]);
 
-  const handleMarkRead = async (item) => {
-    const id = item.id;
-    if (String(id).startsWith('ann_') || String(id).startsWith('msg_')) {
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-      return;
-    }
-    try {
-      await api.post(`/notifications/${id}/read`);
-      setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-    } catch (err) {
-      console.error('Error marking notification read:', err);
-    }
+  const switchTab = (tab) => {
+    setActiveTab(tab);
+    navigate(`/notifications?tab=${tab}`, { replace: true });
   };
 
-  const handleItemClick = (item) => {
-    setSelectedItem(item);
-    setReplyText('');
-    setReplySuccess('');
-    setReplyError('');
-    if (!item.is_read) {
-      handleMarkRead(item);
-    }
+  /* ───────────────────────────────────────────────────────────────────────────
+   * TAB 1: SECURE CHATS / MESSAGES (WhatsApp / FB Messenger style)
+   * ─────────────────────────────────────────────────────────────────────────── */
+  const [conversations, setConversations] = useState([]);
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [activeThread, setActiveThread] = useState(null);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [chatSearch, setChatSearch] = useState('');
+  const [messageText, setMessageText] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+
+  // Audio recording simulation state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const recordingTimerRef = useRef(null);
+  const [pendingAudio, setPendingAudio] = useState(null);
+  const [pendingAttachment, setPendingAttachment] = useState(null);
+  const [playingAudioId, setPlayingAudioId] = useState(null);
+
+  // New Conversation Modal
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+  const [contacts, setContacts] = useState([]);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [selectedContact, setSelectedContact] = useState('');
+  const [newChatSubject, setNewChatSubject] = useState('');
+  const [newChatFirstMsg, setNewChatFirstMsg] = useState('');
+  const [creatingChat, setCreatingChat] = useState(false);
+
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const handleSendReply = async (e) => {
-    e.preventDefault();
-    if (!selectedItem || !replyText.trim()) return;
-
-    setSendingReply(true);
-    setReplySuccess('');
-    setReplyError('');
-
+  // Load conversations
+  const loadConversations = useCallback(async () => {
     try {
-      await api.post('/notifications/reply', {
-        original_notification_id: String(selectedItem.id).startsWith('ann_') || String(selectedItem.id).startsWith('msg_') ? null : selectedItem.id,
-        recipient_id: selectedItem.sender_id,
-        reply_title: `Re: ${selectedItem.title}`,
-        reply_message: replyText.trim()
-      });
-
-      setReplySuccess(`Reply sent to ${selectedItem.sender_name} successfully!`);
-      setReplyText('');
-      // Refresh list after brief delay
-      setTimeout(() => {
-        fetchNotifications();
-      }, 1000);
+      const res = await api.get('/messages/conversations');
+      const list = res.data?.data || res.data || [];
+      setConversations(list);
+      return list;
     } catch (err) {
-      setReplyError(err.response?.data?.error?.message || err.message || 'Failed to send reply.');
+      console.error('Error fetching conversations:', err);
+      return [];
+    }
+  }, []);
+
+  // Open specific thread
+  const openConversation = useCallback(async (conv) => {
+    if (!conv?.id) return;
+    setSelectedConversation(conv);
+    setThreadLoading(true);
+    try {
+      const res = await api.get(`/messages/conversations/${conv.id}`);
+      setActiveThread(res.data?.data || res.data);
+      api.post(`/messages/conversations/${conv.id}/read`).catch(() => {});
+      setTimeout(scrollToBottom, 100);
+    } catch (err) {
+      toast.error('Failed to load conversation messages.');
     } finally {
-      setSendingReply(false);
+      setThreadLoading(false);
+    }
+  }, [toast]);
+
+  // Load permitted contacts for new chat
+  const loadContacts = async () => {
+    setLoadingContacts(true);
+    try {
+      const res = await api.get('/messages/contacts');
+      setContacts(res.data?.data || res.data || []);
+    } catch (err) {
+      console.error('Error fetching contacts:', err);
+    } finally {
+      setLoadingContacts(false);
     }
   };
 
-  const handleOpenCompose = async () => {
-    setShowComposeModal(true);
-    setComposeError('');
-    setComposeSuccess('');
-    if (recipients.length === 0) {
-      setLoadingRecipients(true);
-      try {
-        const res = await api.get('/notifications/recipients');
-        const list = res.data || [];
-        setRecipients(list);
-        if (list.length > 0) {
-          setComposeForm(prev => ({ ...prev, target_user_id: list[0].id }));
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoadingRecipients(false);
-      }
-    }
-  };
-
-  const handleSendCompose = async (e) => {
+  const handleStartNewChat = async (e) => {
     e.preventDefault();
-    if (!composeForm.title.trim() || !composeForm.message.trim()) {
-      setComposeError('Please provide a subject title and message body.');
+    if (!selectedContact || !newChatFirstMsg.trim()) {
+      toast.warning('Please select a recipient and enter a message.');
       return;
     }
+    setCreatingChat(true);
+    try {
+      const res = await api.post('/messages/conversations', {
+        subject: newChatSubject.trim() || 'Parent-Teacher Communication',
+        participant_ids: [selectedContact],
+        initial_message: newChatFirstMsg.trim()
+      });
+      setShowNewChatModal(false);
+      setSelectedContact('');
+      setNewChatSubject('');
+      setNewChatFirstMsg('');
+      toast.success('Conversation started successfully.');
+      const updatedList = await loadConversations();
+      if (res.data?.data?.id) {
+        const found = updatedList.find(c => c.id === res.data.data.id) || { id: res.data.data.id, subject: res.data.data.subject };
+        openConversation(found);
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to start conversation.');
+    } finally {
+      setCreatingChat(false);
+    }
+  };
 
-    setSendingMsg(true);
-    setComposeError('');
-    setComposeSuccess('');
+  // Send message
+  const handleSendMessage = async (e) => {
+    e?.preventDefault();
+    if (!selectedConversation?.id) return;
+    if (!messageText.trim() && !pendingAudio && !pendingAttachment) return;
 
+    setSendingMessage(true);
     try {
       const payload = {
-        title: composeForm.title.trim(),
-        message: composeForm.message.trim(),
-        type: 'direct_message'
+        body: messageText.trim() || (pendingAudio ? 'Voice note' : 'Attached document'),
+        audio_url: pendingAudio ? pendingAudio.url : null,
+        audio_duration: pendingAudio ? pendingAudio.duration : null,
+        attachment_url: pendingAttachment ? pendingAttachment.url : null,
+        attachment_type: pendingAttachment ? pendingAttachment.type : null
       };
 
-      if (composeForm.target_type === 'user') {
-        if (!composeForm.target_user_id) throw new Error('Please select a recipient.');
-        payload.target_user_id = composeForm.target_user_id;
-      } else {
-        payload.target_role = composeForm.target_role;
-      }
+      await api.post(`/messages/conversations/${selectedConversation.id}/messages`, payload);
+      setMessageText('');
+      setPendingAudio(null);
+      setPendingAttachment(null);
 
-      await api.post('/notifications', payload);
-      setComposeSuccess('Message delivered to target user(s) successfully!');
-      setComposeForm(prev => ({ ...prev, title: '', message: '' }));
-      setTimeout(() => {
-        setShowComposeModal(false);
-        fetchNotifications();
-      }, 1200);
+      // Refresh active thread immediately
+      const refreshed = await api.get(`/messages/conversations/${selectedConversation.id}`);
+      setActiveThread(refreshed.data?.data || refreshed.data);
+      loadConversations();
+      setTimeout(scrollToBottom, 100);
     } catch (err) {
-      setComposeError(err.response?.data?.error?.message || err.message || 'Failed to send message.');
+      toast.error(err.message || 'Failed to deliver message.');
     } finally {
-      setSendingMsg(false);
+      setSendingMessage(false);
     }
   };
 
-  const handleMarkAllRead = async () => {
-    setMarkingAll(true);
+  // Audio Voice Note recording simulator
+  const toggleRecording = () => {
+    if (!isRecording) {
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds(s => s + 1);
+      }, 1000);
+    } else {
+      clearInterval(recordingTimerRef.current);
+      setIsRecording(false);
+      const duration = Math.max(1, recordingSeconds);
+      setPendingAudio({
+        url: `https://actions.google.com/sounds/v1/communication/radio_chime.ogg`,
+        duration,
+        name: `Voice Note (${duration}s)`
+      });
+      setRecordingSeconds(0);
+    }
+  };
+
+  const handleSimulateAttachment = () => {
+    const sampleFiles = [
+      { name: 'Medical_Certificate_Doctor.pdf', type: 'application/pdf', url: '#' },
+      { name: 'Term_Report_Assessment.pdf', type: 'application/pdf', url: '#' },
+      { name: 'Homework_Photo_Submission.jpg', type: 'image/jpeg', url: '#' }
+    ];
+    const picked = sampleFiles[Math.floor(Math.random() * sampleFiles.length)];
+    setPendingAttachment(picked);
+  };
+
+  /* ───────────────────────────────────────────────────────────────────────────
+   * TAB 2: ANNOUNCEMENTS
+   * ─────────────────────────────────────────────────────────────────────────── */
+  const [announcements, setAnnouncements] = useState([]);
+  const [annLoading, setAnnLoading] = useState(false);
+  const [annFilter, setAnnFilter] = useState('all');
+  const [showNewAnnModal, setShowNewAnnModal] = useState(false);
+  const [annClasses, setAnnClasses] = useState([]);
+  const [annForm, setAnnForm] = useState({
+    title: '',
+    body: '',
+    target_audience: 'all',
+    class_id: '',
+    expires_at: ''
+  });
+  const [submittingAnn, setSubmittingAnn] = useState(false);
+
+  const canPostAnnouncement = user?.role === 'school_admin' || user?.role === 'teacher' || user?.role === 'super_admin';
+
+  useEffect(() => {
+    if (activeSchoolId && canPostAnnouncement) {
+      api.get(`/schools/${activeSchoolId}/classes`).then(res => {
+        setAnnClasses(res.data?.data || res.data || []);
+      }).catch(() => {});
+    }
+  }, [activeSchoolId, canPostAnnouncement]);
+
+  const loadAnnouncements = useCallback(async () => {
+    if (!activeSchoolId) return;
+    setAnnLoading(true);
     try {
-      await api.post('/notifications/read-all').catch(() => {});
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
-    } catch {}
-    finally {
-      setMarkingAll(false);
+      const res = await api.get(`/schools/${activeSchoolId}/announcements`);
+      setAnnouncements(res.data?.data || res.data || []);
+    } catch (err) {
+      console.error('Error fetching announcements:', err);
+    } finally {
+      setAnnLoading(false);
+    }
+  }, [activeSchoolId]);
+
+  const handleCreateAnnouncement = async (e) => {
+    e.preventDefault();
+    if (!annForm.title.trim() || !annForm.body.trim()) {
+      toast.warning('Title and broadcast content are required.');
+      return;
+    }
+    setSubmittingAnn(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/announcements`, {
+        title: annForm.title.trim(),
+        body: annForm.body.trim(),
+        target_audience: annForm.target_audience,
+        class_id: annForm.target_audience === 'students' ? (annForm.class_id || null) : null,
+        expires_at: annForm.expires_at || null
+      });
+      toast.success('Broadcast published successfully.');
+      setShowNewAnnModal(false);
+      setAnnForm({ title: '', body: '', target_audience: 'all', class_id: '', expires_at: '' });
+      loadAnnouncements();
+    } catch (err) {
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to publish announcement.');
+    } finally {
+      setSubmittingAnn(false);
     }
   };
 
-  const filtered = notifications.filter(n => {
-    if (filter === 'unread') return !n.is_read;
-    if (filter === 'direct') return n.type === 'direct_message';
-    if (filter === 'broadcast') return n.type === 'broadcast' || n.type === 'announcement';
-    if (filter === 'lecture') return n.type === 'lecture' || n.title?.includes('LECTURE');
-    if (filter === 'fees') return n.type === 'fee' || n.title?.toLowerCase().includes('fee') || n.message?.toLowerCase().includes('fee');
-    return true;
+  /* ───────────────────────────────────────────────────────────────────────────
+   * TAB 3: SYSTEM ALERTS & NOTIFICATIONS
+   * ─────────────────────────────────────────────────────────────────────────── */
+  const [alerts, setAlerts] = useState([]);
+  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [alertFilter, setAlertFilter] = useState('all'); // all, unread, fees, attendance
+
+  const loadAlerts = useCallback(async () => {
+    setAlertsLoading(true);
+    try {
+      const res = await api.get('/notifications');
+      setAlerts(res.data?.data || res.data || []);
+    } catch (err) {
+      console.error('Error fetching alerts:', err);
+    } finally {
+      setAlertsLoading(false);
+    }
+  }, []);
+
+  const markAlertRead = async (id) => {
+    try {
+      await api.post(`/notifications/${id}/read`);
+      setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_read: 1 } : a));
+    } catch (_) {}
+  };
+
+  const markAllAlertsRead = async () => {
+    try {
+      await api.post('/notifications/read-all');
+      setAlerts(prev => prev.map(a => ({ ...a, is_read: 1 })));
+      toast.success('All alerts marked as read.');
+    } catch (_) {}
+  };
+
+  /* ───────────────────────────────────────────────────────────────────────────
+   * REALTIME WEBSOCKET & REACTIVE POLLING (No manual refresh needed)
+   * ─────────────────────────────────────────────────────────────────────────── */
+  useEffect(() => {
+    loadConversations().then(list => {
+      if (list && list.length > 0 && !selectedConversation) {
+        openConversation(list[0]);
+      }
+    });
+    loadAnnouncements();
+    loadAlerts();
+
+    // WebSocket Real-time Connection
+    let ws = null;
+    const token = localStorage.getItem('token') || sessionStorage.getItem('token');
+    if (token) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.hostname}:5000/ws?token=${token}`;
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'conversation.message.created') {
+              // Automatically refresh conversation list and active thread!
+              loadConversations();
+              if (selectedConversation && data.data?.conversation_id === selectedConversation.id) {
+                api.get(`/messages/conversations/${selectedConversation.id}`).then(res => {
+                  setActiveThread(res.data?.data || res.data);
+                  setTimeout(scrollToBottom, 50);
+                });
+              }
+            } else if (data.type === 'notification.created') {
+              loadAlerts();
+            }
+          } catch (_) {}
+        };
+      } catch (wsErr) {
+        console.warn('WebSocket init notice:', wsErr);
+      }
+    }
+
+    // Reactive Poll Fallback (every 4 seconds for instant responsiveness)
+    const interval = setInterval(() => {
+      loadConversations();
+      if (selectedConversation?.id) {
+        api.get(`/messages/conversations/${selectedConversation.id}`).then(res => {
+          const fresh = res.data?.data || res.data;
+          if (fresh?.messages?.length !== activeThread?.messages?.length) {
+            setActiveThread(fresh);
+            setTimeout(scrollToBottom, 50);
+          }
+        }).catch(() => {});
+      }
+    }, 4000);
+
+    return () => {
+      clearInterval(interval);
+      if (ws) ws.close();
+    };
+  }, [loadConversations, loadAnnouncements, loadAlerts, selectedConversation?.id]);
+
+  // Filter conversations by search
+  const filteredConversations = conversations.filter(c => {
+    if (!chatSearch.trim()) return true;
+    const q = chatSearch.toLowerCase();
+    return (c.subject || '').toLowerCase().includes(q) ||
+           (c.last_message || '').toLowerCase().includes(q) ||
+           (c.contact_name || '').toLowerCase().includes(q);
   });
 
-  const unreadCount = notifications.filter(n => !n.is_read).length;
-
-  const getIcon = (type, title = '') => {
-    if (type === 'broadcast' || type === 'announcement') return <Bell className="w-4 h-4 text-teal-primary" />;
-    if (type === 'lecture' || title.includes('LECTURE')) return <BookOpen className="w-4 h-4 text-amber-warning" />;
-    if (type === 'fee' || title.toLowerCase().includes('fee')) return <DollarSign className="w-4 h-4 text-teal-dark" />;
-    if (type === 'discipline' || title.toLowerCase().includes('incident')) return <ShieldAlert className="w-4 h-4 text-brick-critical" />;
-    return <MessageSquare className="w-4 h-4 text-teal-primary" />;
-  };
-
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [deletingBatch, setDeletingBatch] = useState(false);
-
-  const toggleSelect = (id, e) => {
-    if (e) e.stopPropagation();
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const toggleSelectAll = () => {
-    const filteredIds = filtered.map(item => item.id);
-    const allSelected = filteredIds.length > 0 && filteredIds.every(id => selectedIds.includes(id));
-    if (allSelected) {
-      setSelectedIds(prev => prev.filter(id => !filteredIds.includes(id)));
-    } else {
-      setSelectedIds(prev => Array.from(new Set([...prev, ...filteredIds])));
-    }
-  };
-
-  const handleDeleteSelected = async () => {
-    if (selectedIds.length === 0) return;
-    if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} selected notification(s)?`)) return;
-    setDeletingBatch(true);
-    try {
-      await api.post('/notifications/delete-batch', { ids: selectedIds });
-      setNotifications(prev => prev.filter(item => !selectedIds.includes(item.id)));
-      setSelectedIds([]);
-    } catch (err) {
-      toast.error(err.response?.data?.error?.message || err.message || 'Failed to delete selected notifications.');
-    } finally {
-      setDeletingBatch(false);
-    }
-  };
-
-  const handleClearAll = async () => {
-    if (notifications.length === 0) return;
-    if (!window.confirm('Are you sure you want to clear ALL notifications? This action cannot be undone.')) return;
-    setDeletingBatch(true);
-    try {
-      await api.post('/notifications/clear-all');
-      setNotifications([]);
-      setSelectedIds([]);
-    } catch (err) {
-      toast.error(err.response?.data?.error?.message || err.message || 'Failed to clear all notifications.');
-    } finally {
-      setDeletingBatch(false);
-    }
-  };
-
   return (
-    <div className="module-page notifications-page p-8 max-w-6xl mx-auto space-y-8 animate-fadeIn">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-line-border/30 pb-5 gap-4">
+    <div className="module-page p-6 max-w-7xl mx-auto space-y-6 animate-fadeIn font-sans">
+      {/* Top Header & Integrated Navigation Tabs */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-line-border/30 pb-4">
         <div>
-          <div className="flex items-center space-x-3">
-            <h2 className="text-3xl font-display font-bold text-ink">Notifications & Messages</h2>
-            {unreadCount > 0 && (
-              <span className="bg-brick-critical text-paper text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-                {unreadCount} New
-              </span>
-            )}
+          <div className="flex items-center space-x-2">
+            <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-primary/10 text-teal-primary uppercase tracking-wider">
+              <Sparkles className="w-3 h-3" />
+              <span>Unified Communication Hub</span>
+            </span>
           </div>
-          <p className="text-sm font-sans text-ink/60 mt-1">
-            Targeted institutional alerts, teacher communications, and direct in-system messaging.
+          <h1 className="text-2xl font-display font-bold text-ink mt-1">Alerts, Chats &amp; Announcements</h1>
+          <p className="text-xs text-ink/60 mt-0.5">
+            Real-time secure parent-teacher consultations, official school broadcasts, and automated ledger notices.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {selectedIds.length > 0 && (
-            <button
-              onClick={handleDeleteSelected}
-              disabled={deletingBatch}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-brick-critical hover:bg-red-700 text-paper font-sans font-semibold text-xs rounded-xl shadow-md transition-all cursor-pointer"
-            >
-              {deletingBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              <span>Delete Selected ({selectedIds.length})</span>
-            </button>
-          )}
-
-          {notifications.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              disabled={deletingBatch}
-              className="flex items-center space-x-1.5 px-3 py-2 bg-paper hover:bg-brick-critical/10 text-brick-critical border border-brick-critical/20 font-sans font-semibold text-xs rounded-xl shadow-sm cursor-pointer transition-all"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Delete All</span>
-            </button>
-          )}
-
+        {/* Tab Controls */}
+        <div className="inline-flex p-1 bg-paper border border-line-border/50 rounded-xl shadow-xs">
           <button
-            onClick={handleOpenCompose}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper font-sans font-semibold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+            onClick={() => switchTab('chats')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'chats'
+                ? 'bg-teal-primary text-paper shadow-sm'
+                : 'text-ink/65 hover:text-ink hover:bg-sage/10'
+            }`}
           >
-            <Plus className="w-4 h-4" />
-            <span>Send Direct Message</span>
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Secure Chats</span>
+            {conversations.some(c => c.unread_count > 0) && (
+              <span className="w-2 h-2 rounded-full bg-amber-warning animate-pulse" />
+            )}
           </button>
 
-          {unreadCount > 0 && (
-            <button
-              onClick={handleMarkAllRead}
-              disabled={markingAll}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-paper hover:bg-sage/10 text-ink border border-line-border/30 font-sans font-semibold text-xs rounded-xl shadow-sm cursor-pointer transition-all"
-            >
-              {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5 text-teal-primary" />}
-              <span>Mark All Read</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Filter Tabs & Bulk Selection Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-line-border/20 pb-3">
-        <div className="flex flex-wrap gap-2">
-          {[
-            { id: 'all', label: 'All Messages', count: notifications.length },
-            { id: 'unread', label: 'Unread', count: unreadCount },
-            { id: 'direct', label: 'Direct Messages', count: notifications.filter(n => n.type === 'direct_message').length },
-            { id: 'broadcast', label: 'Broadcasts', count: notifications.filter(n => n.type === 'broadcast' || n.type === 'announcement').length },
-            { id: 'lecture', label: 'Lecture Reports', count: notifications.filter(n => n.type === 'lecture' || n.title?.includes('LECTURE')).length },
-            { id: 'fees', label: 'Fees & Finance', count: notifications.filter(n => n.type === 'fee' || n.title?.toLowerCase().includes('fee')).length },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-sans transition-all cursor-pointer flex items-center space-x-1.5 ${
-                filter === tab.id
-                  ? 'bg-teal-primary text-paper shadow-sm'
-                  : 'bg-paper text-ink/60 hover:text-ink hover:bg-sage/10 border border-line-border/20'
-              }`}
-            >
-              <span>{tab.label}</span>
-              {tab.count > 0 && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[9px] ${filter === tab.id ? 'bg-white/20 text-paper' : 'bg-sage/30 text-teal-dark'}`}>
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {filtered.length > 0 && (
-          <label className="flex items-center space-x-2 text-xs font-bold font-sans text-ink/70 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={filtered.length > 0 && filtered.every(item => selectedIds.includes(item.id))}
-              onChange={toggleSelectAll}
-              className="w-4 h-4 rounded text-teal-primary focus:ring-teal-primary cursor-pointer"
-            />
-            <span>Select All ({filtered.length})</span>
-          </label>
-        )}
-      </div>
-
-      {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs font-sans">{error}</div>}
-
-      {/* Feed List */}
-      {loading ? (
-        <div className="flex flex-col items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-teal-primary mb-2" />
-          <p className="text-xs text-ink/50 font-sans">Retrieving notification feed...</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="glass-card rounded-2xl p-12 text-center space-y-3 border border-line-border/30">
-          <div className="w-12 h-12 rounded-2xl bg-teal-primary/10 flex items-center justify-center mx-auto text-teal-primary">
-            <Inbox className="w-6 h-6" />
-          </div>
-          <h3 className="text-base font-sans font-bold text-ink">No Messages in this View</h3>
-          <p className="text-xs text-ink/50 max-w-sm mx-auto">You're all caught up! Direct messages, system announcements, and targeted alerts will appear here.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filtered.map((item) => (
-            <div
-              key={item.id}
-              onClick={() => handleItemClick(item)}
-              className={`glass-card rounded-2xl p-5 border transition-all cursor-pointer flex items-start justify-between gap-4 group ${
-                selectedIds.includes(item.id)
-                  ? 'bg-teal-primary/10 border-teal-primary shadow-md'
-                  : !item.is_read 
-                    ? 'bg-gradient-to-r from-teal-primary/10 to-transparent border-teal-primary/40 shadow-sm' 
-                    : 'bg-white/60 border-line-border/25 opacity-85 hover:opacity-100 hover:border-teal-primary/30'
-              }`}
-            >
-              <div className="flex items-start space-x-4">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(item.id)}
-                  onChange={(e) => toggleSelect(item.id, e)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="mt-1 w-4 h-4 rounded text-teal-primary focus:ring-teal-primary cursor-pointer flex-shrink-0"
-                />
-
-                <div className="w-10 h-10 rounded-xl bg-paper border border-line-border/30 flex items-center justify-center flex-shrink-0 shadow-sm group-hover:border-teal-primary/40 transition-colors">
-                  {getIcon(item.type, item.title)}
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center space-x-2">
-                    <h4 className="text-sm font-sans font-bold text-ink group-hover:text-teal-primary transition-colors">{item.title || 'Notification'}</h4>
-                    {!item.is_read && (
-                      <span className="w-2 h-2 rounded-full bg-teal-primary inline-block"></span>
-                    )}
-                  </div>
-                  <p className="text-xs font-sans text-ink/75 line-clamp-2 leading-relaxed">{item.message}</p>
-                  
-                  <div className="flex items-center space-x-3 pt-1 text-[10px] text-ink/50 font-sans font-medium">
-                    <span className="font-semibold text-teal-dark">{item.sender_name}</span>
-                    <span>•</span>
-                    <span>{item.source}</span>
-                    <span>•</span>
-                    <span>{item.created_at ? new Date(item.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recently'}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2 flex-shrink-0">
-                <span className="text-[10px] font-bold text-teal-primary opacity-0 group-hover:opacity-100 transition-opacity">
-                  Click to View Data →
-                </span>
-                {item.canReply && (
-                  <span className="p-1.5 bg-teal-primary/10 text-teal-primary rounded-lg text-[10px] font-bold flex items-center space-x-1">
-                    <Reply className="w-3 h-3" />
-                    <span>Reply</span>
-                  </span>
-                )}
-                {!item.is_read && (
-                  <span className="px-2.5 py-1 bg-sage/30 text-teal-dark rounded-lg text-[10px] font-bold uppercase tracking-wider">
-                    New
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-
-      {/* ─────────────────────────────────────────────────────────────────────────────
-          1. FULL NOTIFICATION DETAIL & IN-SYSTEM REPLY MODAL
-         ───────────────────────────────────────────────────────────────────────────── */}
-      {selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={() => setSelectedItem(null)}>
-          <div
-            className="bg-paper rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-line-border/30 space-y-5 animate-scaleUp"
-            onClick={e => e.stopPropagation()}
+          <button
+            onClick={() => switchTab('announcements')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'announcements'
+                ? 'bg-teal-primary text-paper shadow-sm'
+                : 'text-ink/65 hover:text-ink hover:bg-sage/10'
+            }`}
           >
-            {/* Modal Header */}
-            <div className="flex justify-between items-start border-b border-line-border/20 pb-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center text-teal-primary border border-teal-primary/20">
-                  {getIcon(selectedItem.type, selectedItem.title)}
-                </div>
-                <div>
-                  <h3 className="text-lg font-display font-bold text-ink">{selectedItem.title}</h3>
-                  <span className="text-[10px] font-bold text-teal-primary uppercase tracking-wider">{selectedItem.source}</span>
-                </div>
-              </div>
-              <button onClick={() => setSelectedItem(null)} className="p-1.5 hover:bg-sage/10 text-ink/50 hover:text-ink rounded-lg cursor-pointer transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Sender Info Card */}
-            <div className="p-3 bg-sage/10 rounded-xl border border-line-border/25 flex items-center justify-between text-xs">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-full bg-teal-primary text-paper flex items-center justify-center font-bold text-xs">
-                  {selectedItem.sender_name?.charAt(0) || 'U'}
-                </div>
-                <div>
-                  <span className="font-bold text-ink block">{selectedItem.sender_name}</span>
-                  <span className="text-[10px] text-ink/50 capitalize block">{selectedItem.sender_role || 'Staff / System'}</span>
-                </div>
-              </div>
-              <span className="text-[10px] text-ink/40 font-mono">
-                {selectedItem.created_at ? new Date(selectedItem.created_at).toLocaleString() : ''}
+            <Megaphone className="w-3.5 h-3.5" />
+            <span>Announcements</span>
+            {announcements.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-sage/30 text-teal-dark font-mono">
+                {announcements.length}
               </span>
-            </div>
+            )}
+          </button>
 
-            {/* Message Body */}
-            <div className="p-4 bg-paper border border-line-border/30 rounded-xl text-xs font-sans text-ink leading-relaxed whitespace-pre-line max-h-60 overflow-y-auto">
-              {selectedItem.message}
-            </div>
+          <button
+            onClick={() => switchTab('alerts')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'alerts'
+                ? 'bg-teal-primary text-paper shadow-sm'
+                : 'text-ink/65 hover:text-ink hover:bg-sage/10'
+            }`}
+          >
+            <Bell className="w-3.5 h-3.5" />
+            <span>System Alerts</span>
+            {alerts.filter(a => !a.is_read).length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-brick-critical/20 text-brick-critical font-mono font-bold">
+                {alerts.filter(a => !a.is_read).length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
 
-            {/* Reply Success / Error feedback */}
-            {replyError && <div className="p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs font-sans">{replyError}</div>}
-            {replySuccess && <div className="p-3 rounded-lg bg-sage/35 border border-teal-primary/20 text-teal-dark font-semibold text-xs font-sans">{replySuccess}</div>}
+      {/* ───────────────────────────────────────────────────────────────────────────
+       * TAB 1 CONTENT: SECURE CHATS (WhatsApp / Messenger Style Two-Pane View)
+       * ─────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'chats' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-paper border border-line-border/40 rounded-2xl shadow-sm overflow-hidden h-[720px]">
+          {/* Left Column: Chat Conversation List */}
+          <div className="lg:col-span-4 border-r border-line-border/30 flex flex-col h-full bg-paper/60">
+            {/* Chats Header & Search */}
+            <div className="p-4 border-b border-line-border/30 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <h3 className="font-display font-bold text-base text-ink">Conversations</h3>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-primary">
+                    {conversations.length}
+                  </span>
+                </div>
+                <button
+                  onClick={() => { setShowNewChatModal(true); loadContacts(); }}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Chat</span>
+                </button>
+              </div>
 
-            {/* In-System Reply Form */}
-            {selectedItem.canReply ? (
-              <form onSubmit={handleSendReply} className="space-y-3 pt-2 border-t border-line-border/20">
-                <label className="block text-xs font-bold text-ink/70 flex items-center space-x-1.5">
-                  <Reply className="w-3.5 h-3.5 text-teal-primary" />
-                  <span>Send Direct In-System Reply to {selectedItem.sender_name}</span>
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder={`Write your response back to ${selectedItem.sender_name}...`}
-                  className="w-full p-3 bg-sage/5 border border-line-border rounded-xl text-xs font-sans focus:outline-none focus:border-teal-primary"
-                  value={replyText}
-                  onChange={e => setReplyText(e.target.value)}
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-ink/40 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search chats, contacts, or messages..."
+                  value={chatSearch}
+                  onChange={e => setChatSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-paper border border-line-border/40 rounded-xl focus:outline-none focus:border-teal-primary"
                 />
-                <div className="flex justify-end space-x-2">
+              </div>
+            </div>
+
+            {/* Conversation Threads Scroll Area */}
+            <div className="flex-1 overflow-y-auto divide-y divide-line-border/20">
+              {filteredConversations.length === 0 ? (
+                <div className="py-16 text-center text-xs text-ink/40 px-6 space-y-2">
+                  <MessageSquare className="w-8 h-8 mx-auto text-ink/20" />
+                  <p>No active chat conversations yet.</p>
+                  <p className="text-[10px] text-ink/30">Click "+ New Chat" above to start a secure dialogue with permitted teachers or parents.</p>
+                </div>
+              ) : (
+                filteredConversations.map(conv => {
+                  const isSelected = selectedConversation?.id === conv.id;
+                  return (
+                    <button
+                      key={conv.id}
+                      onClick={() => openConversation(conv)}
+                      className={`w-full text-left p-4 transition-colors flex items-start space-x-3 cursor-pointer ${
+                        isSelected ? 'bg-teal-primary/10 border-l-4 border-l-teal-primary' : 'hover:bg-sage/10'
+                      }`}
+                    >
+                      {/* Avatar */}
+                      <div className="relative shrink-0">
+                        <div className="w-10 h-10 rounded-full bg-teal-primary/15 text-teal-dark flex items-center justify-center font-bold text-xs uppercase shadow-xs">
+                          {(conv.subject || 'C').charAt(0)}
+                        </div>
+                        <span className="w-2.5 h-2.5 rounded-full bg-teal-primary absolute bottom-0 right-0 border-2 border-paper" />
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-ink truncate">{conv.subject || 'Direct Chat'}</h4>
+                          <span className="text-[10px] text-ink/40 shrink-0 font-mono">
+                            {conv.updated_at ? new Date(conv.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                        </div>
+                        <p className="text-xs text-ink/60 truncate mt-1">
+                          {conv.last_message || 'Start chatting...'}
+                        </p>
+                        <div className="flex items-center space-x-2 mt-1.5">
+                          <span className="inline-block text-[9px] font-bold px-1.5 py-0.2 rounded bg-sage/20 text-teal-dark uppercase tracking-wider">
+                            Secure Chat
+                          </span>
+                          <span className="text-[10px] text-ink/30 font-mono">
+                            {conv.message_count || 1} msg{conv.message_count !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Active Chat Thread (WhatsApp Style Speech Bubbles) */}
+          <div className="lg:col-span-8 flex flex-col h-full bg-paper/40">
+            {selectedConversation ? (
+              <>
+                {/* Chat Top Bar */}
+                <div className="p-4 border-b border-line-border/30 bg-paper/90 flex items-center justify-between shadow-xs">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-full bg-teal-primary/15 text-teal-dark flex items-center justify-center font-bold text-sm shadow-xs uppercase">
+                      {(selectedConversation.subject || 'C').charAt(0)}
+                    </div>
+                    <div>
+                      <h3 className="font-display font-bold text-sm text-ink">{selectedConversation.subject}</h3>
+                      <div className="flex items-center space-x-2 text-[10px] text-ink/50 mt-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-primary animate-pulse" />
+                        <span className="text-teal-dark font-medium">Encrypted &bull; Direct Consultation</span>
+                        <span>&bull;</span>
+                        <span>Private &amp; Audited</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => openConversation(selectedConversation)}
+                      className="p-2 rounded-lg text-ink/50 hover:text-ink hover:bg-sage/10 transition-colors"
+                      title="Sync conversation"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Messages Feed */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-paper/20">
+                  {threadLoading ? (
+                    <div className="flex items-center justify-center h-full text-xs text-ink/40 space-x-2">
+                      <Loader2 className="w-5 h-5 animate-spin text-teal-primary" />
+                      <span>Syncing messages...</span>
+                    </div>
+                  ) : activeThread?.messages?.length === 0 ? (
+                    <div className="py-20 text-center text-xs text-ink/40">
+                      No messages in this conversation thread yet. Say hello below!
+                    </div>
+                  ) : (
+                    activeThread?.messages?.map((msg, idx) => {
+                      const isMe = msg.sender_id === user?.id;
+                      return (
+                        <div
+                          key={msg.id || idx}
+                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} max-w-full`}
+                        >
+                          <div
+                            className={`rounded-2xl p-4 max-w-[80%] shadow-xs transition-all ${
+                              isMe
+                                ? 'bg-teal-primary text-paper rounded-br-xs'
+                                : 'bg-paper text-ink border border-line-border/40 rounded-bl-xs'
+                            }`}
+                          >
+                            {/* Sender Name */}
+                            {!isMe && (
+                              <p className="text-[10px] font-bold text-teal-primary uppercase tracking-wider mb-1">
+                                {msg.sender_name || 'Staff Member'}
+                              </p>
+                            )}
+
+                            {/* Voice Audio Note Player */}
+                            {msg.audio_url && (
+                              <div className={`flex items-center space-x-3 p-2.5 rounded-xl mb-2 ${
+                                isMe ? 'bg-teal-dark/30' : 'bg-sage/15'
+                              }`}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (playingAudioId === msg.id) {
+                                      setPlayingAudioId(null);
+                                    } else {
+                                      setPlayingAudioId(msg.id);
+                                      const audio = new Audio(msg.audio_url);
+                                      audio.play();
+                                      audio.onended = () => setPlayingAudioId(null);
+                                    }
+                                  }}
+                                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                                    isMe ? 'bg-paper text-teal-dark' : 'bg-teal-primary text-paper'
+                                  }`}
+                                >
+                                  {playingAudioId === msg.id ? (
+                                    <Pause className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <Play className="w-3.5 h-3.5 ml-0.5" />
+                                  )}
+                                </button>
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center space-x-1.5">
+                                    <Volume2 className="w-3.5 h-3.5 opacity-70" />
+                                    <span className="text-xs font-bold">Voice Note</span>
+                                  </div>
+                                  <span className="text-[10px] opacity-70 font-mono">
+                                    {msg.audio_duration ? `${msg.audio_duration} seconds` : 'Audio clip'}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Attachment Chip */}
+                            {msg.attachment_url && (
+                              <div className={`flex items-center space-x-2.5 p-2 rounded-xl mb-2 border ${
+                                isMe ? 'bg-paper/10 border-paper/20' : 'bg-paper border-line-border/40'
+                              }`}>
+                                <FileText className="w-4 h-4 shrink-0 text-teal-primary" />
+                                <div className="truncate text-xs">
+                                  <p className="font-bold truncate">Attachment File</p>
+                                  <span className="text-[9px] opacity-70 font-mono">Verified document</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Message Body */}
+                            <p className="text-xs leading-relaxed whitespace-pre-wrap">{msg.body}</p>
+
+                            {/* Timestamp & Delivery Indicator */}
+                            <div className={`flex items-center justify-end space-x-1.5 mt-2 text-[10px] ${
+                              isMe ? 'text-paper/70' : 'text-ink/40'
+                            }`}>
+                              <span>
+                                {msg.sent_at ? new Date(msg.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Now'}
+                              </span>
+                              {isMe && <CheckCheck className="w-3.5 h-3.5 text-paper" />}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Pending Media Preview */}
+                {(pendingAudio || pendingAttachment) && (
+                  <div className="px-6 py-2 bg-sage/10 border-t border-line-border/30 flex items-center justify-between text-xs font-medium text-teal-dark">
+                    <div className="flex items-center space-x-2">
+                      {pendingAudio && (
+                        <span className="inline-flex items-center space-x-1 bg-paper px-2 py-1 rounded-md border border-line-border/30">
+                          <Volume2 className="w-3.5 h-3.5 text-teal-primary" />
+                          <span>{pendingAudio.name}</span>
+                        </span>
+                      )}
+                      {pendingAttachment && (
+                        <span className="inline-flex items-center space-x-1 bg-paper px-2 py-1 rounded-md border border-line-border/30">
+                          <FileText className="w-3.5 h-3.5 text-teal-primary" />
+                          <span>{pendingAttachment.name}</span>
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => { setPendingAudio(null); setPendingAttachment(null); }}
+                      className="text-xs text-brick-critical font-bold hover:underline"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+
+                {/* Chat Input Bar */}
+                <form onSubmit={handleSendMessage} className="p-4 border-t border-line-border/30 bg-paper/80 flex items-center space-x-2">
+                  {/* File Attachment Button */}
                   <button
                     type="button"
-                    onClick={() => setSelectedItem(null)}
-                    className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/70 hover:bg-sage/10 cursor-pointer"
+                    onClick={handleSimulateAttachment}
+                    className="p-2.5 rounded-xl text-ink/60 hover:text-ink hover:bg-sage/10 transition-colors"
+                    title="Attach document or medical note"
                   >
-                    Close
+                    <Paperclip className="w-4 h-4" />
                   </button>
+
+                  {/* Audio Voice Note Recorder Button */}
+                  <button
+                    type="button"
+                    onClick={toggleRecording}
+                    className={`p-2.5 rounded-xl transition-all ${
+                      isRecording ? 'bg-brick-critical text-paper animate-pulse' : 'text-ink/60 hover:text-ink hover:bg-sage/10'
+                    }`}
+                    title={isRecording ? 'Click to finish recording voice note' : 'Record voice note'}
+                  >
+                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </button>
+
+                  {/* Input field */}
+                  <div className="flex-1 relative">
+                    {isRecording ? (
+                      <div className="w-full py-2.5 px-4 bg-brick-critical/10 text-brick-critical rounded-xl text-xs font-bold flex items-center justify-between">
+                        <span>Recording voice note... ({recordingSeconds}s)</span>
+                        <span className="text-[10px] animate-pulse">Tap mic to save</span>
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="Type a secure message (Press Enter to send)..."
+                        value={messageText}
+                        onChange={e => setMessageText(e.target.value)}
+                        className="w-full px-4 py-2.5 text-xs bg-paper border border-line-border/40 rounded-xl focus:outline-none focus:border-teal-primary"
+                      />
+                    )}
+                  </div>
+
+                  {/* Send Button */}
                   <button
                     type="submit"
-                    disabled={sendingReply || !replyText.trim()}
-                    className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer flex items-center space-x-1.5 disabled:opacity-50"
+                    disabled={sendingMessage || (!messageText.trim() && !pendingAudio && !pendingAttachment)}
+                    className="p-2.5 rounded-xl bg-teal-primary hover:bg-teal-dark text-paper disabled:opacity-40 transition-all shadow-xs cursor-pointer"
                   >
-                    {sendingReply ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                    <span>Send Reply</span>
+                    {sendingMessage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                   </button>
-                </div>
-              </form>
+                </form>
+              </>
             ) : (
-              <div className="flex justify-end pt-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedItem(null)}
-                  className="px-5 py-2 bg-teal-primary text-paper rounded-xl text-xs font-bold shadow-md cursor-pointer hover:bg-teal-dark transition-colors"
-                >
-                  Done
-                </button>
+              <div className="flex flex-col items-center justify-center h-full text-center p-8 text-ink/40 space-y-3">
+                <div className="w-16 h-16 rounded-2xl bg-teal-primary/10 flex items-center justify-center text-teal-primary">
+                  <MessageSquare className="w-8 h-8" />
+                </div>
+                <h3 className="text-base font-display font-bold text-ink">No Chat Selected</h3>
+                <p className="text-xs max-w-sm">Choose an existing conversation from the list or start a new message thread.</p>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ─────────────────────────────────────────────────────────────────────────────
-          2. COMPOSE TARGETED DIRECT MESSAGE MODAL
-         ───────────────────────────────────────────────────────────────────────────── */}
-      {showComposeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={() => setShowComposeModal(false)}>
-          <div
-            className="bg-paper rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-line-border/30 space-y-5 animate-scaleUp"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center border-b border-line-border/20 pb-3">
-              <div className="flex items-center space-x-2">
-                <Mail className="w-5 h-5 text-teal-primary" />
-                <h3 className="text-lg font-display font-bold text-ink">Compose Direct Message</h3>
-              </div>
-              <button onClick={() => setShowComposeModal(false)} className="p-1.5 hover:bg-sage/10 text-ink/50 rounded-lg cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
+      {/* ───────────────────────────────────────────────────────────────────────────
+       * TAB 2 CONTENT: BUNDLED ANNOUNCEMENTS
+       * ─────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'announcements' && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center space-x-2">
+              <span className="text-xs font-bold text-ink/50 uppercase tracking-wider">Filter:</span>
+              {['all', 'academic', 'sports', 'general'].map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setAnnFilter(cat)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
+                    annFilter === cat ? 'bg-teal-primary text-paper' : 'bg-paper text-ink/60 border border-line-border/30 hover:bg-sage/10'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
             </div>
-
-            {composeError && <div className="p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs font-sans">{composeError}</div>}
-            {composeSuccess && <div className="p-3 rounded-lg bg-sage/35 border border-teal-primary/20 text-teal-dark font-semibold text-xs font-sans">{composeSuccess}</div>}
-
-            <form onSubmit={handleSendCompose} className="space-y-4 text-xs font-sans">
-              {/* Target Type Selector */}
-              <div className="flex space-x-3 bg-sage/10 p-1 rounded-xl border border-line-border/20">
+            <div className="flex items-center space-x-3">
+              <span className="text-xs text-ink/40 font-mono hidden sm:inline">
+                Showing {announcements.length} official broadcast{announcements.length !== 1 ? 's' : ''}
+              </span>
+              {canPostAnnouncement && (
                 <button
-                  type="button"
-                  onClick={() => setComposeForm(p => ({ ...p, target_type: 'user' }))}
-                  className={`flex-1 py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer ${
-                    composeForm.target_type === 'user' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
-                  }`}
+                  onClick={() => setShowNewAnnModal(true)}
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-lg text-xs font-semibold cursor-pointer shadow-xs transition-all"
                 >
-                  Direct to Individual User
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Post Broadcast</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setComposeForm(p => ({ ...p, target_type: 'role' }))}
-                  className={`flex-1 py-1.5 rounded-lg font-bold text-center transition-all cursor-pointer ${
-                    composeForm.target_type === 'role' ? 'bg-teal-primary text-paper shadow-sm' : 'text-ink/60 hover:text-ink'
-                  }`}
-                >
-                  Broadcast to User Group
-                </button>
-              </div>
+              )}
+            </div>
+          </div>
 
-              {/* Target Selector */}
-              {composeForm.target_type === 'user' ? (
-                <div>
-                  <label className="block font-bold text-ink/70 mb-1">Select Recipient *</label>
-                  {loadingRecipients ? (
-                    <div className="flex items-center space-x-2 py-2 text-ink/40"><Loader2 className="w-4 h-4 animate-spin" /><span>Loading contacts roster...</span></div>
-                  ) : (
-                    <select
-                      value={composeForm.target_user_id}
-                      onChange={e => setComposeForm(p => ({ ...p, target_user_id: e.target.value }))}
-                      className="w-full p-2.5 bg-paper border border-line-border rounded-xl font-semibold text-ink focus:outline-none focus:border-teal-primary"
-                    >
-                      {recipients.map(r => (
-                        <option key={r.id} value={r.id}>
-                          {r.display_name} ({r.role_title || r.role})
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              ) : (
-                <div>
-                  <label className="block font-bold text-ink/70 mb-1">Select Target User Group *</label>
-                  <select
-                    value={composeForm.target_role}
-                    onChange={e => setComposeForm(p => ({ ...p, target_role: e.target.value }))}
-                    className="w-full p-2.5 bg-paper border border-line-border rounded-xl font-semibold text-ink focus:outline-none focus:border-teal-primary"
-                  >
-                    <option value="teacher">All Teaching Staff & Faculty</option>
-                    <option value="parent">All Guardians & Parents</option>
-                    <option value="school_admin">School Administration Team</option>
-                    <option value="all">Entire School Community (Global Broadcast)</option>
-                  </select>
+          {annLoading ? (
+            <div className="py-20 text-center text-xs text-ink/40">Loading broadcasts...</div>
+          ) : announcements.length === 0 ? (
+            <div className="glass-card p-12 text-center text-xs text-ink/40 rounded-2xl border border-line-border/30 space-y-2">
+              <Megaphone className="w-8 h-8 mx-auto text-ink/20" />
+              <p>No active announcements broadcasted at this time.</p>
+            </div>
+          ) : (
+            <CollapsibleList
+              items={announcements}
+              threshold={10}
+              renderItem={(ann, index) => (
+                <div
+                  key={ann.id || index}
+                  className="glass-card p-5 rounded-2xl border border-line-border/30 hover:border-teal-primary/30 transition-all space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-teal-primary/10 text-teal-primary">
+                          {ann.target_audience || 'All School'}
+                        </span>
+                        <h4 className="text-sm font-bold text-ink font-display">{ann.title}</h4>
+                      </div>
+                      <p className="text-xs text-ink/70 leading-relaxed mt-2">{ann.content || ann.message || ann.body}</p>
+                    </div>
+                    <span className="text-[10px] text-ink/40 font-mono shrink-0">
+                      {ann.date || ann.created_at ? new Date(ann.date || ann.created_at).toLocaleDateString() : 'Active'}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2 pt-2 border-t border-line-border/20 text-[10px] text-ink/40">
+                    <span>Issued by: <strong className="text-ink/60">{ann.created_by || 'Administration'}</strong></span>
+                  </div>
                 </div>
               )}
+            />
+          )}
 
-              {/* Subject */}
-              <div>
-                <label className="block font-bold text-ink/70 mb-1">Subject Header *</label>
+          {/* New Broadcast Modal */}
+          {showNewAnnModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-xs">
+              <div className="glass-panel w-full max-w-lg bg-paper p-6 rounded-3xl border border-line-border/40 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-line-border/30 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <Megaphone className="w-5 h-5 text-teal-primary" />
+                    <h3 className="font-display font-bold text-lg text-ink">New Broadcast Announcement</h3>
+                  </div>
+                  <button onClick={() => setShowNewAnnModal(false)} className="text-ink/40 hover:text-ink">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateAnnouncement} className="space-y-4 text-xs">
+                  <div className="space-y-1">
+                    <label className="font-bold text-ink/70">Headline / Title *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. End of Term Arrangements & Exeat Pickup"
+                      value={annForm.title}
+                      onChange={e => setAnnForm({ ...annForm, title: e.target.value })}
+                      className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink text-xs font-semibold"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="font-bold text-ink/70">Target Audience *</label>
+                      <select
+                        value={annForm.target_audience}
+                        onChange={e => setAnnForm({ ...annForm, target_audience: e.target.value })}
+                        className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink text-xs"
+                      >
+                        <option value="all">All School Community</option>
+                        <option value="teachers">Staff & Teachers Only</option>
+                        <option value="parents">Parents / Guardians Only</option>
+                        <option value="students">Students / Specific Class</option>
+                      </select>
+                    </div>
+
+                    {annForm.target_audience === 'students' && (
+                      <div className="space-y-1">
+                        <label className="font-bold text-ink/70">Class (Optional)</label>
+                        <select
+                          value={annForm.class_id}
+                          onChange={e => setAnnForm({ ...annForm, class_id: e.target.value })}
+                          className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink text-xs"
+                        >
+                          <option value="">All Classes</option>
+                          {annClasses.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="space-y-1">
+                      <label className="font-bold text-ink/70">Expiry Date (Optional)</label>
+                      <input
+                        type="date"
+                        value={annForm.expires_at}
+                        onChange={e => setAnnForm({ ...annForm, expires_at: e.target.value })}
+                        className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="font-bold text-ink/70">Broadcast Message *</label>
+                    <textarea
+                      rows={5}
+                      placeholder="Write the full announcement message here..."
+                      value={annForm.body}
+                      onChange={e => setAnnForm({ ...annForm, body: e.target.value })}
+                      className="w-full bg-paper border border-line-border rounded-xl p-3 text-ink text-xs"
+                      required
+                    />
+                  </div>
+
+                  <div className="pt-2 flex justify-end space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowNewAnnModal(false)}
+                      className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingAnn}
+                      className="px-5 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold hover:bg-teal-dark cursor-pointer disabled:opacity-50"
+                    >
+                      {submittingAnn ? 'Publishing...' : 'Publish Broadcast'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────
+       * TAB 3 CONTENT: SYSTEM ALERTS & NOTIFICATIONS
+       * ─────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'alerts' && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center space-x-2">
+              {['all', 'unread', 'fees', 'attendance'].map(f => (
+                <button
+                  key={f}
+                  onClick={() => setAlertFilter(f)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
+                    alertFilter === f ? 'bg-teal-primary text-paper' : 'bg-paper text-ink/60 border border-line-border/30 hover:bg-sage/10'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={markAllAlertsRead}
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-paper hover:bg-sage/10 border border-line-border/30 text-teal-dark rounded-lg text-xs font-semibold cursor-pointer shadow-xs"
+            >
+              <CheckCheck className="w-3.5 h-3.5 text-teal-primary" />
+              <span>Mark All Read</span>
+            </button>
+          </div>
+
+          {alertsLoading ? (
+            <div className="py-20 text-center text-xs text-ink/40">Loading system alerts...</div>
+          ) : alerts.length === 0 ? (
+            <div className="glass-card p-12 text-center text-xs text-ink/40 rounded-2xl border border-line-border/30 space-y-2">
+              <Bell className="w-8 h-8 mx-auto text-ink/20" />
+              <p>You have no notifications or automated alerts.</p>
+            </div>
+          ) : (
+            <CollapsibleList
+              items={alerts}
+              threshold={10}
+              renderItem={(alt, index) => (
+                <div
+                  key={alt.id || index}
+                  onClick={() => !alt.is_read && markAlertRead(alt.id)}
+                  className={`glass-card p-4 rounded-xl border transition-all flex items-start justify-between gap-4 cursor-pointer ${
+                    !alt.is_read ? 'bg-sage/10 border-teal-primary/30' : 'border-line-border/30 bg-paper/70'
+                  }`}
+                >
+                  <div className="flex items-start space-x-3">
+                    <div className={`p-2 rounded-lg shrink-0 ${!alt.is_read ? 'bg-teal-primary text-paper' : 'bg-ink/5 text-ink/50'}`}>
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-ink">{alt.title}</h4>
+                      <p className="text-xs text-ink/60 mt-0.5 leading-relaxed">{alt.message}</p>
+                      <span className="text-[10px] text-ink/40 font-mono mt-1.5 block">
+                        {alt.created_at ? new Date(alt.created_at).toLocaleString() : 'Recent'}
+                      </span>
+                    </div>
+                  </div>
+                  {!alt.is_read && (
+                    <span className="w-2.5 h-2.5 rounded-full bg-teal-primary shrink-0 mt-1" />
+                  )}
+                </div>
+              )}
+            />
+          )}
+        </div>
+      )}
+
+      {/* New Conversation Modal */}
+      {showNewChatModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/50 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6 relative">
+            <button
+              onClick={() => setShowNewChatModal(false)}
+              className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="mb-4">
+              <span className="text-[10px] font-bold text-teal-primary uppercase tracking-wider">Secure Dialogue</span>
+              <h3 className="text-lg font-display font-bold text-ink mt-0.5">Start New Conversation</h3>
+              <p className="text-xs text-ink/50 mt-1">
+                You can only message permitted teachers, administrators, or parents linked to your cohort.
+              </p>
+            </div>
+
+            <form onSubmit={handleStartNewChat} className="space-y-4 text-xs font-sans">
+              <div className="space-y-1">
+                <label className="font-bold text-ink/70">Select Contact</label>
+                {loadingContacts ? (
+                  <p className="py-2 text-ink/40 italic">Loading permitted contacts...</p>
+                ) : (
+                  <select
+                    value={selectedContact}
+                    onChange={e => setSelectedContact(e.target.value)}
+                    className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink font-semibold"
+                    required
+                  >
+                    <option value="">-- Choose recipient --</option>
+                    {contacts.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.display_name} ({c.role_title || c.role}) {c.context_info ? `— ${c.context_info}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-ink/70">Topic / Subject</label>
                 <input
                   type="text"
-                  required
-                  placeholder="e.g. End of Term Progress Update"
-                  className="w-full p-2.5 border border-line-border rounded-xl font-semibold text-ink focus:outline-none focus:border-teal-primary"
-                  value={composeForm.title}
-                  onChange={e => setComposeForm(p => ({ ...p, title: e.target.value }))}
+                  placeholder="e.g. Academic Progress, Exeat Notice, Consultation"
+                  value={newChatSubject}
+                  onChange={e => setNewChatSubject(e.target.value)}
+                  className="w-full bg-paper border border-line-border rounded-xl px-3 py-2 text-ink"
                 />
               </div>
 
-              {/* Message Content */}
-              <div>
-                <label className="block font-bold text-ink/70 mb-1">Message Body *</label>
+              <div className="space-y-1">
+                <label className="font-bold text-ink/70">Initial Message</label>
                 <textarea
-                  required
                   rows={4}
-                  placeholder="Write your message details here..."
-                  className="w-full p-2.5 border border-line-border rounded-xl text-ink focus:outline-none focus:border-teal-primary"
-                  value={composeForm.message}
-                  onChange={e => setComposeForm(p => ({ ...p, message: e.target.value }))}
+                  placeholder="Write your message..."
+                  value={newChatFirstMsg}
+                  onChange={e => setNewChatFirstMsg(e.target.value)}
+                  className="w-full bg-paper border border-line-border rounded-xl p-3 text-ink"
+                  required
                 />
               </div>
 
-              <div className="pt-3 flex justify-end space-x-2">
+              <div className="pt-2 flex justify-end space-x-2">
                 <button
                   type="button"
-                  onClick={() => setShowComposeModal(false)}
-                  className="px-4 py-2 border border-line-border rounded-xl font-semibold text-ink/70 hover:bg-sage/10 cursor-pointer"
+                  onClick={() => setShowNewChatModal(false)}
+                  className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold hover:bg-sage/10 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={sendingMsg}
-                  className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl font-bold shadow-md cursor-pointer flex items-center space-x-1.5"
+                  disabled={creatingChat}
+                  className="px-5 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold hover:bg-teal-dark cursor-pointer disabled:opacity-50"
                 >
-                  {sendingMsg ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>Send Direct Message</span>
+                  {creatingChat ? 'Creating...' : 'Start Conversation'}
                 </button>
               </div>
             </form>
@@ -723,6 +1101,4 @@ const Notifications = () => {
       )}
     </div>
   );
-};
-
-export default Notifications;
+}

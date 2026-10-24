@@ -106,10 +106,15 @@ async function request(path, options = {}) {
       if (result.error?.code === 'LICENSE_EXPIRED') {
         sessionStorage.setItem('schoolbase_license_expired', 'true');
       }
+      if (response.status === 404 && (result.error?.message?.toLowerCase().includes('school not found') || path.startsWith('/schools/'))) {
+        sessionStorage.removeItem('schoolbase_active_school_id');
+        window.dispatchEvent(new CustomEvent('schoolbase:school-not-found', { detail: { path } }));
+      }
       const requestError = new Error(result.error?.message || 'Request failed');
       requestError.status = response.status;
       requestError.code = result.error?.code;
       requestError.fields = result.error?.fields;
+      requestError.response = { data: result, status: response.status };
       if (!config.silent) {
         emitRequestFeedback('schoolbase:request-error', { method: config.method, path, message: requestError.message, status: response.status });
       }

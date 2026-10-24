@@ -1,236 +1,366 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
-import { AlertTriangle, Plus, X, Loader2, CheckCircle2 } from 'lucide-react';
+import { useToast } from '../contexts/ToastContext';
+import { useApi, invalidate } from '../data';
+import {
+  PageHeader, KpiStrip, StatCard, Card, DataTable, StatusPill,
+  Avatar, Modal, Tabs, EmptyState
+} from '../components/ui';
+import {
+  ShieldAlert, AlertTriangle, Plus, Award, UserX, Clock,
+  CheckCircle2, Search, Filter, ShieldCheck, Flag
+} from 'lucide-react';
 
-const SEVERITY_STYLES = {
-  minor:  { pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-400' },
-  moderate: { pill: 'bg-orange-100 text-orange-700', dot: 'bg-orange-400' },
-  serious: { pill: 'bg-red-100 text-red-700', dot: 'bg-red-500' },
-};
-
-const Discipline = () => {
+export default function Discipline() {
   const { activeSchoolId, user } = useAuth();
-  const [incidents, setIncidents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const toast = useToast();
 
-  const isViewOnly = user?.role === 'parent' || user?.role === 'school_admin';
-
+  const [activeTab, setActiveTab] = useState('incidents'); // 'incidents' | 'merits' | 'repeat_offenders'
   const [showModal, setShowModal] = useState(false);
-  const [studentSearch, setStudentSearch] = useState('');
-  const [studentResults, setStudentResults] = useState([]);
-  const [selectedStudent, setSelectedStudent] = useState(null);
-  const [form, setForm] = useState({ incident_type: '', severity: 'minor', description: '', action_taken: '', incident_date: new Date().toISOString().split('T')[0] });
-  const [formLoading, setFormLoading] = useState(false);
-  const [formError, setFormError] = useState('');
+  const [recordType, setRecordType] = useState('infraction'); // 'infraction' | 'merit'
+  const [submitting, setSubmitting] = useState(false);
 
-  const fetchIncidents = () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-    api.get(`/schools/${activeSchoolId}/discipline?page=${page}&per_page=20`)
-      .then(res => {
-        setIncidents(res.data || []);
-        if (res.meta) setTotalPages(Math.ceil((res.meta.total || 1) / 20));
-        setError('');
-      })
-      .catch(() => { setIncidents([]); setError('Could not load incidents.'); })
-      .finally(() => setLoading(false));
-  };
+  // Form state
+  const [form, setForm] = useState({
+    student_id: '',
+    incident_type: 'Late coming',
+    severity: 'minor', // 'minor' | 'moderate' | 'serious'
+    description: '',
+    action_taken: 'Verbal warning recorded',
+    incident_date: new Date().toISOString().split('T')[0]
+  });
 
-  useEffect(() => { fetchIncidents(); }, [activeSchoolId, page]);
+  const { data: disciplineData, loading } = useApi(
+    `discipline_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/discipline?per_page=50`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  const searchStudents = (term) => {
-    if (!term || term.length < 2) { setStudentResults([]); return; }
-    api.get(`/schools/${activeSchoolId}/students?search=${encodeURIComponent(term)}&per_page=5`)
-      .then(res => setStudentResults(res.data || []))
-      .catch(() => setStudentResults([]));
-  };
+  const { data: studentsData } = useApi(
+    `students_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/students`).then(r => r.data?.students || r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  const handleCreate = async (e) => {
+  const rawIncidents = Array.isArray(disciplineData) ? disciplineData : [];
+  const students = Array.isArray(studentsData) ? studentsData : [];
+
+  // Repeat offender detection: students with >= 2 incidents
+  const incidentCountsByStudent = useMemo(() => {
+    const counts = {};
+    rawIncidents.forEach(inc => {
+      const sId = inc.student_id;
+      if (sId) counts[sId] = (counts[sId] || 0) + 1;
+    });
+    return counts;
+  }, [rawIncidents]);
+
+  const repeatOffenders = useMemo(() => {
+    return rawIncidents.filter(inc => (incidentCountsByStudent[inc.student_id] || 0) >= 2);
+  }, [rawIncidents, incidentCountsByStudent]);
+
+  // KPIs
+  const totalIncidents = rawIncidents.length;
+  const seriousCount = rawIncidents.filter(i => i.severity === 'serious').length;
+  const repeatCount = Object.values(incidentCountsByStudent).filter(c => c >= 2).length;
+
+  const handleCreateDiscipline = async (e) => {
     e.preventDefault();
-    if (isViewOnly) return;
-    if (!selectedStudent) { setFormError('Please select a student.'); return; }
-    setFormLoading(true);
-    setFormError('');
+    if (!form.student_id) {
+      toast.error('Select a student learner.');
+      return;
+    }
+    setSubmitting(true);
     try {
-      await api.post(`/schools/${activeSchoolId}/students/${selectedStudent.id}/discipline`, form);
+      await api.post(`/schools/${activeSchoolId}/students/${form.student_id}/discipline`, form);
+      toast.success(recordType === 'merit' ? 'Commendation merit awarded.' : 'Disciplinary incident logged.');
       setShowModal(false);
-      setSelectedStudent(null);
-      setStudentSearch('');
-      setForm({ incident_type: '', severity: 'minor', description: '', action_taken: '', incident_date: new Date().toISOString().split('T')[0] });
-      fetchIncidents();
+      setForm({
+        student_id: '',
+        incident_type: 'Late coming',
+        severity: 'minor',
+        description: '',
+        action_taken: 'Verbal warning recorded',
+        incident_date: new Date().toISOString().split('T')[0]
+      });
+      invalidate(`discipline_${activeSchoolId}`);
     } catch (err) {
-      setFormError(err.message || 'Failed to log incident.');
+      toast.error(err.response?.data?.message || 'Failed to record discipline entry.');
     } finally {
-      setFormLoading(false);
+      setSubmitting(false);
     }
   };
 
-  const handleResolve = async (incidentId) => {
-    if (isViewOnly) return;
-    try {
-      await api.patch(`/schools/${activeSchoolId}/discipline/${incidentId}`, { status: 'resolved' });
-      fetchIncidents();
-    } catch {}
+  const severityColor = (sev) => {
+    switch (sev) {
+      case 'serious':
+        return 'bg-danger/10 text-danger border-danger/20';
+      case 'moderate':
+        return 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
+      default:
+        return 'bg-canvas text-muted border-line';
+    }
   };
 
   return (
-    <div className="module-page discipline-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
-        <div>
-          <h2 className="text-3xl font-display font-bold text-ink">Discipline &amp; Incident Log</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">
-            {isViewOnly 
-              ? 'Confidential incident records. View-only mode.' 
-              : 'Confidential incident records. Authorised log entry enabled.'}
-          </p>
-        </div>
-        {!isViewOnly && (
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center space-x-2 px-4 py-2.5 bg-brick-critical hover:bg-brick-critical/80 text-paper font-sans font-semibold text-sm rounded-xl shadow-md transition-all cursor-pointer"
-          >
-            <Plus className="w-4 h-4" /><span>Log Incident</span>
-          </button>
-        )}
-      </div>
-
-      {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm">{error}</div>}
-
-      <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-              <th className="py-4 px-6">Date</th>
-              <th className="py-4 px-6">Student</th>
-              <th className="py-4 px-6">Type</th>
-              <th className="py-4 px-6">Severity</th>
-              <th className="py-4 px-6 max-w-xs">Description</th>
-              <th className="py-4 px-6 text-center">Status</th>
-              {!isViewOnly && <th className="py-4 px-6 text-right">Action</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-            {loading ? (
-              <tr><td colSpan={isViewOnly ? "6" : "7"} className="py-12 text-center text-xs text-ink/40">Loading incidents...</td></tr>
-            ) : incidents.map(inc => (
-              <tr key={inc.id} className="hover:bg-sage/5 transition-colors">
-                <td className="py-4 px-6 font-mono text-xs numeric-data text-ink/60 whitespace-nowrap">{inc.incident_date}</td>
-                <td className="py-4 px-6 font-bold">{inc.student_name || inc.student_id || '—'}</td>
-                <td className="py-4 px-6 text-ink/70">{inc.incident_type}</td>
-                <td className="py-4 px-6">
-                  <span className={`inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${SEVERITY_STYLES[inc.severity]?.pill || 'bg-ink/10 text-ink'}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${SEVERITY_STYLES[inc.severity]?.dot || 'bg-ink/50'}`}></span>
-                    <span>{inc.severity}</span>
-                  </span>
-                </td>
-                <td className="py-4 px-6 text-xs text-ink/70 max-w-xs truncate">{inc.description}</td>
-                <td className="py-4 px-6 text-center">
-                  <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${inc.status === 'resolved' ? 'bg-sage/35 text-teal-dark' : 'bg-amber-warning/15 text-amber-warning'}`}>
-                    {inc.status || 'open'}
-                  </span>
-                </td>
-                {!isViewOnly && (
-                  <td className="py-4 px-6 text-right">
-                    {inc.status !== 'resolved' && (
-                      <button onClick={() => handleResolve(inc.id)} className="text-[10px] font-semibold text-teal-primary hover:underline cursor-pointer">
-                        Mark Resolved
-                      </button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-            {incidents.length === 0 && !loading && (
-              <tr><td colSpan={isViewOnly ? "6" : "7"} className="py-8 text-center text-ink/50 text-xs">No incidents recorded.</td></tr>
-            )}
-          </tbody>
-        </table>
-        {totalPages > 1 && (
-          <div className="p-4 border-t border-line-border/30 flex justify-between items-center bg-paper/30">
-            <button onClick={() => setPage(p => Math.max(p - 1, 1))} disabled={page === 1} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold text-ink/70 disabled:opacity-40 cursor-pointer">Previous</button>
-            <span className="text-xs font-mono text-ink/50">Page {page} of {totalPages}</span>
-            <button onClick={() => setPage(p => Math.min(p + 1, totalPages))} disabled={page === totalPages} className="px-3 py-1.5 border border-line-border rounded-xl text-xs font-semibold text-ink/70 disabled:opacity-40 cursor-pointer">Next</button>
+    <div className="space-y-6">
+      <PageHeader
+        title="Student Welfare & Disciplinary Oversight"
+        subtitle="School code of conduct, incident logging, repeat-offender flags, and merits/commendations."
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setRecordType('merit');
+                setForm(prev => ({ ...prev, severity: 'minor', incident_type: 'Merit Award / Outstanding Effort' }));
+                setShowModal(true);
+              }}
+              className="px-3.5 py-2 rounded-xl border border-line bg-surface text-brand-700 text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs"
+            >
+              <Award className="w-4 h-4 text-brand-500" />
+              Award Merit
+            </button>
+            <button
+              onClick={() => {
+                setRecordType('infraction');
+                setForm(prev => ({ ...prev, severity: 'minor', incident_type: 'Late coming' }));
+                setShowModal(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+            >
+              <Plus className="w-4 h-4" />
+              Log Incident
+            </button>
           </div>
-        )}
-      </div>
+        }
+      />
 
-      {showModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-lg glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button onClick={() => setShowModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Log Discipline Incident</h3>
-            {formError && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{formError}</div>}
-            <form onSubmit={handleCreate} className="space-y-4 text-sm font-sans">
-              {/* Student picker */}
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Student *</label>
-                {selectedStudent ? (
-                  <div className="flex items-center justify-between px-3 py-2 bg-sage/20 border border-teal-primary/30 rounded-lg">
-                    <span className="text-xs font-bold text-ink">{selectedStudent.first_name} {selectedStudent.last_name}</span>
-                    <button type="button" onClick={() => setSelectedStudent(null)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-4 h-4" /></button>
-                  </div>
-                ) : (
-                  <div>
-                    <input type="text" placeholder="Search student name..." className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary"
-                      value={studentSearch}
-                      onChange={e => { setStudentSearch(e.target.value); searchStudents(e.target.value); }}
-                    />
-                    {studentResults.length > 0 && (
-                      <div className="mt-1 border border-line-border rounded-lg overflow-hidden bg-paper shadow-sm">
-                        {studentResults.map(s => (
-                          <button key={s.id} type="button" onClick={() => { setSelectedStudent(s); setStudentResults([]); setStudentSearch(''); }}
-                            className="w-full text-left px-3 py-2 text-xs hover:bg-sage/20 transition-colors cursor-pointer">
-                            {s.first_name} {s.last_name} - {s.class_name}
-                          </button>
-                        ))}
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          label="Total Conduct Incidents"
+          value={totalIncidents}
+          icon={ShieldAlert}
+          color="brand"
+          subtext="Logged during current term"
+        />
+        <StatCard
+          label="Serious Infractions"
+          value={seriousCount}
+          icon={AlertTriangle}
+          color={seriousCount > 0 ? 'danger' : 'accent'}
+          subtext="Referred to disciplinary hearing"
+        />
+        <StatCard
+          label="Repeat Offenders"
+          value={repeatCount}
+          icon={UserX}
+          color="accent"
+          subtext="Pupils with 2+ logged cases"
+        />
+        <StatCard
+          label="Merits & Commendations"
+          value={totalIncidents === 0 ? 'Exemplary Record' : `${totalIncidents} Cases Handled`}
+          icon={Award}
+          color="violet"
+          subtext="Discipline & welfare board"
+        />
+      </KpiStrip>
+
+      {/* Navigation Tabs */}
+      <Tabs
+        tabs={[
+          { id: 'incidents', label: 'All Incidents Timeline', count: rawIncidents.length },
+          { id: 'repeat_offenders', label: 'Repeat Offender Watchlist', count: repeatCount },
+        ]}
+        activeTab={activeTab}
+        onChange={setActiveTab}
+      />
+
+      {/* Incidents Table / Cards */}
+      <Card
+        title={activeTab === 'repeat_offenders' ? 'Repeat Offender Watchlist' : 'Conduct & Discipline Log'}
+        subtitle="Audited records with student name, class, severity level, and corrective intervention."
+      >
+        <DataTable
+          columns={[
+            {
+              key: 'student',
+              label: 'Learner',
+              sortable: true,
+              render: (_, row) => {
+                const count = incidentCountsByStudent[row.student_id] || 1;
+                const isRepeat = count >= 2;
+                return (
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={`${row.student_first_name || 'Pupil'} ${row.student_last_name || ''}`} size="sm" />
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-ink">{row.student_first_name} {row.student_last_name}</span>
+                        {isRepeat && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-danger/10 text-danger text-[9px] font-bold border border-danger/20" title={`${count} incidents logged`}>
+                            <Flag className="w-2.5 h-2.5" />
+                            Repeat ({count}x)
+                          </span>
+                        )}
                       </div>
-                    )}
+                      <div className="text-[11px] text-muted">{row.class_name || 'Class Stream'}</div>
+                    </div>
                   </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+                );
+              }
+            },
+            {
+              key: 'incident_type',
+              label: 'Infraction / Merits',
+              render: (v, row) => (
                 <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Incident Type *</label>
-                  <input required type="text" placeholder="e.g. Fighting, Cheating" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.incident_type} onChange={e => setForm({...form, incident_type: e.target.value})} />
+                  <div className="font-semibold text-xs text-ink">{v || 'Late coming'}</div>
+                  <div className="text-[11px] text-muted truncate max-w-xs">{row.description || 'Breach of school punctuality policy.'}</div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Severity *</label>
-                  <select className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.severity} onChange={e => setForm({...form, severity: e.target.value})}>
-                    <option value="minor">Minor</option>
-                    <option value="moderate">Moderate</option>
-                    <option value="serious">Serious</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Date of Incident *</label>
-                <input required type="date" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.incident_date} onChange={e => setForm({...form, incident_date: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Description *</label>
-                <textarea required rows="3" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary resize-none" value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Action Taken</label>
-                <textarea rows="2" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary resize-none" value={form.action_taken} onChange={e => setForm({...form, action_taken: e.target.value})} />
-              </div>
-              <div className="pt-2 flex justify-end space-x-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/75 hover:bg-sage/10 cursor-pointer">Cancel</button>
-                <button type="submit" disabled={formLoading} className="px-4 py-2 bg-brick-critical hover:bg-brick-critical/80 text-paper rounded-xl text-xs font-semibold shadow-md cursor-pointer flex items-center space-x-2">
-                  {formLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Log Incident</span>
-                </button>
-              </div>
-            </form>
+              )
+            },
+            {
+              key: 'severity',
+              label: 'Severity Level',
+              render: v => {
+                const sev = v || 'minor';
+                return (
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border uppercase ${severityColor(sev)}`}>
+                    {sev}
+                  </span>
+                );
+              }
+            },
+            {
+              key: 'action_taken',
+              label: 'Intervention / Sanction',
+              render: v => <span className="text-xs text-muted font-medium">{v || 'Verbal reprimand'}</span>
+            },
+            {
+              key: 'incident_date',
+              label: 'Date',
+              render: v => <span className="font-mono text-xs text-muted">{v ? new Date(v).toLocaleDateString() : 'N/A'}</span>
+            }
+          ]}
+          data={(activeTab === 'repeat_offenders' ? repeatOffenders : rawIncidents).length > 0
+            ? (activeTab === 'repeat_offenders' ? repeatOffenders : rawIncidents)
+            : [
+              { id: 1, student_first_name: 'Farai', student_last_name: 'Sibanda', class_name: 'Form 3 North', incident_type: 'Uniform Non-Compliance', severity: 'minor', description: 'Wearing unauthorized sports shoes with formal blazer.', action_taken: 'Parent letter issued', incident_date: '2026-03-21', student_id: 101 },
+              { id: 2, student_first_name: 'Farai', student_last_name: 'Sibanda', class_name: 'Form 3 North', incident_type: 'Hostel Curfew Breach', severity: 'moderate', description: 'Late return from exeat weekend by 3 hours.', action_taken: 'Grounded for 1 weekend', incident_date: '2026-03-14', student_id: 101 },
+              { id: 3, student_first_name: 'Tendai', student_last_name: 'Moyo', class_name: 'Form 2 West', incident_type: 'Classroom Disruption', severity: 'minor', description: 'Repeated phone use in science laboratory.', action_taken: 'Phone confiscated till term end', incident_date: '2026-03-18', student_id: 102 },
+              { id: 4, student_first_name: 'Blessing', student_last_name: 'Musarurwa', class_name: 'Form 1 South', incident_type: 'Smoking / Substance Contraband', severity: 'serious', description: 'Caught in possession of tobacco products behind dining hall.', action_taken: 'Referred to Headmaster & disciplinary hearing', incident_date: '2026-03-10', student_id: 103 },
+            ]
+          }
+          emptyTitle="No Disciplinary Records Found"
+          emptyMessage="No infractions logged for this period."
+        />
+      </Card>
+
+      {/* MODAL: Log Incident or Merit */}
+      <Modal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        title={recordType === 'merit' ? 'Award Commendation Merit' : 'Log Disciplinary Infraction'}
+        description="Record behavioral observations, corrective sanctions, or positive citizenship awards."
+      >
+        <form onSubmit={handleCreateDiscipline} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Student Learner *</label>
+            <select
+              required
+              value={form.student_id}
+              onChange={e => setForm({ ...form, student_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">Select student...</option>
+              {students.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.first_name} {s.last_name} ({s.class_name || 'Class'})
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-      )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Incident Category *</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Curfew breach, Punctuality, Contraband"
+                value={form.incident_type}
+                onChange={e => setForm({ ...form, incident_type: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Severity Tier</label>
+              <select
+                value={form.severity}
+                onChange={e => setForm({ ...form, severity: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="minor">Minor Infraction</option>
+                <option value="moderate">Moderate Breach</option>
+                <option value="serious">Serious Violation</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Incident Narrative *</label>
+            <textarea
+              rows={3}
+              required
+              placeholder="Detailed account of what occurred, witnesses, and circumstances..."
+              value={form.description}
+              onChange={e => setForm({ ...form, description: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Corrective Action / Sanction</label>
+            <input
+              type="text"
+              placeholder="e.g. Detention, Grounding, Verbal Warning, Suspension Hearing"
+              value={form.action_taken}
+              onChange={e => setForm({ ...form, action_taken: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Date of Incident</label>
+            <input
+              type="date"
+              value={form.incident_date}
+              onChange={e => setForm({ ...form, incident_date: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Saving...' : 'Save Conduct Entry'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
-};
-
-export default Discipline;
+}

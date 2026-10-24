@@ -88,12 +88,29 @@ export const AuthProvider = ({ children }) => {
       try {
         const parsedUser = JSON.parse(savedUser);
         setUser(parsedUser);
-        if (parsedUser.role === 'super_admin') {
-          const savedSchool = store.getItem(STORAGE_SCHOOL_KEY);
-          if (savedSchool) setActiveSchoolId(savedSchool);
-        } else {
-          setActiveSchoolId(parsedUser.school_id);
-        }
+
+        // Fetch valid existing schools to verify active school hasn't been deleted
+        api.get('/schools', { silent: true }).then(res => {
+          const schoolList = res?.data || res || [];
+          if (Array.isArray(schoolList) && schoolList.length > 0) {
+            const currentSelected = store.getItem(STORAGE_SCHOOL_KEY) || parsedUser.school_id;
+            const valid = schoolList.find(s => s.id === currentSelected);
+            const activeId = valid ? valid.id : schoolList[0].id;
+            setActiveSchoolId(activeId);
+            store.setItem(STORAGE_SCHOOL_KEY, activeId);
+          } else {
+            setActiveSchoolId(parsedUser.school_id || null);
+          }
+        }).catch(() => {
+          if (parsedUser.role === 'super_admin') {
+            const savedSchool = store.getItem(STORAGE_SCHOOL_KEY) || 'HARAREPR';
+            setActiveSchoolId(savedSchool);
+            store.setItem(STORAGE_SCHOOL_KEY, savedSchool);
+          } else {
+            setActiveSchoolId(parsedUser.school_id);
+          }
+        });
+
         startActivityTracking();
       } catch {
         clearStorage();
@@ -102,8 +119,26 @@ export const AuthProvider = ({ children }) => {
 
     setLoading(false);
 
+    // Listen for deleted school 404s and auto-heal to valid school
+    const handleSchoolNotFound = () => {
+      store.removeItem(STORAGE_SCHOOL_KEY);
+      api.get('/schools', { silent: true }).then(r => {
+        const schools = r?.data || r || [];
+        if (Array.isArray(schools) && schools.length > 0) {
+          const fallback = schools[0].id;
+          setActiveSchoolId(fallback);
+          store.setItem(STORAGE_SCHOOL_KEY, fallback);
+        }
+      }).catch(() => {});
+    };
+
+    window.addEventListener('schoolbase:school-not-found', handleSchoolNotFound);
+
     // Cleanup on unmount
-    return () => stopActivityTracking();
+    return () => {
+      stopActivityTracking();
+      window.removeEventListener('schoolbase:school-not-found', handleSchoolNotFound);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Login ────────────────────────────────────────────────────────────────
@@ -119,7 +154,9 @@ export const AuthProvider = ({ children }) => {
 
       setUser(loggedUser);
       if (loggedUser.role === 'super_admin') {
-        setActiveSchoolId(null);
+        const defaultSchool = store.getItem(STORAGE_SCHOOL_KEY) || 'HARAREPR';
+        setActiveSchoolId(defaultSchool);
+        store.setItem(STORAGE_SCHOOL_KEY, defaultSchool);
       } else {
         setActiveSchoolId(loggedUser.school_id);
       }

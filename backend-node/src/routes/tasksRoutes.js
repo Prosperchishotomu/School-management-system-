@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router({ mergeParams: true });
 const { query, queryOne } = require('../config/db');
 const { authenticateToken } = require('../middleware/auth');
+const { broadcastInvalidation } = require('../services/realtime');
 
 // Helper to notify all school admins when a teacher updates lesson plans
 async function notifySchoolAdmins(schoolId, title, message) {
@@ -46,30 +47,48 @@ router.post('/', authenticateToken, async (req, res) => {
       });
     }
 
-    const { title, description, due_date, class_id, subject_id } = req.body;
+    const { title, description, due_date, class_id, subject_id, subject, status } = req.body;
     if (!title) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Lesson task title is required.' } });
     }
 
+    // Resolve subject_id if string name was passed
+    let resolvedSubjectId = subject_id || null;
+    if (!resolvedSubjectId && subject) {
+      const subRow = await queryOne('SELECT id FROM subjects WHERE LOWER(name) = LOWER(?) OR LOWER(code) = LOWER(?) LIMIT 1', [subject.trim(), subject.trim()]);
+      resolvedSubjectId = subRow?.id || null;
+    }
+    if (!resolvedSubjectId) {
+      const anySub = await queryOne('SELECT id FROM subjects LIMIT 1');
+      resolvedSubjectId = anySub?.id || null;
+    }
+
     const taskId = 'TSK' + Math.random().toString(36).substr(2, 5).toUpperCase();
+    const resolvedDueDate = due_date || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const resolvedStatus = ['planned', 'done', 'overdue', 'pending', 'in_progress', 'completed'].includes(status) ? status : 'planned';
+
     await query(
       `INSERT INTO tasks (id, school_id, teacher_id, title, description, due_date, class_id, subject_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'planned')`,
-      [taskId, schoolId, req.user.id, title.trim(), description || null, due_date || null, class_id || null, subject_id || null]
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [taskId, schoolId, req.user.id, title.trim(), description || null, resolvedDueDate, class_id || null, resolvedSubjectId, resolvedStatus]
     );
 
     // Notify School Principal / Admin
-    await notifySchoolAdmins(
-      schoolId,
-      'New Lesson Plan Submitted',
-      `Teacher ${req.user.username} submitted a new lesson plan: "${title.trim()}".`
-    );
+    try {
+      await notifySchoolAdmins(
+        schoolId,
+        'New Lesson Plan Submitted',
+        `Teacher ${req.user.username} submitted a new lesson plan: "${title.trim()}".`
+      );
+    } catch (_) {}
+
+    broadcastInvalidation(schoolId, ['tasks', 'dashboard', 'summary'], 'task_created');
 
     const created = await queryOne('SELECT * FROM tasks WHERE id = ?', [taskId]);
     return res.status(201).json({ data: created });
   } catch (err) {
     console.error('Create task error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create lesson task.' } });
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create lesson task: ' + err.message } });
   }
 });
 
@@ -90,7 +109,10 @@ const handleUpdateTask = async (req, res) => {
 
     if (title) { updates.push('title = ?'); params.push(title.trim()); }
     if (description !== undefined) { updates.push('description = ?'); params.push(description); }
-    if (status) { updates.push('status = ?'); params.push(status); }
+    if (status) {
+      updates.push('status = ?');
+      params.push(status);
+    }
     if (due_date !== undefined) { updates.push('due_date = ?'); params.push(due_date); }
 
     if (updates.length > 0) {
@@ -98,11 +120,15 @@ const handleUpdateTask = async (req, res) => {
       await query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ? AND school_id = ?`, params);
 
       // Notify Principal of modification
-      await notifySchoolAdmins(
-        schoolId,
-        'Lesson Plan Modified',
-        `User ${req.user.username} updated the lesson plan (ID: ${id}).`
-      );
+      try {
+        await notifySchoolAdmins(
+          schoolId,
+          'Lesson Plan Modified',
+          `User ${req.user.username} updated the lesson plan (ID: ${id}).`
+        );
+      } catch (_) {}
+
+      broadcastInvalidation(schoolId, ['tasks', 'dashboard', 'summary'], 'task_updated');
     }
 
     const updated = await queryOne('SELECT * FROM tasks WHERE id = ?', [id]);

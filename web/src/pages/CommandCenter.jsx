@@ -13,6 +13,8 @@ import {
 import { MiniBarChart } from '../components/charts/MiniBarChart';
 import { MiniDonutChart } from '../components/charts/MiniDonutChart';
 import { MiniLineChart } from '../components/charts/MiniLineChart';
+import StatCard from '../components/ui/StatCard';
+import KpiStrip from '../components/ui/KpiStrip';
 
 const TABS = [
   { id: 'overview',    label: 'Platform Overview',   icon: LayoutDashboard },
@@ -21,73 +23,6 @@ const TABS = [
   { id: 'config',      label: 'Global Config',        icon: Settings },
   { id: 'health',      label: 'System Health',        icon: Activity },
 ];
-
-// ─── Stat Card ──────────────────────────────────────────────────────────────
-const AnimatedCount = ({ value }) => {
-  const [displayValue, setDisplayValue] = useState(0);
-
-  useEffect(() => {
-    if (typeof value !== 'number') {
-      setDisplayValue(value);
-      return;
-    }
-    const isDecimal = value % 1 !== 0;
-    let start = 0;
-    const end = value;
-    if (start === end) return;
-
-    const duration = 1000; // ms
-    const increment = end > start ? 1 : -1;
-    const stepTime = Math.max(Math.floor(duration / Math.abs(end - start)), 20);
-    
-    let current = start;
-    const timer = setInterval(() => {
-      if (isDecimal) {
-        current += (end - current) * 0.15;
-        if (Math.abs(end - current) < 0.1) {
-          setDisplayValue(end);
-          clearInterval(timer);
-        } else {
-          setDisplayValue(parseFloat(current.toFixed(1)));
-        }
-      } else {
-        current += Math.ceil((end - current) / 8) * increment;
-        if ((increment > 0 && current >= end) || (increment < 0 && current <= end)) {
-          setDisplayValue(end);
-          clearInterval(timer);
-        } else {
-          setDisplayValue(current);
-        }
-      }
-    }, stepTime);
-
-    return () => clearInterval(timer);
-  }, [value]);
-
-  return <>{displayValue}</>;
-};
-
-const StatCard = ({ label, value, icon: Icon, color = 'teal', suffix = '', warning = false }) => {
-  const colorMap = {
-    teal:   { bg: 'bg-teal-primary/10', text: 'text-teal-primary', val: 'text-ink' },
-    amber:  { bg: 'bg-amber-warning/10', text: 'text-amber-warning', val: 'text-amber-warning' },
-    red:    { bg: 'bg-brick-critical/10', text: 'text-brick-critical', val: 'text-brick-critical' },
-  };
-  const c = colorMap[warning ? 'red' : color] || colorMap.teal;
-  return (
-    <div className="glass-card rounded-2xl p-5 flex items-center justify-between">
-      <div>
-        <span className="text-[10px] font-sans font-bold text-ink/50 uppercase tracking-wider">{label}</span>
-        <h4 className={`text-3xl font-display font-bold mt-1.5 numeric-data ${c.val}`}>
-          {typeof value === 'number' ? <AnimatedCount value={value} /> : (value ?? '-')}{suffix}
-        </h4>
-      </div>
-      <div className={`w-11 h-11 rounded-xl ${c.bg} flex items-center justify-center flex-shrink-0`}>
-        <Icon className={`w-5 h-5 ${c.text}`} />
-      </div>
-    </div>
-  );
-};
 
 // ─── Tab: Overview ───────────────────────────────────────────────────────────
 const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
@@ -164,12 +99,12 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
         </div>
 
         {/* Cockpit KPIs */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiStrip>
           <StatCard label="Enrolled Students" value={cockpit.kpis?.total_students ?? 0} icon={Users} onClick={() => handleCardClick('students', `${activeSchoolName} - Enrolled Students`)} />
           <StatCard label="Active Faculty/Staff" value={cockpit.kpis?.total_staff ?? 0} icon={Users} onClick={() => handleCardClick('staff', `${activeSchoolName} - Staff Telemetry`)} />
           <StatCard label="Total Classes" value={cockpit.kpis?.total_classes ?? 0} icon={Building} onClick={() => handleCardClick('schools', `${activeSchoolName} - Class Roster`)} />
           <StatCard label="Open Infractions" value={cockpit.kpis?.open_incidents ?? 0} icon={AlertTriangle} warning={cockpit.kpis?.open_incidents > 0} color="amber" onClick={() => handleCardClick('alerts', `${activeSchoolName} - Infractions`)} />
-        </div>
+        </KpiStrip>
 
 
         {/* Dynamic Telemetry Sections */}
@@ -270,14 +205,14 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
 
   return (
     <div className="space-y-8 animate-fadeIn">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <KpiStrip>
         <StatCard label="Schools"           value={t.schools}           icon={Building}      onClick={() => handleCardClick('schools', 'Platform Schools Directory')} />
         <StatCard label="Total Students"    value={t.students}          icon={Users}         onClick={() => handleCardClick('students', 'Student Population Breakdown')} />
         <StatCard label="Staff Members"     value={t.staff}             icon={Users}         onClick={() => handleCardClick('staff', 'Staff Headcount Telemetry')} />
         <StatCard label="Active Licenses"   value={t.active_licenses}   icon={Key}           onClick={() => handleCardClick('licenses', 'Active School Subscriptions')} />
         <StatCard label="Expiring ≤30d"     value={t.expiring_licenses} icon={Key}    warning={t.expiring_licenses > 0} color="amber" onClick={() => handleCardClick('expiring', 'Licenses Expiring Soon')} />
         <StatCard label="Active Alerts"     value={t.active_alerts}     icon={AlertTriangle} warning={t.active_alerts > 0} onClick={() => handleCardClick('alerts', 'Platform System Alerts')} />
-      </div>
+      </KpiStrip>
 
       {cardModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fadeIn" onClick={() => setCardModal(null)}>
@@ -660,7 +595,8 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
   const handleCreate = async (e) => {
     e.preventDefault(); setSaving(true); setErr('');
     try {
-      await api.post('/schools', form);
+      const schoolId = (form.id || form.code || form.name.replace(/[^a-zA-Z0-9]/g, '').substring(0, 8)).toUpperCase();
+      await api.post('/schools', { ...form, id: schoolId });
       setShowCreate(false); 
       setForm({ 
         name: '', 
@@ -1999,8 +1935,9 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 <div>
                   <label className="block text-xs font-semibold text-ink/70 mb-1">School Type *</label>
                   <select required className="w-full glass-input rounded-xl text-xs bg-paper font-semibold" value={form.school_type} onChange={e => setForm({...form, school_type: e.target.value})}>
-                    <option value="primary">Primary</option>
-                    <option value="secondary">Secondary</option>
+                    <option value="primary">Primary School (ECD - Grade 7)</option>
+                    <option value="secondary">Secondary School (Form 1 - 4 / O-Level)</option>
+                    <option value="high_school">High School (Ordinary & Advanced Level)</option>
                   </select>
                 </div>
                 <div>
@@ -2337,24 +2274,40 @@ const ConfigTab = ({ schools = [] }) => {
   const loadDefaultThresholds = (type) => {
     if (type === 'primary') {
       setThresholds([
-        { grade_symbol: '1', min_mark: 80, max_mark: 100, is_pass: 1 },
-        { grade_symbol: '2', min_mark: 70, max_mark: 79.99, is_pass: 1 },
-        { grade_symbol: '3', min_mark: 60, max_mark: 69.99, is_pass: 1 },
-        { grade_symbol: '4', min_mark: 50, max_mark: 59.99, is_pass: 1 },
-        { grade_symbol: '5', min_mark: 45, max_mark: 49.99, is_pass: 1 },
-        { grade_symbol: '6', min_mark: 40, max_mark: 44.99, is_pass: 1 },
-        { grade_symbol: '7', min_mark: 35, max_mark: 39.99, is_pass: 0 },
-        { grade_symbol: '8', min_mark: 30, max_mark: 34.99, is_pass: 0 },
-        { grade_symbol: '9', min_mark: 0, max_mark: 29.99, is_pass: 0 }
+        { grade_symbol: '1', min_mark: 80, max_mark: 100, is_pass: 1, label: 'Distinction' },
+        { grade_symbol: '2', min_mark: 70, max_mark: 79.99, is_pass: 1, label: 'Merit' },
+        { grade_symbol: '3', min_mark: 60, max_mark: 69.99, is_pass: 1, label: 'Credit' },
+        { grade_symbol: '4', min_mark: 50, max_mark: 59.99, is_pass: 1, label: 'Satisfactory' },
+        { grade_symbol: '5', min_mark: 45, max_mark: 49.99, is_pass: 1, label: 'Marginal Pass' },
+        { grade_symbol: '6', min_mark: 40, max_mark: 44.99, is_pass: 1, label: 'Bare Pass' },
+        { grade_symbol: '7', min_mark: 35, max_mark: 39.99, is_pass: 0, label: 'Unsatisfactory' },
+        { grade_symbol: '8', min_mark: 30, max_mark: 34.99, is_pass: 0, label: 'Poor' },
+        { grade_symbol: '9', min_mark: 0,  max_mark: 29.99, is_pass: 0, label: 'Very Poor' }
+      ]);
+    } else if (type === 'high_school' || type === 'combined') {
+      setThresholds([
+        { grade_symbol: 'A', min_mark: 70, max_mark: 100, is_pass: 1, points: 5, label: 'A-Level Distinction (5 Pts)' },
+        { grade_symbol: 'B', min_mark: 60, max_mark: 69.99, is_pass: 1, points: 4, label: 'A-Level Merit (4 Pts)' },
+        { grade_symbol: 'C', min_mark: 50, max_mark: 59.99, is_pass: 1, points: 3, label: 'A-Level Credit (3 Pts)' },
+        { grade_symbol: 'D', min_mark: 45, max_mark: 49.99, is_pass: 1, points: 2, label: 'A-Level Sub-Pass (2 Pts)' },
+        { grade_symbol: 'E', min_mark: 40, max_mark: 44.99, is_pass: 1, points: 1, label: 'A-Level Pass (1 Pt)' },
+        { grade_symbol: 'O', min_mark: 35, max_mark: 39.99, is_pass: 0, points: 0, label: 'A-Level Subsidiary (0 Pts)' },
+        { grade_symbol: 'F', min_mark: 0,  max_mark: 34.99, is_pass: 0, points: 0, label: 'A-Level Fail (0 Pts)' },
+        { grade_symbol: 'A', min_mark: 75, max_mark: 100, is_pass: 1, label: 'O-Level Distinction' },
+        { grade_symbol: 'B', min_mark: 65, max_mark: 74.99, is_pass: 1, label: 'O-Level Merit' },
+        { grade_symbol: 'C', min_mark: 50, max_mark: 64.99, is_pass: 1, label: 'O-Level Credit Pass' },
+        { grade_symbol: 'D', min_mark: 45, max_mark: 49.99, is_pass: 0, label: 'O-Level Sub-Credit' },
+        { grade_symbol: 'E', min_mark: 40, max_mark: 44.99, is_pass: 0, label: 'O-Level Poor' },
+        { grade_symbol: 'U', min_mark: 0,  max_mark: 39.99, is_pass: 0, label: 'O-Level Ungraded' }
       ]);
     } else {
       setThresholds([
-        { grade_symbol: 'A', min_mark: 75, max_mark: 100, is_pass: 1 },
-        { grade_symbol: 'B', min_mark: 65, max_mark: 74.99, is_pass: 1 },
-        { grade_symbol: 'C', min_mark: 50, max_mark: 64.99, is_pass: 1 },
-        { grade_symbol: 'D', min_mark: 40, max_mark: 49.99, is_pass: 0 },
-        { grade_symbol: 'E', min_mark: 30, max_mark: 39.99, is_pass: 0 },
-        { grade_symbol: 'U', min_mark: 0, max_mark: 29.99, is_pass: 0 }
+        { grade_symbol: 'A', min_mark: 75, max_mark: 100, is_pass: 1, label: 'Distinction' },
+        { grade_symbol: 'B', min_mark: 65, max_mark: 74.99, is_pass: 1, label: 'Merit' },
+        { grade_symbol: 'C', min_mark: 50, max_mark: 64.99, is_pass: 1, label: 'Credit Pass' },
+        { grade_symbol: 'D', min_mark: 45, max_mark: 49.99, is_pass: 0, label: 'Sub-credit' },
+        { grade_symbol: 'E', min_mark: 40, max_mark: 44.99, is_pass: 0, label: 'Poor' },
+        { grade_symbol: 'U', min_mark: 0,  max_mark: 39.99, is_pass: 0, label: 'Ungraded' }
       ]);
     }
   };
@@ -2712,7 +2665,7 @@ const ConfigTab = ({ schools = [] }) => {
                   <h4 className="text-xs font-bold text-ink/75 uppercase tracking-wider">System Type Settings</h4>
                   
                   <div>
-                    <label className="block text-[11px] font-semibold text-ink/65 mb-1">Grading Model *</label>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1.5">Grading Model *</label>
                     <select 
                       value={schoolType}
                       onChange={(e) => {
@@ -2722,26 +2675,28 @@ const ConfigTab = ({ schools = [] }) => {
                           loadDefaultThresholds(newType);
                         }
                       }}
-                      className="w-full glass-input rounded-lg text-xs"
+                      className="w-full glass-select rounded-xl text-xs font-medium"
                     >
-                      <option value="secondary">Secondary (A, B, C, D, E, U)</option>
-                      <option value="primary">Primary (1, 2, 3, 4, 5, 6, 7, 8, 9)</option>
+                      <option value="primary">Primary (1 - 9 Units & ECD Total Marks)</option>
+                      <option value="secondary">Secondary (O-Level: A, B, C, D, E, U)</option>
+                      <option value="high_school">High School (Ordinary & Advanced Level)</option>
                     </select>
                   </div>
 
-                  <div className="pt-2 flex flex-col gap-2">
+                  <div className="pt-2 flex flex-col gap-2.5">
                     <button
                       type="button"
                       onClick={() => loadDefaultThresholds(schoolType)}
-                      className="w-full py-2 border border-line-border hover:bg-sage/10 text-ink/80 rounded-xl text-xs font-semibold cursor-pointer flex items-center justify-center space-x-1.5"
+                      className="w-full btn-secondary text-xs py-2.5 rounded-xl shadow-xs flex items-center justify-center gap-2"
                     >
-                      <span>🔄 Load Default {schoolType === 'primary' ? 'Primary' : 'Secondary'} Scales</span>
+                      <RefreshCw className="w-3.5 h-3.5 text-brand-700" />
+                      <span>Load Default {schoolType === 'primary' ? 'Primary' : schoolType === 'high_school' ? 'High School' : 'Secondary'} Scales</span>
                     </button>
                     
                     <button
                       type="button"
                       onClick={handleAddThresholdRow}
-                      className="w-full py-2 bg-sage/25 hover:bg-sage/40 text-teal-dark rounded-xl text-xs font-semibold cursor-pointer flex items-center justify-center space-x-1.5"
+                      className="w-full btn-primary text-xs py-2.5 rounded-xl shadow-xs flex items-center justify-center gap-2"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Custom Row</span>

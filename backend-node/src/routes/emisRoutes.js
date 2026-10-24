@@ -53,7 +53,7 @@ router.get('/reports/emis/staffing', authenticateToken, requireRoles('head', 'de
   try {
     const schoolId = req.params.schoolId || req.user.school_id;
 
-    const staffSummary = await query(
+    let staffSummary = await query(
       `SELECT e.designation, d.name as department_name,
               COUNT(e.id) as count
        FROM employees e
@@ -62,6 +62,17 @@ router.get('/reports/emis/staffing', authenticateToken, requireRoles('head', 'de
        GROUP BY e.designation, d.name`,
       [schoolId]
     );
+
+    if (!staffSummary || staffSummary.length === 0) {
+      staffSummary = await query(
+        `SELECT role_title as designation, qualification, AVG(experience_years) as avg_experience,
+                COUNT(id) as count
+         FROM staff
+         WHERE school_id = ?
+         GROUP BY role_title, qualification`,
+        [schoolId]
+      );
+    }
 
     return res.json({
       data: {

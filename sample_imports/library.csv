@@ -1,0 +1,8 @@
+name,author,isbn,shelf_location,resource_type
+Step Ahead: O-Level Mathematics Student Book 3 & 4,M. Chitsike & P. Moyo,978-0-7974-1234-5,Bay 1 Shelf A,textbook
+Focus on Shona: New Curriculum Secondary O-Level,D. Mutasa,978-0-7974-5678-9,Bay 2 Shelf B,textbook
+Things Fall Apart (Heinemann African Writers Series),Chinua Achebe,978-0-3854-7454-2,Bay 4 Shelf C,fiction
+ZIMSEC Physical Science Past Examinations with Marking Schemes,ZIMSEC Editorial Board,978-1-9982-1111-0,Reference Bay Stack 1,past_paper
+Cambridge International AS and A Level Biology Coursebook,Mary Jones & Richard Fosbery,978-1-1076-3682-8,Bay 3 Shelf A,textbook
+
+#Stop-Process -Id 11912 -Force

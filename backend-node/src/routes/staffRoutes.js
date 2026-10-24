@@ -3,6 +3,14 @@ const router = express.Router({ mergeParams: true });
 const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
+const { broadcastInvalidation } = require('../services/realtime');
+const {
+  normalizeName,
+  normalizeEmail,
+  normalizePhone,
+  normalizeCode,
+  normalizeText
+} = require('../utils/normalizer');
 
 // GET /schools/:schoolId/staff
 router.get('/', authenticateToken, async (req, res) => {
@@ -72,60 +80,79 @@ router.get('/:id', authenticateToken, async (req, res) => {
 // POST /schools/:schoolId/staff
 router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-  const { schoolId } = req.params;
-    const { name, email, phone, role_title, class_id, username, password, subject_ids } = req.body;
+    const { schoolId } = req.params;
+    const { name, email, phone, role_title, class_id, username, password, subject_ids, qualification, experience_years, ec_number, employment_type } = req.body;
 
-    if (!name) {
+    const cleanName = normalizeName(name);
+    const cleanEmail = normalizeEmail(email);
+    const cleanPhone = normalizePhone(phone);
+    const cleanEcNumber = ec_number ? normalizeCode(ec_number) : null;
+    const cleanRoleTitle = role_title ? normalizeText(role_title) : 'Teacher';
+
+    if (!cleanName) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Full name is required.' } });
     }
 
-    // Auto-generate username from name if not provided
-    const baseUsername = (username?.trim()) ||
-      (email ? email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '') : null) ||
-      name.toLowerCase().replace(/\s+/g, '.').replace(/[^a-z0-9.]/g, '').substring(0, 20);
-    const finalUsername = baseUsername + (Math.random().toString(36).substr(2, 3));
+    // Determine final username (preserve provided username or build cleanly)
+    let finalUsername;
+    if (username && username.trim()) {
+      finalUsername = username.trim().toLowerCase();
+    } else {
+      const baseUsername = (cleanEmail ? cleanEmail.split('@')[0].replace(/[^a-z0-9]/g, '') : null) ||
+        cleanName.toLowerCase().replace(/\s+/g, '.').replace(/[^a-z0-9.]/g, '').substring(0, 20);
+      const exists = await queryOne('SELECT id FROM users WHERE username = ?', [baseUsername]);
+      finalUsername = exists ? (baseUsername + Math.random().toString(36).substr(2, 3)) : baseUsername;
+    }
 
     // Use provided password or generate a default one
     const finalPassword = password?.trim() || 'Password123!';
 
-    // Enforce email uniqueness across all staff and schools
-    if (email && email.trim()) {
-      const existingStaffEmail = await queryOne('SELECT id FROM staff WHERE LOWER(email) = ?', [email.trim().toLowerCase()]);
-      const existingUserEmail = await queryOne('SELECT id FROM users WHERE LOWER(email) = ?', [email.trim().toLowerCase()]);
+    // Enforce email uniqueness across all staff and users
+    if (cleanEmail) {
+      const existingStaffEmail = await queryOne('SELECT id FROM staff WHERE LOWER(email) = ?', [cleanEmail]);
+      const existingUserEmail = await queryOne('SELECT id FROM users WHERE LOWER(email) = ?', [cleanEmail]);
       if (existingStaffEmail || existingUserEmail) {
-        return res.status(400).json({ error: { code: 'DUPLICATE_EMAIL', message: `Email '${email}' is already registered by another staff member.` } });
+        return res.status(400).json({ error: { code: 'DUPLICATE_EMAIL', message: `Email '${cleanEmail}' is already registered by another staff member.` } });
       }
     }
 
-    // Check existing name in school
-    if (name && name.trim()) {
-      const existingName = await queryOne('SELECT id FROM staff WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, name.trim()]);
+    // Check existing name in school (case-insensitive & trimmed)
+    if (cleanName) {
+      const existingName = await queryOne('SELECT id FROM staff WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, cleanName]);
       if (existingName) {
-        return res.status(409).json({ error: { code: 'DUPLICATE', message: `Staff member '${name.trim()}' is already registered in this school.` } });
+        return res.status(409).json({ error: { code: 'DUPLICATE', message: `Staff member '${cleanName}' is already registered in this school.` } });
       }
     }
 
     // Check existing username
     const existingUser = await queryOne('SELECT id FROM users WHERE username = ?', [finalUsername]);
     if (existingUser) {
-      return res.status(400).json({ error: { code: 'DUPLICATE_USERNAME', message: 'Username already taken. Please provide a custom username.' } });
+      return res.status(400).json({ error: { code: 'DUPLICATE_USERNAME', message: `Username '${finalUsername}' is already taken. Please choose another username.` } });
     }
-
 
     const userId = 'USR' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const staffId = 'STF' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const passHash = bcrypt.hashSync(finalPassword, 10);
 
+    // Determine account role based on role_title
+    const titleLower = cleanRoleTitle.toLowerCase();
+    const isLeadership = titleLower.includes('principal') || 
+                         titleLower.includes('head') || 
+                         titleLower.includes('admin') ||
+                         titleLower.includes('deputy');
+    const userRole = req.body.role || (isLeadership ? 'school_admin' : 'teacher');
+
     // Create user login account
     await query(
-      `INSERT INTO users (id, school_id, username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, 'teacher', 'active')`,
-      [userId, schoolId, finalUsername, email || null, passHash]
+      `INSERT INTO users (id, school_id, username, email, password_hash, role, name, phone, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [userId, schoolId, finalUsername, cleanEmail || null, passHash, userRole, cleanName, cleanPhone || null]
     );
 
-    // Create staff record
+    // Create staff record with qualification and experience
     await query(
-      `INSERT INTO staff (id, school_id, user_id, class_id, name, email, phone, role_title, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [staffId, schoolId, userId, class_id || null, name.trim(), email || null, phone || null, role_title || 'Teacher']
+      `INSERT INTO staff (id, school_id, user_id, class_id, name, email, phone, role_title, qualification, experience_years, ec_number, employment_type, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+      [staffId, schoolId, userId, class_id || null, cleanName, cleanEmail || null, cleanPhone || null, cleanRoleTitle, qualification ? normalizeText(qualification) : null, experience_years ? parseInt(experience_years) : null, cleanEcNumber, employment_type || 'permanent']
     );
 
     // If subject_ids provided, create teaching_assignments (no class_id required here — class can be assigned later via timetable)
@@ -162,6 +189,10 @@ router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'),
       [staffId]
     );
 
+    try {
+      broadcastInvalidation(schoolId, ['staff', 'classes', 'users'], 'staff_created');
+    } catch (_) {}
+
     // Return the generated credentials so admin can share them
     return res.status(201).json({
       data: {
@@ -180,7 +211,7 @@ router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'),
 const handleUpdateStaff = async (req, res) => {
   try {
     const { schoolId, id } = req.params;
-    const { name, email, phone, role_title, class_id, status } = req.body;
+    const { name, email, phone, role_title, class_id, status, qualification, experience_years, ec_number, employment_type } = req.body;
 
     const updates = [];
     const params = [];
@@ -191,6 +222,10 @@ const handleUpdateStaff = async (req, res) => {
     if (role_title) { updates.push('role_title = ?'); params.push(role_title.trim()); }
     if (class_id !== undefined) { updates.push('class_id = ?'); params.push(class_id); }
     if (status) { updates.push('status = ?'); params.push(status); }
+    if (qualification !== undefined) { updates.push('qualification = ?'); params.push(qualification); }
+    if (experience_years !== undefined) { updates.push('experience_years = ?'); params.push(experience_years ? parseInt(experience_years) : null); }
+    if (ec_number !== undefined) { updates.push('ec_number = ?'); params.push(ec_number); }
+    if (employment_type !== undefined) { updates.push('employment_type = ?'); params.push(employment_type); }
 
     if (updates.length > 0) {
       params.push(id, schoolId);
@@ -204,6 +239,10 @@ const handleUpdateStaff = async (req, res) => {
         }
       }
     }
+
+    try {
+      broadcastInvalidation(schoolId, ['staff', 'classes', 'users'], 'staff_updated');
+    } catch (_) {}
 
     const updated = await queryOne('SELECT * FROM staff WHERE id = ?', [id]);
     return res.json({ data: updated });
@@ -234,6 +273,11 @@ router.post('/bulk-delete', authenticateToken, requireRoles('school_admin', 'sup
       const uPlaceholders = userIds.map(() => '?').join(',');
       await query(`DELETE FROM users WHERE id IN (${uPlaceholders})`, userIds);
     }
+
+    try {
+      broadcastInvalidation(schoolId, ['staff', 'classes', 'users'], 'staff_deleted');
+    } catch (_) {}
+
     return res.json({ data: { message: `Successfully deleted ${staff_ids.length} staff records.` } });
   } catch (err) {
     console.error('Bulk delete staff error:', err);
@@ -251,6 +295,10 @@ router.delete('/:id', authenticateToken, requireRoles('school_admin', 'super_adm
     if (staff && staff.user_id) {
       await query('DELETE FROM users WHERE id = ?', [staff.user_id]);
     }
+
+    try {
+      broadcastInvalidation(schoolId, ['staff', 'classes', 'users'], 'staff_deleted');
+    } catch (_) {}
 
     return res.json({ data: { message: 'Staff member and account removed successfully.' } });
   } catch (err) {

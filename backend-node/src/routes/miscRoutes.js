@@ -3,11 +3,21 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
+const { broadcastInvalidation } = require('../services/realtime');
 
 // GET /schools
 router.get('/schools', async (req, res) => {
   try {
-    const schools = await query('SELECT * FROM schools ORDER BY name ASC');
+    const schools = await query(`
+      SELECT s.*, 
+        (SELECT COUNT(*) FROM students st WHERE st.school_id = s.id AND (st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out') OR st.status IS NULL)) as student_count,
+        (SELECT COUNT(*) FROM staff sf WHERE sf.school_id = s.id) as staff_count,
+        COALESCE((SELECT SUM(amount_due) FROM fees f WHERE f.school_id = s.id), 0) as total_billed,
+        COALESCE((SELECT SUM(amount_paid) FROM fees f WHERE f.school_id = s.id), 0) as total_collected,
+        COALESCE(ROUND((SELECT SUM(amount_paid) FROM fees f WHERE f.school_id = s.id) / NULLIF((SELECT SUM(amount_due) FROM fees f WHERE f.school_id = s.id), 0) * 100), 0) as collection_rate
+      FROM schools s
+      ORDER BY s.name ASC
+    `);
     return res.json({ data: schools });
   } catch (err) {
     console.error('Get schools error:', err);
@@ -44,9 +54,20 @@ router.get('/schools/:schoolId/attendance', authenticateToken, async (req, res) 
     let sql = 'SELECT a.*, st.first_name, st.last_name, st.admission_number FROM attendance a JOIN students st ON a.student_id = st.id WHERE a.school_id = ?';
     const params = [schoolId];
     if (date) { sql += ' AND a.date = ?'; params.push(date); }
-    if (class_id) { sql += ' AND st.class_id = ?'; params.push(class_id); }
+    if (class_id) { sql += ' AND (st.class_id = ? OR a.class_id = ?)'; params.push(class_id, class_id); }
     const attendance = await query(sql, params);
-    return res.json({ data: attendance });
+
+    let submission = null;
+    if (class_id && date) {
+      try {
+        submission = await queryOne(
+          'SELECT * FROM attendance_submissions WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?',
+          [schoolId, class_id, date, req.query.session || 'full_day']
+        );
+      } catch (_) {}
+    }
+
+    return res.json({ data: attendance, submission });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch attendance.' } });
   }
@@ -56,38 +77,95 @@ router.get('/schools/:schoolId/attendance', authenticateToken, async (req, res) 
 router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { date, session, entries, synced_at } = req.body;
-    if (!entries || !Array.isArray(entries)) {
+    const { date, session, entries, records, class_id, synced_at, submit_to_admin, notes } = req.body;
+    const targetEntries = entries || records;
+    if (!targetEntries || !Array.isArray(targetEntries)) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Attendance entries array is required.' } });
     }
 
     const recordDate = date || new Date().toISOString().slice(0, 10);
+    const resolvedSession = session || 'full_day';
     const conflicts = [];
-    for (const entry of entries) {
+    for (const entry of targetEntries) {
       if (entry.student_id) {
-        const attId = 'ATT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-        const existing = await queryOne('SELECT id, version FROM attendance WHERE school_id = ? AND student_id = ? AND date = ? AND COALESCE(session, \'full_day\') = ?', [schoolId, entry.student_id, recordDate, session || entry.session || 'full_day']);
+        const attId = 'ATT' + Math.random().toString(36).substr(2, 6).toUpperCase();
+        const studentClassId = entry.class_id || class_id || (await queryOne('SELECT class_id FROM students WHERE id = ?', [entry.student_id]))?.class_id || null;
+        const existing = await queryOne('SELECT id, version FROM attendance WHERE school_id = ? AND student_id = ? AND date = ? AND COALESCE(session, \'full_day\') = ?', [schoolId, entry.student_id, recordDate, entry.session || resolvedSession]);
         const expectedVersion = entry.expected_version == null ? null : Number(entry.expected_version);
         if (existing && expectedVersion !== null && Number(existing.version || 1) !== expectedVersion) {
           conflicts.push({ student_id: entry.student_id, server_version: Number(existing.version || 1), client_version: expectedVersion });
           continue;
         }
         if (existing) {
-          await query('UPDATE attendance SET status = ?, remarks = ?, recorded_by = ?, version = version + 1, synced_at = ? WHERE id = ?', [entry.status || 'present', entry.remarks || null, req.user.id, synced_at || new Date(), existing.id]);
+          await query('UPDATE attendance SET status = ?, remarks = ?, taken_by = ?, recorded_by = ?, version = version + 1, synced_at = ? WHERE id = ?', [entry.status || 'present', entry.remarks || null, req.user.id, req.user.id, synced_at || new Date(), existing.id]);
         } else {
-          await query(`INSERT INTO attendance (id, school_id, student_id, date, session, status, remarks, recorded_by, client_uuid, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [attId, schoolId, entry.student_id, recordDate, session || entry.session || 'full_day', entry.status || 'present', entry.remarks || null, req.user.id, entry.client_uuid || null, synced_at || new Date()]);
+          await query(`INSERT INTO attendance (id, school_id, student_id, class_id, date, session, status, remarks, taken_by, recorded_by, client_uuid, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [attId, schoolId, entry.student_id, studentClassId, recordDate, entry.session || resolvedSession, entry.status || 'present', entry.remarks || null, req.user.id, req.user.id, entry.client_uuid || null, synced_at || new Date()]);
         }
       }
     }
     if (conflicts.length) return res.status(409).json({ error: { code: 'STALE_VERSION', message: 'Some attendance records changed before synchronization.', fields: { conflicts } }, request_id: req.requestId });
-    return res.json({ data: { message: `Attendance saved for ${entries.length} students.` } });
+
+    // Handle submission to Principal / Administration
+    let submissionRecord = null;
+    if (submit_to_admin && class_id) {
+      const subId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+      const teacherName = req.user.name || req.user.username || 'Class Teacher';
+      try {
+        await query(`
+          INSERT INTO attendance_submissions (id, school_id, class_id, date, session, submitted_by, teacher_name, submitted_to, status, notes, submitted_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'admin', 'submitted', ?, NOW())
+          ON DUPLICATE KEY UPDATE submitted_by = VALUES(submitted_by), teacher_name = VALUES(teacher_name), status = 'submitted', submitted_at = NOW(), notes = VALUES(notes)
+        `, [subId, schoolId, class_id, recordDate, resolvedSession, req.user.id, teacherName, notes || null]);
+
+        // Create alert notification for school administrators
+        const notifId = 'NOT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+        const classObj = await queryOne('SELECT name FROM classes WHERE id = ?', [class_id]);
+        const className = classObj?.name || 'Class';
+        await query(`
+          INSERT INTO notifications (id, school_id, user_id, title, message, is_read, target_role, sender_id, sender_name, type)
+          VALUES (?, ?, NULL, ?, ?, 0, 'school_admin', ?, ?, 'attendance_submitted')
+        `, [
+          notifId,
+          schoolId,
+          `Attendance Register Submitted: ${className}`,
+          `${teacherName} marked and submitted the daily attendance register for ${className} on ${recordDate}.`,
+          req.user.id,
+          teacherName
+        ]);
+        submissionRecord = await queryOne('SELECT * FROM attendance_submissions WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?', [schoolId, class_id, recordDate, resolvedSession]);
+      } catch (subErr) {
+        console.warn('Attendance submission recording warning:', subErr.message);
+      }
+    }
+
+    // Live real-time broadcast across all school terminals
+    broadcastInvalidation(schoolId, ['attendance', 'att_matrix', 'student_profile', 'dashboard', 'summary'], 'attendance_taken');
+
+    return res.json({ data: { message: `Attendance saved for ${targetEntries.length} students.`, submission: submissionRecord } });
   } catch (err) {
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save attendance.' } });
+    console.error('Save attendance error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save attendance: ' + err.message } });
+  }
+});
+
+// POST /schools/:schoolId/attendance/verify
+router.post('/schools/:schoolId/attendance/verify', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { class_id, date, session } = req.body;
+    await query(`
+      UPDATE attendance_submissions 
+      SET status = 'verified', verified_by = ?, verified_at = NOW()
+      WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?
+    `, [req.user.id, schoolId, class_id, date, session || 'full_day']);
+    return res.json({ data: { message: 'Register verified and approved.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message } });
   }
 });
 
 // GET /schools/:schoolId/expenses
-router.get('/schools/:schoolId/expenses', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.get('/schools/:schoolId/expenses', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
     const expenses = await query('SELECT * FROM expenses WHERE school_id = ? ORDER BY expense_date DESC', [schoolId]);
@@ -127,7 +205,7 @@ router.get('/schools/:schoolId/expenses', authenticateToken, requireRoles('schoo
 });
 
 // POST /schools/:schoolId/expenses
-router.post('/schools/:schoolId/expenses', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.post('/schools/:schoolId/expenses', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
     const { title, category, amount, payment_method, expense_date, notes } = req.body;
@@ -141,6 +219,9 @@ router.post('/schools/:schoolId/expenses', authenticateToken, requireRoles('scho
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [expId, schoolId, title.trim(), validCategory, parseFloat(amount), expense_date || new Date().toISOString().slice(0, 10), notes || null, payment_method || null, req.user.id]
     );
+
+    broadcastInvalidation(schoolId, ['expenses', 'dashboard', 'summary'], 'expense_recorded');
+
     const created = await queryOne('SELECT * FROM expenses WHERE id = ?', [expId]);
     return res.status(201).json({ data: created });
   } catch (err) {

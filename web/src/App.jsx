@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import Home from './pages/Home';
+import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Students from './pages/Students';
 import StudentProfile from './pages/StudentProfile';
@@ -51,7 +52,22 @@ import ZimsecBoard from './pages/ZimsecBoard';
 import BoardingExeat from './pages/BoardingExeat';
 import EmisReturns from './pages/EmisReturns';
 
-// Protected Route wrapper component
+// Clean role helper to determine home landing path
+export function getHomeRoute(user) {
+  if (!user) return '/login';
+  const role = (user.role || '').toLowerCase().trim();
+  if (role === 'super_admin') return '/admin/command-center';
+  if (['school_admin', 'admin', 'principal', 'head', 'deputy_head', 'headmaster'].includes(role)) return '/school-admin/dashboard';
+  if (['teacher', 'hod', 'faculty', 'instructor'].includes(role)) return '/teacher/dashboard';
+  if (['parent', 'guardian'].includes(role)) return '/parent-portal';
+  if (['student', 'learner', 'pupil'].includes(role)) return '/student/dashboard';
+  if (['bursar', 'accountant'].includes(role)) return '/fees';
+  if (['boarding_master', 'warden', 'matron', 'hostel_master'].includes(role)) return '/boarding/exeats';
+  if (['nurse', 'doctor', 'medic'].includes(role)) return '/health-records';
+  return '/dashboard';
+}
+
+// Protected Route wrapper component — removes restricted pages silently instead of showing 403
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
 
@@ -70,8 +86,21 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/login" replace />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/403" replace />;
+  const userRole = (user.role || '').toLowerCase().trim();
+  const isAdmin = ['super_admin', 'school_admin', 'admin', 'principal', 'head', 'deputy_head', 'headmaster'].includes(userRole);
+
+  if (allowedRoles && allowedRoles.length > 0) {
+    const isAllowed = 
+      userRole === 'super_admin' ||
+      allowedRoles.includes(userRole) ||
+      (isAdmin && (allowedRoles.includes('school_admin') || allowedRoles.includes('head')));
+
+    if (!isAllowed) {
+      // Instead of loading error 403, silently remove the page for unprivileged users
+      // by redirecting them directly to their designated workspace
+      const destination = getHomeRoute(user);
+      return <Navigate to={destination} replace />;
+    }
   }
 
   return children;
@@ -89,27 +118,27 @@ const LayoutShell = ({ children }) => {
 
   if (isExpired && user?.role !== 'super_admin' && !isLicensePage) {
     return (
-      <div className="min-h-screen bg-paper flex text-ink">
+      <div className="min-h-screen bg-canvas flex text-ink">
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-        <main className="flex-1 md:ml-[272px] ml-0 min-h-screen bg-brick-critical/5 flex items-center justify-center p-8">
-          <div className="max-w-md w-full glass-panel rounded-2xl p-8 border border-brick-critical/20 shadow-2xl text-center space-y-6 animate-fadeIn">
-            <div className="w-16 h-16 rounded-2xl bg-brick-critical/10 flex items-center justify-center mx-auto text-brick-critical">
+        <main className="flex-1 lg:ml-[260px] ml-0 min-h-screen bg-danger/5 flex items-center justify-center p-4 sm:p-8">
+          <div className="max-w-md w-full glass-panel rounded-2xl p-6 sm:p-8 border border-danger/20 shadow-2xl text-center space-y-6 animate-fadeIn">
+            <div className="w-16 h-16 rounded-2xl bg-danger/10 flex items-center justify-center mx-auto text-danger">
               <AlertTriangle className="w-8 h-8" />
             </div>
             <div>
               <h2 className="text-2xl font-display font-bold text-ink">School License Expired</h2>
-              <p className="text-sm font-sans text-ink/65 mt-3 leading-relaxed">
+              <p className="text-sm font-sans text-muted mt-3 leading-relaxed">
                 Your school's access license has expired and the grace period has ended. 
                 Most essential operations have been suspended. 
                 Please ask your school administrator to contact system support or renew the license key.
               </p>
             </div>
-            <div className="border-t border-line-border/30 pt-6 flex justify-center space-x-3">
+            <div className="border-t border-line pt-6 flex justify-center space-x-3">
               <button 
                 onClick={() => {
                   window.location.href = '/school-admin/license';
                 }}
-                className="px-5 py-2.5 bg-teal-primary text-white rounded-xl text-xs font-semibold cursor-pointer font-sans shadow"
+                className="px-5 py-2.5 bg-brand-700 text-white rounded-xl text-xs font-semibold cursor-pointer font-sans shadow hover:bg-brand-900 transition-colors"
               >
                 View License desk
               </button>
@@ -118,7 +147,7 @@ const LayoutShell = ({ children }) => {
                   sessionStorage.clear();
                   window.location.replace('/login');
                 }}
-                className="px-5 py-2.5 bg-ink text-paper rounded-xl text-xs font-semibold cursor-pointer font-sans shadow"
+                className="px-5 py-2.5 bg-ink text-surface rounded-xl text-xs font-semibold cursor-pointer font-sans shadow hover:opacity-90 transition-opacity"
               >
                 Log Out
               </button>
@@ -130,23 +159,10 @@ const LayoutShell = ({ children }) => {
   }
 
   return (
-    <div className="min-h-screen bg-paper flex text-ink">
-      {/* Mobile Header Bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-paper border-b border-line-border/30 px-6 flex items-center justify-between z-20">
-        <span className="font-display font-bold text-ink">
-          School<span className="text-teal-primary">Base</span>
-        </span>
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="p-2 hover:bg-sage/10 rounded-xl text-ink cursor-pointer"
-        >
-          <Menu className="w-6 h-6" />
-        </button>
-      </div>
-
+    <div className="min-h-screen bg-canvas flex text-ink overflow-x-hidden">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       
-      <main className="flex-1 md:ml-[272px] ml-0 min-h-screen bg-sage/5 overflow-y-auto pt-16 md:pt-0">
+      <main className="flex-1 lg:ml-[260px] ml-0 min-h-screen bg-canvas overflow-y-auto w-full min-w-0 transition-all">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         <SyncStatus />
         <ErrorBoundary>
@@ -168,7 +184,7 @@ function AppRoutes() {
       {/* Public: Login */}
       <Route
         path="/login"
-        element={user ? <Navigate to={user.role === 'super_admin' ? '/admin/command-center' : '/dashboard'} replace /> : <Home preOpenLogin={true} />}
+        element={user ? <Navigate to={user.role === 'super_admin' ? '/admin/command-center' : '/dashboard'} replace /> : <Login />}
       />
 
       {/* Public: Password Reset requests */}
@@ -211,15 +227,23 @@ function AppRoutes() {
       <Route
         path="/dashboard"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
+          <ProtectedRoute>
             {user?.role === 'super_admin' ? (
               <Navigate to="/admin/command-center" replace />
-            ) : user?.role === 'school_admin' ? (
+            ) : ['school_admin', 'head', 'deputy_head', 'admin', 'principal', 'headmaster'].includes((user?.role || '').toLowerCase().trim()) ? (
               <Navigate to="/school-admin/dashboard" replace />
-            ) : user?.role === 'teacher' ? (
+            ) : ['teacher', 'hod', 'faculty', 'instructor'].includes((user?.role || '').toLowerCase().trim()) ? (
               <Navigate to="/teacher/dashboard" replace />
-            ) : (
+            ) : ['bursar', 'accountant'].includes((user?.role || '').toLowerCase().trim()) ? (
+              <Navigate to="/fees" replace />
+            ) : ['boarding_master', 'warden', 'matron'].includes((user?.role || '').toLowerCase().trim()) ? (
+              <Navigate to="/boarding/exeats" replace />
+            ) : ['nurse', 'doctor', 'medic'].includes((user?.role || '').toLowerCase().trim()) ? (
+              <Navigate to="/health-records" replace />
+            ) : ['parent', 'guardian'].includes((user?.role || '').toLowerCase().trim()) ? (
               <Navigate to="/parent/dashboard" replace />
+            ) : (
+              <Navigate to="/student/dashboard" replace />
             )}
           </ProtectedRoute>
         }
@@ -273,7 +297,7 @@ function AppRoutes() {
       <Route
         path="/students"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'super_admin']}>
             <LayoutShell>
               <Students />
             </LayoutShell>
@@ -285,7 +309,7 @@ function AppRoutes() {
       <Route
         path="/students/:id"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'super_admin']}>
             <LayoutShell>
               <StudentProfile />
             </LayoutShell>
@@ -297,7 +321,7 @@ function AppRoutes() {
       <Route
         path="/attendance"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'student', 'super_admin']}>
             <LayoutShell>
               <Attendance />
             </LayoutShell>
@@ -321,7 +345,7 @@ function AppRoutes() {
       <Route
         path="/results"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'student', 'super_admin']}>
             <LayoutShell>
               <Results />
             </LayoutShell>
@@ -333,7 +357,7 @@ function AppRoutes() {
       <Route
         path="/fees"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'parent', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'bursar', 'parent', 'student', 'super_admin']}>
             <LayoutShell>
               <Fees />
             </LayoutShell>
@@ -413,16 +437,10 @@ function AppRoutes() {
         }
       />
 
-      {/* Announcements */}
+      {/* Announcements bundled in notification hub */}
       <Route
         path="/announcements"
-        element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
-            <LayoutShell>
-              <Announcements />
-            </LayoutShell>
-          </ProtectedRoute>
-        }
+        element={<Navigate to="/notifications?tab=announcements" replace />}
       />
 
       {/* Timetable */}
@@ -441,7 +459,7 @@ function AppRoutes() {
       <Route
         path="/user-management"
         element={
-          <ProtectedRoute allowedRoles={['super_admin']}>
+          <ProtectedRoute allowedRoles={['super_admin', 'school_admin']}>
             <LayoutShell>
               <UserManagement />
             </LayoutShell>
@@ -485,16 +503,10 @@ function AppRoutes() {
         }
       />
 
-      {/* Notifications settings */}
+      {/* Notifications and unified chats */}
       <Route
         path="/messages"
-        element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin', 'student', 'head', 'hod']}>
-            <LayoutShell>
-              <Messages />
-            </LayoutShell>
-          </ProtectedRoute>
-        }
+        element={<Navigate to="/notifications?tab=chats" replace />}
       />
       <Route
         path="/notifications"
@@ -546,13 +558,13 @@ function AppRoutes() {
       <Route path="/admin/library" element={<ProtectedRoute allowedRoles={['librarian', 'school_admin', 'super_admin']}><LayoutShell><Library /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/boarding" element={<ProtectedRoute allowedRoles={['boarding_master', 'school_admin', 'super_admin']}><LayoutShell><Hostels /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={['head', 'school_admin', 'super_admin']}><LayoutShell><Dashboard /></LayoutShell></ProtectedRoute>} />
-      <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['super_admin']}><LayoutShell><UserManagement /></LayoutShell></ProtectedRoute>} />
+      <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['super_admin', 'school_admin']}><LayoutShell><UserManagement /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/staff/:id" element={<ProtectedRoute allowedRoles={['school_admin', 'super_admin']}><LayoutShell><Staff /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/academics/:section" element={<ProtectedRoute allowedRoles={['head', 'school_admin', 'super_admin']}><LayoutShell><AcademicsSetup /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/admissions" element={<ProtectedRoute allowedRoles={['school_admin', 'head', 'super_admin']}><LayoutShell><Enquiries /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/announcements" element={<ProtectedRoute allowedRoles={['school_admin', 'head', 'super_admin']}><LayoutShell><Announcements /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/calendar" element={<ProtectedRoute allowedRoles={['school_admin', 'head', 'super_admin']}><LayoutShell><Timetable /></LayoutShell></ProtectedRoute>} />
-      <Route path="/403" element={<LayoutShell><StatusPage code={403} /></LayoutShell>} />
+      <Route path="/403" element={<Navigate to="/dashboard" replace />} />
       <Route path="/404" element={<LayoutShell><StatusPage code={404} /></LayoutShell>} />
 
       {/* System Administration & Tasks */}
@@ -579,7 +591,7 @@ function AppRoutes() {
       <Route
         path="/classes"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'super_admin']}>
             <LayoutShell>
               <Classes />
             </LayoutShell>
@@ -589,7 +601,7 @@ function AppRoutes() {
       <Route
         path="/hostels"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'boarding_master', 'super_admin']}>
             <LayoutShell>
               <Hostels />
             </LayoutShell>
@@ -599,7 +611,7 @@ function AppRoutes() {
       <Route
         path="/expenses"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'bursar', 'super_admin']}>
             <LayoutShell>
               <Expenses />
             </LayoutShell>
@@ -619,7 +631,7 @@ function AppRoutes() {
       <Route
         path="/leave-requests"
         element={
-          <ProtectedRoute allowedRoles={['parent', 'teacher', 'school_admin', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['teacher', 'school_admin', 'super_admin']}>
             <LayoutShell>
               <LeaveRequests />
             </LayoutShell>
@@ -659,7 +671,7 @@ function AppRoutes() {
       <Route
         path="/boarding/exeats"
         element={
-          <ProtectedRoute allowedRoles={['boarding_master', 'head', 'deputy_head', 'school_admin', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['boarding_master', 'head', 'deputy_head', 'school_admin', 'parent', 'super_admin']}>
             <LayoutShell>
               <BoardingExeat />
             </LayoutShell>

@@ -110,6 +110,12 @@ function requireRoles(...allowedRoles) {
       return next(); // Super Admin has access to all routes
     }
 
+    // Recognize administrative aliases for school administration
+    const adminRoles = ['school_admin', 'principal', 'head', 'headmaster', 'deputy_head', 'admin'];
+    if (allowedRoles.includes('school_admin') && adminRoles.includes(req.user.role)) {
+      return next();
+    }
+
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({
         error: { code: 'ACCESS_DENIED', message: `Role '${req.user.role}' is not authorized for this operation.` }

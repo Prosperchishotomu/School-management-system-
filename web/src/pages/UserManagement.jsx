@@ -1,494 +1,470 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
-import { Users, Plus, X, Loader2, Shield, Trash2, KeyRound, AlertTriangle, Eye, EyeOff, Ban, CheckCircle2 } from 'lucide-react';
+import { useApi, invalidate } from '../data';
+import {
+  PageHeader, KpiStrip, StatCard, Card, DataTable, StatusPill,
+  Avatar, Modal, FilterChips, ConfirmDialog, EmptyState
+} from '../components/ui';
+import {
+  Users, Plus, Shield, KeyRound, Ban, CheckCircle2, Copy,
+  Eye, EyeOff, Search, Lock, UserCheck
+} from 'lucide-react';
 
+const ROLES = [
+  { id: '', label: 'All Roles' },
+  { id: 'teacher', label: 'Teachers' },
+  { id: 'parent', label: 'Parents' },
+  { id: 'school_admin', label: 'Administrators' },
+  { id: 'bursar', label: 'Bursars' },
+  { id: 'student', label: 'Students' },
+];
 
-const ROLE_STYLES = {
-  school_admin: 'bg-purple-100 text-purple-700',
-  teacher:      'bg-teal-100 text-teal-700',
-  parent:       'bg-amber-100 text-amber-700',
-  super_admin:  'bg-red-100 text-red-700',
-};
-
-const UserManagement = () => {
+export default function UserManagement() {
   const { activeSchoolId, user } = useAuth();
   const toast = useToast();
 
-  const [users, setUsers] = useState([]);
-  const [classes, setClasses] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
-  const [selectedUserIds, setSelectedUserIds] = useState([]);
-
-
+  const [searchQuery, setSearchQuery] = useState('');
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({
-    username: '', email: '', password: '', role: 'teacher',
-    name: '', phone: '', class_id: '', student_id: '', relation: 'Father'
-  });
-  const [formLoading, setFormLoading] = useState(false);
-  const [formError, setFormError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  // Password reset modal state
+  // Password reset modal
   const [showResetModal, setShowResetModal] = useState(false);
-  const [resetUser, setResetUser]           = useState(null);
-  const [resetPassword, setResetPassword]   = useState('');
-  const [resetLoading, setResetLoading]     = useState(false);
-  const [resetError, setResetError]         = useState('');
-  const [resetSuccess, setResetSuccess]     = useState('');
-  // Credential display after creation
-  const [createdCreds, setCreatedCreds]     = useState(null);
+  const [resetUser, setResetUser] = useState(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetting, setResetting] = useState(false);
 
-  const [showCreatePassword, setShowCreatePassword] = useState(false);
-  const [showResetPasswordVal, setShowResetPasswordVal] = useState(false);
+  // New user credentials display
+  const [createdCreds, setCreatedCreds] = useState(null);
 
-  const fetchUsers = () => {
-    if (!activeSchoolId) return;
-    setLoading(true);
-    api.get(`/schools/${activeSchoolId}/users?role=${roleFilter}`)
-      .then(res => { setUsers(res.data || []); setError(''); })
-      .catch(() => { setUsers([]); setError('Could not load users.'); })
-      .finally(() => setLoading(false));
-  };
+  // Form state
+  const [form, setForm] = useState({
+    username: '',
+    email: '',
+    password: '',
+    role: 'teacher',
+    name: '',
+    phone: '',
+    student_id: ''
+  });
 
-  useEffect(() => {
-    fetchUsers();
-  }, [activeSchoolId, roleFilter]);
+  const { data: usersData, loading: loadingUsers } = useApi(
+    `users_${activeSchoolId}_${roleFilter}`,
+    () => api.get(`/schools/${activeSchoolId}/users?role=${roleFilter}`).then(r => r.data || []),
+    { deps: [activeSchoolId, roleFilter] }
+  );
 
-  // Fetch support data for class/student selectors
-  useEffect(() => {
-    if (!activeSchoolId) return;
-    api.get(`/schools/${activeSchoolId}/classes`)
-      .then(res => setClasses(res.data || []))
-      .catch(() => {});
-    
-    // Fetch students list (simplified, no pagination, for link dropdown)
-    api.get(`/schools/${activeSchoolId}/students?per_page=1000`)
-      .then(res => setStudents(res.data || []))
-      .catch(() => {});
-  }, [activeSchoolId]);
+  const { data: studentsData } = useApi(
+    `students_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/students`).then(r => r.data?.students || r.data || []),
+    { deps: [activeSchoolId] }
+  );
 
-  const handleCreate = async (e) => {
+  const { data: schoolsData } = useApi(
+    'all_schools_for_user_mgmt',
+    () => api.get('/schools').then(r => r.data || [])
+  );
+  const schools = Array.isArray(schoolsData) ? schoolsData : [];
+
+  const rawUsers = Array.isArray(usersData) ? usersData : [];
+  const students = Array.isArray(studentsData) ? studentsData : [];
+
+  const users = useMemo(() => {
+    return rawUsers.filter(u => {
+      return !searchQuery ||
+        u.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.email?.toLowerCase().includes(searchQuery.toLowerCase());
+    });
+  }, [rawUsers, searchQuery]);
+
+  // KPIs
+  const totalUsers = rawUsers.length;
+  const teacherCount = rawUsers.filter(u => u.role === 'teacher').length;
+  const parentCount = rawUsers.filter(u => u.role === 'parent').length;
+  const adminCount = rawUsers.filter(u => u.role === 'school_admin' || u.role === 'super_admin').length;
+
+  const handleCreateUser = async (e) => {
     e.preventDefault();
-    setFormLoading(true);
-    setFormError('');
+    setSubmitting(true);
     try {
-      const res = await api.post(`/schools/${activeSchoolId}/users`, {
-        ...form,
-        student_id: form.student_id || undefined
-      });
+      const targetSchool = form.school_id || activeSchoolId;
+      const res = await api.post(`/schools/${targetSchool}/users`, form);
+      toast.success(`User account created for ${form.name || form.username}.`);
+      setCreatedCreds({ username: form.username, password: form.password });
       setShowModal(false);
-      setForm({
-        username: '', email: '', password: '', role: 'teacher',
-        name: '', phone: '', class_id: '', student_id: '', relation: 'Father'
-      });
-      fetchUsers();
-      // Show credential card to admin
-      if (res.credentials) {
-        setCreatedCreds(res.credentials);
-      }
+      setForm({ username: '', email: '', password: '', role: 'school_admin', name: '', phone: '', student_id: '', school_id: activeSchoolId });
+      invalidate(`users_${activeSchoolId}`);
     } catch (err) {
-      setFormError(err.message || 'Failed to create user.');
+      toast.error(err.response?.data?.message || 'Failed to create user account.');
     } finally {
-      setFormLoading(false);
-    }
-  };
-
-  const handleDeactivate = async (userId) => {
-    const target = users.find(u => u.id === userId);
-    const nextActive = !target?.is_active;
-    try {
-      await api.patch(`/schools/${activeSchoolId}/users/${userId}`, { is_active: nextActive });
-      toast.success(nextActive ? `${target?.name || 'User'} account activated.` : `${target?.name || 'User'} account suspended.`);
-      fetchUsers();
-    } catch (err) {
-      toast.error(err.message || 'Failed to update user status.');
+      setSubmitting(false);
     }
   };
 
   const handleResetPassword = async (e) => {
     e.preventDefault();
-    setResetError(''); setResetSuccess('');
-    if (resetPassword.length < 8) {
-      setResetError('Password must be at least 8 characters.');
-      return;
-    }
-    setResetLoading(true);
+    if (!resetUser || !newPassword) return;
+    setResetting(true);
     try {
-      await api.post(`/schools/${activeSchoolId}/users/${resetUser.id}/reset-password`, {
-        password: resetPassword
-      });
-      toast.success(`Password reset successfully for ${resetUser?.username}.`);
-      setResetPassword('');
+      await api.patch(`/schools/${activeSchoolId}/users/${resetUser.id}/password`, { password: newPassword });
+      toast.success(`Password reset for ${resetUser.username}.`);
       setShowResetModal(false);
-      setResetSuccess('');
+      setResetUser(null);
+      setNewPassword('');
     } catch (err) {
-      setResetError(err.message || 'Failed to reset password.');
+      toast.error('Failed to reset password.');
     } finally {
-      setResetLoading(false);
+      setResetting(false);
     }
   };
 
-
-  if (!activeSchoolId) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center min-h-[80vh] text-center">
-        <AlertTriangle className="w-16 h-16 text-amber-warning mb-4" />
-        <h2 className="text-2xl font-display font-bold text-ink">No Active School Selected</h2>
-        <p className="text-ink/60 max-w-md mt-2 font-sans text-sm">Select a school from the sidebar switcher to manage its user profiles.</p>
-      </div>
-    );
-  }
+  const copyCreds = () => {
+    if (!createdCreds) return;
+    navigator.clipboard.writeText(`Username: ${createdCreds.username}\nPassword: ${createdCreds.password}`);
+    toast.success('Credentials copied to clipboard.');
+  };
 
   return (
-    <div className="module-page user-management-page p-8 max-w-7xl mx-auto space-y-8 animate-fadeIn">
-      <div className="flex justify-between items-center border-b border-line-border/30 pb-4">
-        <div>
-          <h2 className="text-3xl font-display font-bold text-ink">User &amp; Role Management</h2>
-          <p className="text-sm font-sans text-ink/60 mt-1">Manage logins, roles, and profiles for school accounts.</p>
-        </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center space-x-2 px-4 py-2.5 bg-teal-primary hover:bg-teal-dark text-paper font-sans font-semibold text-sm rounded-xl shadow-md transition-all cursor-pointer"
-        >
-          <Plus className="w-4 h-4" /><span>Add User</span>
-        </button>
-      </div>
-
-      {error && <div className="p-4 rounded-xl bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-sm">{error}</div>}
-
-      {/* ── FLOATING SELECTION ACTION BAR ───────────────────────────────────── */}
-      {selectedUserIds.length > 0 && (
-        <div className="bg-ink/95 backdrop-blur-md rounded-2xl px-5 py-3 flex flex-wrap items-center justify-between gap-3 animate-fadeIn shadow-2xl border border-white/10">
-          <div className="flex items-center gap-3">
-            <span className="bg-teal-primary text-paper text-[11px] font-bold px-3 py-1 rounded-full font-mono">{selectedUserIds.length} selected</span>
-            <span className="text-paper/70 text-xs font-sans">
-              {selectedUserIds.length === 1
-                ? users.find(u => u.id === selectedUserIds[0])?.name || users.find(u => u.id === selectedUserIds[0])?.username
-                : `${selectedUserIds.length} users`}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {selectedUserIds.length === 1 && (() => {
-              const u = users.find(u => u.id === selectedUserIds[0]);
-              return u ? (
-                <>
-                  <button
-                    onClick={() => { setResetUser(u); setShowResetModal(true); setResetError(''); setResetSuccess(''); }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-amber-400/20"
-                  >
-                    <KeyRound className="w-3.5 h-3.5" /><span>Reset Password</span>
-                  </button>
-                  <button
-                    onClick={() => handleDeactivate(u.id)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border ${
-                      !u.is_active
-                        ? 'bg-teal-primary/30 hover:bg-teal-primary/50 text-teal-300 border-teal-400/30'
-                        : 'bg-orange-400/20 hover:bg-orange-400/30 text-orange-300 border-orange-400/20'
-                    }`}
-                  >
-                    {u.is_active ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                    <span>{u.is_active ? 'Suspend' : 'Activate'}</span>
-                  </button>
-                  <button
-                    onClick={async () => {
-                      if (!window.confirm(`Delete account for '${u.username}'?`)) return;
-                      try {
-                        await api.delete(`/schools/${activeSchoolId}/users/${u.id}`);
-                        toast.success(`User '${u.username}' deleted.`);
-                        setSelectedUserIds([]);
-                        fetchUsers();
-                      } catch (err) { toast.error(err.message || 'Failed to delete user.'); }
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-semibold rounded-xl transition-all cursor-pointer border border-red-500/20"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /><span>Delete</span>
-                  </button>
-                </>
-              ) : null;
-            })()}
-            <button onClick={() => setSelectedUserIds([])} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-paper/50 hover:text-paper text-xs font-semibold rounded-xl transition-all cursor-pointer">
-              <X className="w-3.5 h-3.5" /><span>Clear</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-
-      <div className="glass-card rounded-2xl p-4 flex flex-wrap items-center gap-2">
-        {['', 'super_admin', 'school_admin', 'teacher', 'parent'].map(r => (
-          <button key={r} onClick={() => setRoleFilter(r)}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-sans font-semibold transition-all cursor-pointer ${roleFilter === r ? 'bg-teal-primary text-paper shadow' : 'bg-ink/5 text-ink/60 hover:bg-ink/10'}`}>
-            {r === '' ? 'All Roles' : r.replace('_', ' ')}
-          </button>
-        ))}
-      </div>
-
-      <div className="glass-card rounded-2xl overflow-hidden border border-line-border/30">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-sage/20 border-b border-line-border text-xs font-sans font-bold text-ink/75 uppercase tracking-wider">
-              <th className="py-4 px-4 w-10 text-center">
-                <input
-                  type="checkbox"
-                  onChange={() => {
-                    if (selectedUserIds.length === users.length && users.length > 0) {
-                      setSelectedUserIds([]);
-                    } else {
-                      setSelectedUserIds(users.map(u => u.id));
-                    }
-                  }}
-                  checked={users.length > 0 && selectedUserIds.length === users.length}
-                  className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
-                />
-              </th>
-              <th className="py-4 px-6">Name</th>
-              <th className="py-4 px-6">Username</th>
-              <th className="py-4 px-6">Contact Email / Phone</th>
-              <th className="py-4 px-6 text-center">Role</th>
-              <th className="py-4 px-6 text-center">Status</th>
-              <th className="py-4 px-6 text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line-border/50 text-sm font-sans text-ink">
-            {loading ? (
-              <tr><td colSpan="7" className="py-12 text-center text-xs text-ink/40">Loading users...</td></tr>
-            ) : users.map(u => (
-              <tr
-                key={u.id}
-                onClick={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(i => i !== u.id) : [...prev, u.id])}
-                className={`transition-colors cursor-pointer ${
-                  selectedUserIds.includes(u.id)
-                    ? 'bg-teal-primary/8 border-l-2 border-l-teal-primary'
-                    : 'hover:bg-sage/5 border-l-2 border-l-transparent'
-                }`}
-              >
-                <td className="py-4 px-4 text-center" onClick={e => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={selectedUserIds.includes(u.id)}
-                    onChange={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(i => i !== u.id) : [...prev, u.id])}
-                    className="rounded border-line-border text-teal-primary focus:ring-teal-primary cursor-pointer"
-                  />
-                </td>
-                <td className="py-4 px-6 font-bold">{u.name}</td>
-                <td className="py-4 px-6 font-mono text-xs text-ink/70">{u.username}</td>
-                <td className="py-4 px-6">
-                  <div className="flex flex-col text-xs font-mono">
-                    <span className="text-ink/80">{u.email || '-'}</span>
-                    <span className="text-ink/40">{u.phone || '-'}</span>
-                  </div>
-                </td>
-                <td className="py-4 px-6 text-center">
-                  <span className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${ROLE_STYLES[u.role] || 'bg-ink/10 text-ink'}`}>
-                    <Shield className="w-2.5 h-2.5" />
-                    <span className="capitalize">{u.role?.replace('_', ' ')}</span>
-                  </span>
-                </td>
-                <td className="py-4 px-6 text-center">
-                  <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${u.is_active ? 'bg-sage/35 text-teal-dark' : 'bg-brick-critical/10 text-brick-critical'}`}>
-                    {u.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </td>
-                <td className="py-4 px-6 text-right whitespace-nowrap">
-                  {selectedUserIds.includes(u.id)
-                    ? <span className="text-[10px] font-semibold text-teal-primary">✓ Selected</span>
-                    : <span className="text-[11px] text-ink/25">click row</span>
-                  }
-                </td>
-              </tr>
-            ))}
-            {users.length === 0 && !loading && (
-              <tr><td colSpan="7" className="py-8 text-center text-ink/50 text-xs">No users found.</td></tr>
-            )}
-
-          </tbody>
-        </table>
-      </div>
-
-      {showModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative max-h-[92vh] overflow-y-auto">
-            <button onClick={() => setShowModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-xl font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4">Add New User</h3>
-            {formError && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 text-brick-critical text-xs">{formError}</div>}
-            
-            <form onSubmit={handleCreate} className="space-y-4 text-sm font-sans">
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Full Name *</label>
-                <input required type="text" placeholder="e.g. John Doe" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Username *</label>
-                  <input required type="text" placeholder="e.g. jdoe" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Role *</label>
-                  <select required className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.role} onChange={e => setForm({...form, role: e.target.value})}>
-                    <option value="teacher">Teacher</option>
-                    <option value="parent">Parent / Guardian</option>
-                    <option value="school_admin">School Admin</option>
-                    {user?.role === 'super_admin' && <option value="super_admin">Super Admin</option>}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Email *</label>
-                  <input required type="email" placeholder="e.g. jdoe@school.com" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.email} onChange={e => setForm({...form, email: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Phone Number *</label>
-                  <input required type="text" placeholder="e.g. +26377000000" className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
-                </div>
-              </div>
-
-              {/* Teacher fields */}
-              {form.role === 'teacher' && (
-                <div>
-                  <label className="block text-xs font-semibold text-brick-critical mb-1">Assigned Class * (Mandatory)</label>
-                  <select required className="w-full px-3 py-2 border border-brick-critical/40 bg-brick-critical/5 rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.class_id} onChange={e => setForm({...form, class_id: e.target.value})}>
-                    <option value="">Select Class...</option>
-                    {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-              )}
-
-              {/* Parent fields */}
-              {form.role === 'parent' && (
-                <div className="space-y-4 p-3 rounded-lg bg-amber-warning/5 border border-amber-warning/20">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-ink/70 mb-1">Relation to Student *</label>
-                      <select required className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none" value={form.relation} onChange={e => setForm({...form, relation: e.target.value})}>
-                        <option value="Father">Father</option>
-                        <option value="Mother">Mother</option>
-                        <option value="Guardian">Guardian</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-ink/70 mb-1">Link to Student *</label>
-                      <select required className="w-full px-3 py-2 border border-line-border rounded-lg text-xs focus:outline-none" value={form.student_id} onChange={e => setForm({...form, student_id: e.target.value})}>
-                        <option value="">Select Child...</option>
-                        {students.map(s => <option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">Initial Password *</label>
-                <div className="relative">
-                  <input required type={showCreatePassword ? 'text' : 'password'} minLength={8} className="w-full px-3 py-2 pr-10 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={form.password} onChange={e => setForm({...form, password: e.target.value})} />
-                  <button
-                    type="button"
-                    onClick={() => setShowCreatePassword(!showCreatePassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
-                  >
-                    {showCreatePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-                <p className="text-[10px] text-ink/40 mt-1">Min 8 characters. User should change this on first login.</p>
-              </div>
-
-              <div className="pt-2 flex justify-end space-x-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer font-sans">Cancel</button>
-                <button type="submit" disabled={formLoading} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-2 font-sans">
-                  {formLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Create User</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Admin Reset Password Modal */}
-      {showResetModal && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm glass-panel rounded-2xl shadow-2xl p-6 border border-line-border/30 relative">
-            <button onClick={() => setShowResetModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5" /></button>
-            <h3 className="text-lg font-display font-bold text-ink border-b border-line-border/30 pb-3 mb-4 flex items-center space-x-1.5">
-              <KeyRound className="w-4 h-4 text-teal-primary" />
-              <span>Reset User Password</span>
-            </h3>
-            <p className="text-xs text-ink/65 mb-4 font-sans">Set a new secure password for user: <b>{resetUser?.username}</b></p>
-            
-            {resetError && <div className="mb-4 p-2.5 bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs rounded-lg">{resetError}</div>}
-            {resetSuccess && <div className="mb-4 p-2.5 bg-sage/35 border border-teal-primary/20 text-teal-dark font-semibold text-xs rounded-lg">{resetSuccess}</div>}
-
-            <form onSubmit={handleResetPassword} className="space-y-4 text-xs font-sans">
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">New Password *</label>
-                <div className="relative">
-                  <input required type={showResetPasswordVal ? 'text' : 'password'} minLength={8} placeholder="Minimum 8 characters" className="w-full px-3 py-2 pr-10 border border-line-border rounded-lg text-xs focus:outline-none focus:border-teal-primary" value={resetPassword} onChange={e => setResetPassword(e.target.value)} />
-                  <button
-                    type="button"
-                    onClick={() => setShowResetPasswordVal(!showResetPasswordVal)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-ink/40 hover:text-ink cursor-pointer"
-                  >
-                    {showResetPasswordVal ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-              <div className="pt-2 flex justify-end space-x-2">
-                <button type="button" onClick={() => setShowResetModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                <button type="submit" disabled={resetLoading} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-2">
-                  {resetLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>Change Password</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── CREDENTIAL DISPLAY MODAL ────────────────────────────────────────── */}
-      {createdCreds && (
-        <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-paper border border-line-border rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
-            <div className="flex items-start space-x-3">
-              <div className="w-10 h-10 rounded-xl bg-teal-primary/10 flex items-center justify-center text-xl shrink-0">🔑</div>
-              <div>
-                <h3 className="font-display font-bold text-base text-ink">User Account Created</h3>
-                <p className="text-xs text-ink/60 font-sans mt-0.5">Share these login credentials with the user securely. They should change their password on first login.</p>
-              </div>
-            </div>
-
-            <div className="bg-sage/10 rounded-xl border border-teal-primary/20 divide-y divide-line-border/30 overflow-hidden">
-              <div className="px-4 py-3 flex justify-between items-center">
-                <span className="text-[10px] uppercase font-bold text-ink/50 tracking-wider">Username</span>
-                <span className="text-sm font-mono font-bold text-teal-dark select-all">{createdCreds.username}</span>
-              </div>
-              <div className="px-4 py-3 flex justify-between items-center">
-                <span className="text-[10px] uppercase font-bold text-ink/50 tracking-wider">Initial Password</span>
-                <span className="text-sm font-mono font-bold text-brick-critical bg-brick-critical/10 px-2 py-0.5 rounded select-all">{createdCreds.password}</span>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-amber-warning font-semibold font-sans">
-              ⚠ This password is shown once. Relay it to the user immediately.
-            </p>
-
+    <div className="space-y-6">
+      <PageHeader
+        title="User Accounts & Identity Access Management"
+        subtitle="SchoolBase user authentication accounts, role permissions, password resets, and guardian linkages."
+        actions={
+          ['school_admin', 'super_admin', 'principal', 'head', 'headmaster', 'deputy_head'].includes(user?.role) && (
             <button
-              onClick={() => setCreatedCreds(null)}
-              className="w-full py-2.5 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl font-sans text-xs font-bold shadow-md cursor-pointer transition-colors"
+              onClick={() => {
+                const randomPw = 'Sb' + Math.floor(100000 + Math.random() * 900000) + '!';
+                setForm(prev => ({ ...prev, password: randomPw }));
+                setShowModal(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
             >
-              Got It & Close
+              <Plus className="w-4 h-4" />
+              Create User Account
             </button>
+          )
+        }
+      />
+
+      {/* KPI Strip */}
+      <KpiStrip>
+        <StatCard
+          label="Total Active Accounts"
+          value={totalUsers}
+          icon={Users}
+          color="brand"
+        />
+        <StatCard
+          label="Teacher Accounts"
+          value={teacherCount}
+          icon={UserCheck}
+          color="info"
+        />
+        <StatCard
+          label="Parent & Guardian Accounts"
+          value={parentCount}
+          icon={Users}
+          color="violet"
+        />
+        <StatCard
+          label="School Administrators"
+          value={adminCount}
+          icon={Shield}
+          color="accent"
+        />
+      </KpiStrip>
+
+      {/* Created Creds Alert Banner */}
+      {createdCreds && (
+        <div className="p-4 rounded-2xl bg-brand-50 border border-brand-100 flex items-center justify-between text-xs text-brand-700">
+          <div>
+            <div className="font-bold flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4 text-brand-500" />
+              New User Account Provisioned Successfully
+            </div>
+            <div className="font-mono mt-1 text-ink">
+              Username: <strong>{createdCreds.username}</strong> • Temporary Password: <strong>{createdCreds.password}</strong>
+            </div>
           </div>
+          <button
+            onClick={copyCreds}
+            className="px-3 py-1.5 rounded-xl bg-brand-700 text-white font-semibold hover:bg-brand-900 flex items-center gap-1 shadow-xs"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Copy Credentials
+          </button>
         </div>
       )}
+
+      {/* Filters Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <FilterChips
+          chips={ROLES}
+          selected={roleFilter}
+          onChange={setRoleFilter}
+        />
+
+        <div className="relative">
+          <Search className="w-4 h-4 text-muted absolute left-3 top-2.5" />
+          <input
+            type="text"
+            placeholder="Search accounts..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9 pr-3 py-1.5 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 w-56"
+          />
+        </div>
+      </div>
+
+      {/* Users DataTable */}
+      <Card title="User Directory & Access Controls">
+        <DataTable
+          columns={[
+            {
+              key: 'username',
+              label: 'User Account',
+              sortable: true,
+              render: (_, row) => (
+                <div className="flex items-center gap-2.5">
+                  <Avatar name={row.name || row.username} size="sm" />
+                  <div>
+                    <div className="font-bold text-ink">{row.name || row.username}</div>
+                    <div className="font-mono text-[10px] text-muted">@{row.username}</div>
+                  </div>
+                </div>
+              )
+            },
+            { key: 'email', label: 'Email', render: v => <span className="font-mono text-xs text-muted">{v || 'N/A'}</span> },
+            {
+              key: 'role',
+              label: 'System Role',
+              sortable: true,
+              render: v => {
+                const colors = {
+                  school_admin: 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/20',
+                  super_admin: 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20',
+                  teacher: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20',
+                  parent: 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20',
+                  student: 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20',
+                };
+                return (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border capitalize ${colors[v] || 'bg-canvas text-muted border-line'}`}>
+                    {v ? v.replace('_', ' ') : 'User'}
+                  </span>
+                );
+              }
+            },
+            {
+              key: 'status',
+              label: 'Account Status',
+              render: v => <StatusPill status={v === 'deactivated' ? 'inactive' : 'active'} />
+            },
+            {
+              key: 'actions',
+              label: '',
+              render: (_, row) => (
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    onClick={() => {
+                      setResetUser(row);
+                      setNewPassword('Pass' + Math.floor(1000 + Math.random() * 9000) + '!');
+                      setShowResetModal(true);
+                    }}
+                    className="px-2.5 py-1 rounded-lg border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1"
+                    title="Reset Password"
+                  >
+                    <KeyRound className="w-3.5 h-3.5 text-muted" />
+                    Reset
+                  </button>
+                </div>
+              )
+            }
+          ]}
+          data={users}
+          emptyTitle="No User Accounts Found"
+          emptyMessage="No accounts match your role filter or search keywords."
+        />
+      </Card>
+
+      {/* Password Reset Modal */}
+      <Modal
+        isOpen={showResetModal}
+        onClose={() => setShowResetModal(false)}
+        title={`Reset Password for @${resetUser?.username}`}
+        description="Issue a new cryptographic password for this user account."
+      >
+        <form onSubmit={handleResetPassword} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">New Password *</label>
+            <input
+              type="text"
+              required
+              value={newPassword}
+              onChange={e => setNewPassword(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink font-mono text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setShowResetModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={resetting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {resetting ? 'Resetting...' : 'Save New Password'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* MODAL: Create User Account */}
+      <Modal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        title="Provision New User Account"
+        description="Create credentials for a teacher, parent guardian, or school administrator."
+      >
+        <form onSubmit={handleCreateUser} className="space-y-4">
+          {user?.role === 'super_admin' && (
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Target School Institution *</label>
+              <select
+                value={form.school_id || activeSchoolId}
+                onChange={e => setForm({ ...form, school_id: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                {schools.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.code || s.id})</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Full Name *</label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Tendai Moyo"
+                value={form.name}
+                onChange={e => setForm({ ...form, name: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">System Role *</label>
+              <select
+                value={form.role}
+                onChange={e => setForm({ ...form, role: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                <option value="school_admin">School Administrator</option>
+                <option value="principal">Principal / Headmaster</option>
+                <option value="deputy_head">Deputy Head</option>
+                <option value="teacher">Teacher</option>
+                <option value="bursar">Bursar / Cashier</option>
+                <option value="parent">Parent / Guardian</option>
+                {user?.role === 'super_admin' && (
+                  <option value="super_admin">Super Administrator (Platform)</option>
+                )}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Username *</label>
+              <input
+                type="text"
+                required
+                placeholder="tmoyo"
+                value={form.username}
+                onChange={e => setForm({ ...form, username: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-mono focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Temporary Password *</label>
+              <input
+                type="text"
+                required
+                value={form.password}
+                onChange={e => setForm({ ...form, password: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-mono focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Email Address</label>
+              <input
+                type="email"
+                placeholder="user@schoolbase.ac.zw"
+                value={form.email}
+                onChange={e => setForm({ ...form, email: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Mobile Phone</label>
+              <input
+                type="text"
+                placeholder="+263 77..."
+                value={form.phone}
+                onChange={e => setForm({ ...form, phone: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          </div>
+
+          {/* If parent, link to student */}
+          {form.role === 'parent' && (
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">Link to Student Child</label>
+              <select
+                value={form.student_id}
+                onChange={e => setForm({ ...form, student_id: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select Child...</option>
+                {students.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.first_name} {s.last_name} ({s.admission_number || 'No ADM'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {submitting ? 'Creating...' : 'Provision Account'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
-};
-
-export default UserManagement;
+}

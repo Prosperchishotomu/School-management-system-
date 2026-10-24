@@ -89,7 +89,7 @@ router.get('/exeats', authenticateToken, async (req, res) => {
     const { student_id, status } = req.query;
 
     let sql = `
-      SELECT ex.*, st.admission_no, st.first_name, st.last_name, c.name as class_name,
+      SELECT ex.*, st.admission_number as admission_no, st.first_name, st.last_name, c.name as class_name,
              u_app.username as approver_name
       FROM exeats ex
       JOIN students st ON ex.student_id = st.id
@@ -98,6 +98,29 @@ router.get('/exeats', authenticateToken, async (req, res) => {
       WHERE ex.school_id = ?
     `;
     const params = [schoolId];
+
+    if (req.user.role === 'parent') {
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      const guardianIds = guardianRows.map(g => g.id);
+      if (guardianIds.length === 0) {
+        return res.json({ data: [] });
+      }
+      const gPlaceholders = guardianIds.map(() => '?').join(',');
+      const kids = await query(`SELECT student_id FROM student_guardians WHERE guardian_id IN (${gPlaceholders})`, guardianIds);
+      const kidIds = [...new Set(kids.map(k => k.student_id))];
+      if (kidIds.length === 0) {
+        return res.json({ data: [] });
+      }
+      const kPlaceholders = kidIds.map(() => '?').join(',');
+      sql += ` AND ex.student_id IN (${kPlaceholders})`;
+      params.push(...kidIds);
+    }
 
     if (student_id) { sql += ' AND ex.student_id = ?'; params.push(student_id); }
     if (status) { sql += ' AND ex.status = ?'; params.push(status); }
@@ -119,6 +142,28 @@ router.post('/exeats', authenticateToken, async (req, res) => {
 
     if (!student_id || !exeat_type || !departure_date || !expected_return_date) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'student_id, exeat_type, departure_date, and expected_return_date required.' } });
+    }
+
+    if (req.user.role === 'parent') {
+      const guardianRows = await query(
+        `SELECT g.id FROM guardians g 
+         WHERE g.user_id = ? 
+            OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?)
+            OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?)`,
+        [req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      const guardianIds = guardianRows.map(g => g.id);
+      if (guardianIds.length === 0) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not authorized to request exeat for this student.' } });
+      }
+      const gPlaceholders = guardianIds.map(() => '?').join(',');
+      const linked = await queryOne(
+        `SELECT student_id FROM student_guardians WHERE student_id = ? AND guardian_id IN (${gPlaceholders})`,
+        [student_id, ...guardianIds]
+      );
+      if (!linked) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You are not linked as a guardian for this student.' } });
+      }
     }
 
     const uuid = 'EX' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
