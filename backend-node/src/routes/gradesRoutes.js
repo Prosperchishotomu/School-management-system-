@@ -157,14 +157,10 @@ router.get('/', authenticateToken, async (req, res) => {
       let pointsValue = null;
       let descriptor = '';
 
-      if (levelCategory === 'primary_g4_g7') {
+      if (levelCategory === 'primary_g4_g7' || levelCategory === 'primary' || levelCategory === 'ecd_to_g3') {
         const calc = calculatePrimaryUnits(avgMark);
-        letterGrade = calc.grade;
+        letterGrade = `Unit ${calc.units}`;
         unitValue = calc.units;
-        descriptor = calc.descriptor;
-      } else if (levelCategory === 'ecd_to_g3') {
-        const calc = calculateECDGrade(avgMark);
-        letterGrade = calc.grade;
         descriptor = calc.descriptor;
       } else if (levelCategory === 'a_level') {
         const calc = calculateZimsecAGrade(avgMark, '5_point');

@@ -420,25 +420,24 @@ export default function Grades() {
                   const total = (Number(studentScores.ca1) || 0) + (Number(studentScores.ca2) || 0) + (Number(studentScores.exam) || 0);
 
                   const className = currentClass?.name || '';
+                  const classLevel = (currentClass?.level || '').toLowerCase();
                   const isALevel = /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(className);
-                  const isPrimaryG4G7 = /grade\s*[4-7]\b/i.test(className);
-                  const isECD = /ecd|baby|infant|grade\s*[1-3]\b/i.test(className);
+                  const isSecondary = isALevel || /form\s*[1-4]|ordinary/i.test(className) || classLevel.includes('sec');
+                  const isPrimary = !isSecondary;
 
                   let gradeDisplay = '';
                   let gradeBadge = 'absent';
 
-                  if (isPrimaryG4G7) {
+                  if (isPrimary) {
+                    // Primary schools have units only (Unit 1 to Unit 9), not symbols like A, B, C, D, E, U
                     const u = total >= 80 ? 1 : total >= 70 ? 2 : total >= 60 ? 3 : total >= 50 ? 4 : total >= 45 ? 5 : total >= 40 ? 6 : total >= 35 ? 7 : total >= 30 ? 8 : 9;
                     gradeDisplay = `Unit ${u}`;
                     gradeBadge = u <= 3 ? 'present' : u <= 6 ? 'submitted' : 'absent';
                   } else if (isALevel) {
                     gradeDisplay = total >= 70 ? 'A (5pts)' : total >= 60 ? 'B (4pts)' : total >= 50 ? 'C (3pts)' : total >= 45 ? 'D (2pts)' : total >= 40 ? 'E (1pt)' : total >= 35 ? 'O (0pts)' : 'F (0pts)';
                     gradeBadge = total >= 50 ? 'present' : total >= 40 ? 'submitted' : 'absent';
-                  } else if (isECD) {
-                    gradeDisplay = total >= 80 ? 'Distinction' : total >= 65 ? 'Merit' : total >= 50 ? 'Credit' : total >= 40 ? 'Pass' : 'Emerging';
-                    gradeBadge = total >= 50 ? 'present' : 'submitted';
                   } else {
-                    // O-Level Symbols: A, B, C, D, E, U
+                    // Secondary O-Level Symbols: A, B, C, D, E, U
                     gradeDisplay = total >= 75 ? 'A' : total >= 65 ? 'B' : total >= 50 ? 'C' : total >= 45 ? 'D' : total >= 40 ? 'E' : 'U';
                     gradeBadge = ['A', 'B', 'C'].includes(gradeDisplay) ? 'present' : ['D', 'E'].includes(gradeDisplay) ? 'submitted' : 'absent';
                   }

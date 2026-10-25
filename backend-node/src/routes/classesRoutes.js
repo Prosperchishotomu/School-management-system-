@@ -593,6 +593,7 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
         class_size: classTotalStudents,
         overall_percentage: processed.overallPercentage,
         grade: processed.grade,
+        grade_symbol: processed.grade_symbol,
         pass_status: processed.passStatus,
         total_units: processed.totalUnits,
         total_points: processed.totalPoints,
@@ -767,6 +768,7 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       total_points: processed.totalPoints,
       passes_count: processed.passesCount,
       grade: processed.grade,
+      grade_symbol: processed.grade_symbol,
       pass_status: processed.passStatus,
       status: isPublished ? 'published' : 'draft',
       level_category: levelCategory

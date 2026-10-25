@@ -2274,15 +2274,15 @@ const ConfigTab = ({ schools = [] }) => {
   const loadDefaultThresholds = (type) => {
     if (type === 'primary') {
       setThresholds([
-        { grade_symbol: '1', min_mark: 80, max_mark: 100, is_pass: 1, label: 'Distinction' },
-        { grade_symbol: '2', min_mark: 70, max_mark: 79.99, is_pass: 1, label: 'Merit' },
-        { grade_symbol: '3', min_mark: 60, max_mark: 69.99, is_pass: 1, label: 'Credit' },
-        { grade_symbol: '4', min_mark: 50, max_mark: 59.99, is_pass: 1, label: 'Satisfactory' },
-        { grade_symbol: '5', min_mark: 45, max_mark: 49.99, is_pass: 1, label: 'Marginal Pass' },
-        { grade_symbol: '6', min_mark: 40, max_mark: 44.99, is_pass: 1, label: 'Bare Pass' },
-        { grade_symbol: '7', min_mark: 35, max_mark: 39.99, is_pass: 0, label: 'Unsatisfactory' },
-        { grade_symbol: '8', min_mark: 30, max_mark: 34.99, is_pass: 0, label: 'Poor' },
-        { grade_symbol: '9', min_mark: 0,  max_mark: 29.99, is_pass: 0, label: 'Very Poor' }
+        { grade_symbol: 'Unit 1', min_mark: 80, max_mark: 100, is_pass: 1, label: 'Unit 1 Distinction' },
+        { grade_symbol: 'Unit 2', min_mark: 70, max_mark: 79.99, is_pass: 1, label: 'Unit 2 Merit' },
+        { grade_symbol: 'Unit 3', min_mark: 60, max_mark: 69.99, is_pass: 1, label: 'Unit 3 Credit' },
+        { grade_symbol: 'Unit 4', min_mark: 50, max_mark: 59.99, is_pass: 1, label: 'Unit 4 Satisfactory' },
+        { grade_symbol: 'Unit 5', min_mark: 45, max_mark: 49.99, is_pass: 1, label: 'Unit 5 Marginal Pass' },
+        { grade_symbol: 'Unit 6', min_mark: 40, max_mark: 44.99, is_pass: 1, label: 'Unit 6 Bare Pass' },
+        { grade_symbol: 'Unit 7', min_mark: 35, max_mark: 39.99, is_pass: 0, label: 'Unit 7 Unsatisfactory' },
+        { grade_symbol: 'Unit 8', min_mark: 30, max_mark: 34.99, is_pass: 0, label: 'Unit 8 Poor' },
+        { grade_symbol: 'Unit 9', min_mark: 0,  max_mark: 29.99, is_pass: 0, label: 'Unit 9 Very Poor' }
       ]);
     } else if (type === 'high_school' || type === 'combined') {
       setThresholds([

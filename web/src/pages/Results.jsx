@@ -267,6 +267,23 @@ export default function Results() {
     window.print();
   };
 
+  // Helper to convert any primary grade/score strictly to 'Unit X'
+  const getPrimaryUnitLabel = (val, score) => {
+    if (val && String(val).trim().toLowerCase().startsWith('unit')) return String(val).trim();
+    const num = parseInt(val, 10);
+    if (!isNaN(num) && num >= 1 && num <= 9) return `Unit ${num}`;
+    const s = parseFloat(score || 0);
+    if (s >= 80) return 'Unit 1';
+    if (s >= 70) return 'Unit 2';
+    if (s >= 60) return 'Unit 3';
+    if (s >= 50) return 'Unit 4';
+    if (s >= 45) return 'Unit 5';
+    if (s >= 40) return 'Unit 6';
+    if (s >= 35) return 'Unit 7';
+    if (s >= 30) return 'Unit 8';
+    return 'Unit 9';
+  };
+
   // Level category
   const levelCategory = useMemo(() => {
     if (isParent && activeChildResult?.level_category) {
@@ -276,28 +293,45 @@ export default function Results() {
       return studentsResults[0].level_category;
     }
     const cName = currentClassObj?.name || '';
+    const cLevel = (currentClassObj?.level || '').toLowerCase();
     if (/form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(cName)) return 'a_level';
-    if (/form\s*[1-4]|ordinary/i.test(cName)) return 'o_level';
-    if (/ecd|baby|infant|grade\s*[1-3]\b/i.test(cName)) return 'ecd_to_g3';
-    return 'primary_g4_g7';
+    if (/form\s*[1-4]|ordinary/i.test(cName) || cLevel.includes('sec')) return 'o_level';
+    return 'primary_g4_g7'; // All primary levels use units only
   }, [isParent, activeChildResult, studentsResults, currentClassObj]);
+
+  const isPrimary = useMemo(() => {
+    if (levelCategory === 'primary_g4_g7' || levelCategory === 'primary' || levelCategory === 'ecd_to_g3') return true;
+    const cName = (activeChildResult?.class_name || activeStudentReport?.class_name || currentClassObj?.name || '').toLowerCase();
+    const cLevel = (currentClassObj?.level || '').toLowerCase();
+    if (/grade\s*[1-7]|ecd|infant|junior|primary/i.test(cName) || cLevel.includes('prim')) return true;
+    return false;
+  }, [levelCategory, activeChildResult, activeStudentReport, currentClassObj]);
 
   // Cohort grade distribution (teacher & admin view only)
   const gradeDistribution = useMemo(() => {
     if (isParent) return [];
     const counts = {};
     studentsResults.forEach(st => {
-      const g = st.grade || 'U';
+      const g = isPrimary
+        ? getPrimaryUnitLabel(st.grade, st.overall_percentage)
+        : (st.grade || 'U');
       counts[g] = (counts[g] || 0) + 1;
     });
     if (Object.keys(counts).length === 0) {
+      if (isPrimary) {
+        return [
+          { grade: 'Unit 1', count: 0 }, { grade: 'Unit 2', count: 0 }, { grade: 'Unit 3', count: 0 },
+          { grade: 'Unit 4', count: 0 }, { grade: 'Unit 5', count: 0 }, { grade: 'Unit 6', count: 0 },
+          { grade: 'Unit 7', count: 0 }, { grade: 'Unit 8', count: 0 }, { grade: 'Unit 9', count: 0 }
+        ];
+      }
       return [
-        { grade: 'A', count: 12 }, { grade: 'B', count: 18 }, { grade: 'C', count: 10 },
-        { grade: 'D', count: 4 }, { grade: 'E', count: 2 }, { grade: 'U', count: 1 }
+        { grade: 'A', count: 0 }, { grade: 'B', count: 0 }, { grade: 'C', count: 0 },
+        { grade: 'D', count: 0 }, { grade: 'E', count: 0 }, { grade: 'U', count: 0 }
       ];
     }
     return Object.entries(counts).map(([grade, count]) => ({ grade, count }));
-  }, [isParent, studentsResults]);
+  }, [isParent, studentsResults, isPrimary]);
 
   const cohortPassRate = useMemo(() => {
     if (!studentsResults.length) return 86.4;
@@ -307,27 +341,22 @@ export default function Results() {
 
   const cohortAggregateKpi = useMemo(() => {
     if (!studentsResults.length) {
-      if (levelCategory === 'primary_g4_g7') return { label: 'Best-6 Units Average', val: '12 Units', note: 'Best score: 6 units, worst: 54 units' };
-      if (levelCategory === 'a_level') return { label: 'Points Average', val: '11 Points', note: '5-point scale (A=5, B=4, C=3, D=2, E=1)' };
-      if (levelCategory === 'ecd_to_g3') return { label: 'Total Marks Average', val: '340 Marks', note: 'Ranked in descending order' };
-      return { label: 'Average Passes', val: '6.4 Passes', note: 'Pass grades: A, B, C (Symbols: A-U)' };
+      if (isPrimary) return { label: 'Cohort Units Average', val: '—', note: 'Primary school units (Unit 1 is highest distinction)' };
+      if (levelCategory === 'a_level') return { label: 'Points Average', val: '—', note: '5-point scale (A=5, B=4, C=3, D=2, E=1)' };
+      return { label: 'Average Passes', val: '—', note: 'Pass grades: A, B, C (Symbols: A-U)' };
     }
 
-    if (levelCategory === 'primary_g4_g7') {
+    if (isPrimary) {
       const avgUnits = (studentsResults.reduce((acc, s) => acc + (s.total_units || 0), 0) / studentsResults.length).toFixed(1);
-      return { label: 'Best-6 Units Average', val: `${avgUnits} Units`, note: 'Best score is 6 units (Rank 1), worst is 54 units' };
+      return { label: 'Cohort Units Average', val: `${avgUnits} Units`, note: 'Ranked by Total Units (lower is better, 6 units is Best)' };
     }
     if (levelCategory === 'a_level') {
       const avgPts = (studentsResults.reduce((acc, s) => acc + (s.total_points || 0), 0) / studentsResults.length).toFixed(1);
       return { label: 'Points Average', val: `${avgPts} Pts`, note: 'A=5, B=4, C=3, D=2, E=1, O=0, F=0' };
     }
-    if (levelCategory === 'ecd_to_g3') {
-      const avgMarks = (studentsResults.reduce((acc, s) => acc + (s.total_marks || 0), 0) / studentsResults.length).toFixed(1);
-      return { label: 'Total Marks Average', val: `${avgMarks} Mks`, note: 'Ranked in descending order of total marks' };
-    }
     const avgPasses = (studentsResults.reduce((acc, s) => acc + (s.passes_count || 0), 0) / studentsResults.length).toFixed(1);
     return { label: 'Average Quality Passes', val: `${avgPasses} Passes`, note: 'Symbols: A, B, C, D, E, U' };
-  }, [studentsResults, levelCategory]);
+  }, [studentsResults, levelCategory, isPrimary]);
 
   // =========================================================================
   // RENDER: PARENT VIEW (STRICT CHILD PRIVACY WITH INTERACTIVE CHILD SWITCHER)
@@ -484,32 +513,32 @@ export default function Results() {
                   {activeChildResult.overall_percentage}%
                 </div>
                 <div className="text-[11px] text-muted mt-0.5">
-                  Overall Grade: <span className="font-bold text-ink">{activeChildResult.grade}</span> ({activeChildResult.pass_status === 'pass' ? 'Passing' : 'Needs Review'})
+                  {isPrimary ? (
+                    <>Total Aggregate: <span className="font-bold text-ink">{activeChildResult.total_units || 0} Units</span> ({activeChildResult.pass_status === 'pass' ? 'Passing' : 'Needs Review'})</>
+                  ) : (
+                    <>Overall Grade: <span className="font-bold text-ink">{activeChildResult.grade}</span> ({activeChildResult.pass_status === 'pass' ? 'Passing' : 'Needs Review'})</>
+                  )}
                 </div>
               </div>
 
               <div className="glass-card p-5 border border-line">
                 <span className="text-xs text-muted font-medium uppercase font-mono">
-                  {activeChildResult.level_category === 'primary_g4_g7'
-                    ? 'Best-6 Total Units'
+                  {isPrimary
+                    ? 'Total Subject Units'
                     : activeChildResult.level_category === 'a_level'
                     ? 'ZIMSEC Points'
-                    : activeChildResult.level_category === 'ecd_to_g3'
-                    ? 'Total Score Marks'
                     : 'Quality Passes (A-C)'}
                 </span>
                 <div className="text-2xl font-bold font-display text-ink mt-1">
-                  {activeChildResult.level_category === 'primary_g4_g7'
+                  {isPrimary
                     ? `${activeChildResult.total_units || 0} Units`
                     : activeChildResult.level_category === 'a_level'
                     ? `${activeChildResult.total_points || 0} Pts`
-                    : activeChildResult.level_category === 'ecd_to_g3'
-                    ? `${activeChildResult.total_marks || 0} Marks`
                     : `${activeChildResult.passes_count || 0} Passes`}
                 </div>
                 <div className="text-[11px] text-muted mt-0.5">
-                  {activeChildResult.level_category === 'primary_g4_g7'
-                    ? 'Best = 6 Units, Satisfactory ≤ 36'
+                  {isPrimary
+                    ? 'Units scale (1-9): Best = 6 Units (Unit 1 is highest distinction)'
                     : activeChildResult.level_category === 'a_level'
                     ? '5-Point Scale (A=5, B=4, C=3)'
                     : 'Passing threshold: Grade C and above'}
@@ -557,7 +586,7 @@ export default function Results() {
                       <th className="py-3 px-3 text-right">CALA / Project (30%)</th>
                       <th className="py-3 px-3 text-right">Exam Paper (50%)</th>
                       <th className="py-3 px-3 text-right font-bold text-ink">Final Mark</th>
-                      <th className="py-3 px-3 text-center">Grade / Points</th>
+                      <th className="py-3 px-3 text-center">{isPrimary ? 'Unit (1-9)' : 'Grade / Points'}</th>
                       <th className="py-3 px-3 text-left">Teacher Remark</th>
                     </tr>
                   </thead>
@@ -583,17 +612,23 @@ export default function Results() {
                           {sub.average || sub.overall_percentage}%
                         </td>
                         <td className="py-3 px-3 text-center font-bold">
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-mono font-extrabold ${
-                            sub.grade === 'A' || sub.grade === '1'
-                              ? 'bg-teal-primary/10 text-teal-dark border border-teal-primary/20'
-                              : sub.grade === 'B' || sub.grade === '2'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : sub.grade === 'C' || sub.grade === '3'
-                              ? 'bg-brand-50 text-brand-700 border border-brand-200'
-                              : 'bg-neutral-100 text-neutral-700'
-                          }`}>
-                            {sub.grade || '—'}
-                          </span>
+                          {isPrimary ? (
+                            <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-mono font-extrabold bg-teal-primary/10 text-teal-dark border border-teal-primary/20">
+                              {sub.units ? `Unit ${sub.units}` : getPrimaryUnitLabel(sub.grade, sub.average || sub.overall_percentage)}
+                            </span>
+                          ) : (
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-mono font-extrabold ${
+                              sub.grade === 'A'
+                                ? 'bg-teal-primary/10 text-teal-dark border border-teal-primary/20'
+                                : sub.grade === 'B'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : sub.grade === 'C'
+                                ? 'bg-brand-50 text-brand-700 border border-brand-200'
+                                : 'bg-neutral-100 text-neutral-700'
+                            }`}>
+                              {sub.grade || '—'}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-3 italic text-muted text-[11px]">
                           {sub.remark || 'Satisfactory academic effort throughout the term.'}
@@ -723,11 +758,11 @@ export default function Results() {
       {/* Class Selector & Grade Distribution Chart */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <Card
-          title="Grade Distribution Histogram"
+          title={isPrimary ? "Units Distribution Histogram" : "Grade Distribution Histogram"}
           subtitle={
             isClassTeacher
-              ? "Frequency of letter grades across all registered syllabi"
-              : `Grade spread for your allocated subject: ${assignedSubjects[0]?.subject_name || 'Subject'}`
+              ? (isPrimary ? "Frequency of units (Unit 1 to Unit 9) across cohort subjects" : "Frequency of letter grades across all registered syllabi")
+              : `Spread for your allocated subject: ${assignedSubjects[0]?.subject_name || 'Subject'}`
           }
           className="lg:col-span-2"
         >
@@ -806,12 +841,10 @@ export default function Results() {
         }
         subtitle={
           isClassTeacher
-            ? (levelCategory === 'primary_g4_g7'
-                ? 'Full multi-subject broadsheet ranked by Total Units (Best 6 subjects: best = 6 units)'
+            ? (isPrimary
+                ? 'Full multi-subject broadsheet ranked by Total Units (Unit 1 is highest distinction)'
                 : levelCategory === 'a_level'
                 ? 'Full multi-subject broadsheet ranked by Total Points (A=5, B=4, C=3, D=2, E=1)'
-                : levelCategory === 'ecd_to_g3'
-                ? 'Ranked in descending order of Total Marks'
                 : 'Full broadsheet ranked by Mean Aggregate & O-Level Passes (A, B, C, D, E, U)')
             : 'Subject Teacher view: Showing marks and performance for your allocated subject only.'
         }
@@ -827,15 +860,13 @@ export default function Results() {
                   <>
                     <th className="py-2.5 text-right">Weighted Avg</th>
                     <th className="py-2.5 text-center">
-                      {levelCategory === 'primary_g4_g7'
+                      {isPrimary
                         ? 'Total Units (Best 6)'
                         : levelCategory === 'a_level'
                         ? 'Total Points (A-Level)'
-                        : levelCategory === 'ecd_to_g3'
-                        ? 'Total Marks'
                         : 'Quality Passes (A-C)'}
                     </th>
-                    <th className="py-2.5 text-center">Grade</th>
+                    <th className="py-2.5 text-center">{isPrimary ? 'Unit Score' : 'Grade'}</th>
                     <th className="py-2.5 text-center">Status</th>
                     <th className="py-2.5 text-right">Report Card</th>
                   </>
@@ -843,7 +874,7 @@ export default function Results() {
                   <>
                     <th className="py-2.5 text-left">Allocated Subject</th>
                     <th className="py-2.5 text-right">Subject Score</th>
-                    <th className="py-2.5 text-center">Subject Grade</th>
+                    <th className="py-2.5 text-center">{isPrimary ? 'Unit' : 'Subject Grade'}</th>
                     <th className="py-2.5 text-center">Pass / Fail</th>
                   </>
                 )}
@@ -872,17 +903,13 @@ export default function Results() {
                       <>
                         <td className="py-3 text-right font-mono font-bold text-ink">{st.overall_percentage}%</td>
                         <td className="py-3 text-center font-mono font-semibold">
-                          {levelCategory === 'primary_g4_g7' ? (
+                          {isPrimary ? (
                             <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold">
                               {st.total_units !== undefined ? `${st.total_units} units` : '—'}
                             </span>
                           ) : levelCategory === 'a_level' ? (
                             <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold">
                               {st.total_points !== undefined ? `${st.total_points} pts` : '—'}
-                            </span>
-                          ) : levelCategory === 'ecd_to_g3' ? (
-                            <span className="px-2 py-0.5 rounded-full bg-sage/20 text-teal-dark font-bold">
-                              {st.total_marks !== undefined ? `${st.total_marks} marks` : '—'}
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 font-bold">
@@ -891,7 +918,9 @@ export default function Results() {
                           )}
                         </td>
                         <td className="py-3 text-center font-bold font-mono">
-                          {st.grade || '—'}
+                          {isPrimary
+                            ? (st.units ? `Unit ${st.units}` : getPrimaryUnitLabel(st.grade, st.overall_percentage))
+                            : (st.grade || '—')}
                         </td>
                         <td className="py-3 text-center">
                           <StatusPill
@@ -919,7 +948,9 @@ export default function Results() {
                           {teacherSubject ? `${teacherSubject.average}%` : `${st.overall_percentage}%`}
                         </td>
                         <td className="py-3 text-center font-bold font-mono">
-                          {teacherSubject?.grade || st.grade || '—'}
+                          {isPrimary
+                            ? (teacherSubject?.units ? `Unit ${teacherSubject.units}` : getPrimaryUnitLabel(teacherSubject?.grade || st.grade, teacherSubject ? teacherSubject.average : st.overall_percentage))
+                            : (teacherSubject?.grade || st.grade || '—')}
                         </td>
                         <td className="py-3 text-center">
                           <StatusPill
@@ -1001,25 +1032,38 @@ export default function Results() {
                   <th className="p-2 border-r border-black text-right">CALA (30%)</th>
                   <th className="p-2 border-r border-black text-right">Exam (50%)</th>
                   <th className="p-2 border-r border-black text-right font-bold">Total %</th>
-                  <th className="p-2 border-r border-black text-center">Grade</th>
+                  <th className="p-2 border-r border-black text-center">{isPrimary ? 'Unit (1-9)' : 'Grade'}</th>
                   <th className="p-2 text-left">Teacher Remark</th>
                 </tr>
               </thead>
               <tbody>
-                {(activeStudentReport.subjects && activeStudentReport.subjects.length > 0 ? activeStudentReport.subjects : [
-                  { subject_name: 'Mathematics', test_score: 18, project_score: 26, exam_score: 42, average: 86, grade: 'A', remark: 'Excellent analytical grasp.' },
-                  { subject_name: 'English Language', test_score: 16, project_score: 24, exam_score: 39, average: 79, grade: 'A', remark: 'Commendable creative prose.' },
-                  { subject_name: 'Combined Science', test_score: 15, project_score: 22, exam_score: 38, average: 75, grade: 'B', remark: 'Sound practical experimentation.' },
-                  { subject_name: 'Shona Language', test_score: 17, project_score: 25, exam_score: 40, average: 82, grade: 'A', remark: 'Distinction in literature analysis.' },
-                  { subject_name: 'Geography', test_score: 14, project_score: 21, exam_score: 35, average: 70, grade: 'B', remark: 'Consistent mapwork competence.' }
-                ]).map((row, i) => (
+                {(activeStudentReport.subjects && activeStudentReport.subjects.length > 0 ? activeStudentReport.subjects : (
+                  isPrimary ? [
+                    { subject_name: 'Mathematics', test_score: 18, project_score: 26, exam_score: 42, average: 86, units: 1, grade: 'Unit 1', remark: 'Excellent analytical grasp.' },
+                    { subject_name: 'English Language', test_score: 16, project_score: 24, exam_score: 39, average: 79, units: 2, grade: 'Unit 2', remark: 'Commendable creative prose.' },
+                    { subject_name: 'Indigenous Language (Shona)', test_score: 17, project_score: 25, exam_score: 40, average: 82, units: 1, grade: 'Unit 1', remark: 'Distinction in literature.' },
+                    { subject_name: 'Science & Technology', test_score: 15, project_score: 22, exam_score: 38, average: 75, units: 2, grade: 'Unit 2', remark: 'Sound practical experimentation.' },
+                    { subject_name: 'Social Sciences', test_score: 14, project_score: 21, exam_score: 35, average: 70, units: 2, grade: 'Unit 2', remark: 'Consistent mapwork competence.' },
+                    { subject_name: 'Physical Education & Arts', test_score: 18, project_score: 27, exam_score: 43, average: 88, units: 1, grade: 'Unit 1', remark: 'Outstanding artistic talent.' }
+                  ] : [
+                    { subject_name: 'Mathematics', test_score: 18, project_score: 26, exam_score: 42, average: 86, grade: 'A', remark: 'Excellent analytical grasp.' },
+                    { subject_name: 'English Language', test_score: 16, project_score: 24, exam_score: 39, average: 79, grade: 'A', remark: 'Commendable creative prose.' },
+                    { subject_name: 'Combined Science', test_score: 15, project_score: 22, exam_score: 38, average: 75, grade: 'B', remark: 'Sound practical experimentation.' },
+                    { subject_name: 'Shona Language', test_score: 17, project_score: 25, exam_score: 40, average: 82, grade: 'A', remark: 'Distinction in literature analysis.' },
+                    { subject_name: 'Geography', test_score: 14, project_score: 21, exam_score: 35, average: 70, grade: 'B', remark: 'Consistent mapwork competence.' }
+                  ]
+                )).map((row, i) => (
                   <tr key={i} className="border-b border-black/40">
                     <td className="p-2 border-r border-black font-semibold">{row.subject_name || row.name}</td>
                     <td className="p-2 border-r border-black text-right font-mono">{row.test_score !== undefined ? `${row.test_score}` : '17'}</td>
                     <td className="p-2 border-r border-black text-right font-mono">{row.project_score !== undefined ? `${row.project_score}` : '24'}</td>
                     <td className="p-2 border-r border-black text-right font-mono">{row.exam_score !== undefined ? `${row.exam_score}` : '39'}</td>
                     <td className="p-2 border-r border-black text-right font-mono font-bold">{row.average}%</td>
-                    <td className="p-2 border-r border-black text-center font-bold">{row.grade}</td>
+                    <td className="p-2 border-r border-black text-center font-bold">
+                      {isPrimary
+                        ? (row.units ? `Unit ${row.units}` : getPrimaryUnitLabel(row.grade, row.average))
+                        : (row.grade || '—')}
+                    </td>
                     <td className="p-2 italic text-neutral-700">{row.remark || 'Good progress shown this term.'}</td>
                   </tr>
                 ))}
@@ -1038,15 +1082,15 @@ export default function Results() {
               </div>
               <div>
                 <span className="font-bold block">
-                  {levelCategory === 'primary_g4_g7'
-                    ? 'Best-6 Units Aggregate:'
+                  {isPrimary
+                    ? 'Total Units Aggregate:'
                     : levelCategory === 'a_level'
                     ? 'A-Level Points Total:'
                     : 'Quality Passes (A-C):'}
                 </span>
                 <span className="font-mono text-base font-bold">
-                  {levelCategory === 'primary_g4_g7'
-                    ? `${activeStudentReport.total_units || 12} Units (Distinction Pass)`
+                  {isPrimary
+                    ? `${activeStudentReport.total_units || 9} Units (${(activeStudentReport.total_units || 9) <= 12 ? 'Distinction' : (activeStudentReport.total_units || 9) <= 24 ? 'Credit' : 'Satisfactory Pass'})`
                     : levelCategory === 'a_level'
                     ? `${activeStudentReport.total_points || 14} Points`
                     : `${activeStudentReport.passes_count || 6} Passes (A-C)`}

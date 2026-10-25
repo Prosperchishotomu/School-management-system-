@@ -13,27 +13,23 @@
  */
 function calculatePrimaryUnits(markPercentage) {
   const mark = parseFloat(markPercentage || 0);
-  if (mark >= 80) return { units: 1, grade: '1', descriptor: 'Distinction', is_pass: true };
-  if (mark >= 70) return { units: 2, grade: '2', descriptor: 'Merit', is_pass: true };
-  if (mark >= 60) return { units: 3, grade: '3', descriptor: 'Credit', is_pass: true };
-  if (mark >= 50) return { units: 4, grade: '4', descriptor: 'Satisfactory', is_pass: true };
-  if (mark >= 45) return { units: 5, grade: '5', descriptor: 'Marginal Pass', is_pass: true };
-  if (mark >= 40) return { units: 6, grade: '6', descriptor: 'Bare Pass', is_pass: true };
-  if (mark >= 35) return { units: 7, grade: '7', descriptor: 'Unsatisfactory', is_pass: false };
-  if (mark >= 30) return { units: 8, grade: '8', descriptor: 'Poor', is_pass: false };
-  return { units: 9, grade: '9', descriptor: 'Very Poor', is_pass: false };
+  if (mark >= 80) return { units: 1, grade: '1', grade_symbol: 'Unit 1', descriptor: 'Distinction', is_pass: true };
+  if (mark >= 70) return { units: 2, grade: '2', grade_symbol: 'Unit 2', descriptor: 'Merit', is_pass: true };
+  if (mark >= 60) return { units: 3, grade: '3', grade_symbol: 'Unit 3', descriptor: 'Credit', is_pass: true };
+  if (mark >= 50) return { units: 4, grade: '4', grade_symbol: 'Unit 4', descriptor: 'Satisfactory', is_pass: true };
+  if (mark >= 45) return { units: 5, grade: '5', grade_symbol: 'Unit 5', descriptor: 'Marginal Pass', is_pass: true };
+  if (mark >= 40) return { units: 6, grade: '6', grade_symbol: 'Unit 6', descriptor: 'Bare Pass', is_pass: true };
+  if (mark >= 35) return { units: 7, grade: '7', grade_symbol: 'Unit 7', descriptor: 'Unsatisfactory', is_pass: false };
+  if (mark >= 30) return { units: 8, grade: '8', grade_symbol: 'Unit 8', descriptor: 'Poor', is_pass: false };
+  return { units: 9, grade: '9', grade_symbol: 'Unit 9', descriptor: 'Very Poor', is_pass: false };
 }
 
 /**
  * ECD to Grade 3 Descriptor mapping
  */
 function calculateECDGrade(markPercentage) {
-  const mark = parseFloat(markPercentage || 0);
-  if (mark >= 80) return { grade: 'Distinction', descriptor: 'Exceeding Expectations', is_pass: true };
-  if (mark >= 65) return { grade: 'Merit',       descriptor: 'Meeting Expectations',   is_pass: true };
-  if (mark >= 50) return { grade: 'Credit',      descriptor: 'Approaching Expectations', is_pass: true };
-  if (mark >= 40) return { grade: 'Pass',        descriptor: 'Emerging',                is_pass: true };
-  return { grade: 'Needs Improvement', descriptor: 'Needs Support', is_pass: false };
+  // In Zimbabwean primary schools, all primary levels use units (1 to 9)
+  return calculatePrimaryUnits(markPercentage);
 }
 
 /**
@@ -87,13 +83,13 @@ function calculateZimsecAGrade(markPercentage, scaleType = '5_point') {
 
 /**
  * Determine Level Category:
- * - 'ecd_to_g3'
- * - 'primary_g4_g7'
- * - 'o_level'
- * - 'a_level'
+ * - 'primary_g4_g7' (Primary school - Units only 1 to 9)
+ * - 'o_level' (Secondary Forms 1-4)
+ * - 'a_level' (High School Forms 5-6)
  */
 function determineLevelCategory(className = '', levelValue = null, schoolType = 'primary') {
   const nameStr = String(className || '').trim().toLowerCase();
+  const levelStr = String(levelValue || '').trim().toLowerCase();
   const levelNum = parseInt(levelValue, 10);
 
   // A-Level detection: Form 5, Form 6, Lower 6, Upper 6, L6, U6
@@ -107,33 +103,13 @@ function determineLevelCategory(className = '', levelValue = null, schoolType = 
   // O-Level detection: Form 1 to Form 4
   if (
     /form\s*[1-4]\b|ordinary/i.test(nameStr) ||
-    (levelNum >= 8 && levelNum <= 11)
+    (levelNum >= 8 && levelNum <= 11) ||
+    (levelStr.includes('sec') && !/grade/i.test(nameStr))
   ) {
     return 'o_level';
   }
 
-  // ECD to Grade 3 detection
-  if (
-    /ecd|baby|infant|nursery|kindergarten|grade\s*[1-3]\b/i.test(nameStr) ||
-    (levelNum >= 1 && levelNum <= 3)
-  ) {
-    return 'ecd_to_g3';
-  }
-
-  // Primary Grade 4 to 7 detection
-  if (
-    /grade\s*[4-7]\b/i.test(nameStr) ||
-    (levelNum >= 4 && levelNum <= 7)
-  ) {
-    return 'primary_g4_g7';
-  }
-
-  // Fallback based on school_type
-  const sType = String(schoolType || '').toLowerCase();
-  if (sType === 'secondary') return 'o_level';
-  if (sType === 'high_school' || sType === 'combined') {
-    return /6|advanced/i.test(nameStr) ? 'a_level' : 'o_level';
-  }
+  // All Primary classes (Grade 1 to 7, Primary, ECD) use units only!
   return 'primary_g4_g7';
 }
 
@@ -150,13 +126,14 @@ function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7
     const avg = parseFloat(sub.subject_avg ?? sub.average ?? sub.mark ?? 0);
     totalMarkSum += avg;
 
-    if (levelCategory === 'primary_g4_g7') {
+    if (levelCategory === 'primary_g4_g7' || levelCategory === 'ecd_to_g3' || levelCategory === 'primary') {
       const calc = calculatePrimaryUnits(avg);
       return {
         subject_id: sub.subject_id || sub.subject || sub.code,
         subject_name: sub.subject_name || sub.subject || sub.name || 'Subject',
         average: parseFloat(avg.toFixed(1)),
-        grade: calc.grade,
+        grade: String(calc.units),
+        grade_symbol: `Unit ${calc.units}`,
         units: calc.units,
         descriptor: calc.descriptor,
         is_pass: calc.is_pass
@@ -198,32 +175,24 @@ function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7
 
   const overallPercentage = count > 0 ? parseFloat((totalMarkSum / count).toFixed(1)) : 0;
 
-  if (levelCategory === 'primary_g4_g7') {
+  if (levelCategory === 'primary_g4_g7' || levelCategory === 'ecd_to_g3' || levelCategory === 'primary') {
     // Sort subjects by units ascending (1 is best, 9 is worst)
     const sortedByUnits = [...formattedSubjects].sort((a, b) => a.units - b.units);
-    // Maximum 6 subjects counted
-    const best6 = sortedByUnits.slice(0, 6);
-    const totalUnits = best6.reduce((acc, s) => acc + s.units, 0);
+    // Count best subjects (up to 6)
+    const bestSubjects = sortedByUnits.slice(0, Math.min(6, sortedByUnits.length));
+    const totalUnits = bestSubjects.reduce((acc, s) => acc + s.units, 0);
+    const overallUnit = calculatePrimaryUnits(overallPercentage).units;
 
     return {
       formattedSubjects,
-      countedSubjects: best6,
+      countedSubjects: bestSubjects,
       overallPercentage,
-      totalUnits, // 6 best to 54 worst
+      totalUnits, // Lower units = better rank (e.g. 6 units is highest distinction)
       totalMarks: parseFloat(totalMarkSum.toFixed(1)),
       passesCount: formattedSubjects.filter(s => s.is_pass).length,
-      grade: calculatePrimaryUnits(overallPercentage).grade,
-      passStatus: totalUnits <= 36 ? 'pass' : 'fail'
-    };
-  } else if (levelCategory === 'ecd_to_g3') {
-    return {
-      formattedSubjects,
-      countedSubjects: formattedSubjects,
-      overallPercentage,
-      totalMarks: parseFloat(totalMarkSum.toFixed(1)),
-      passesCount: formattedSubjects.filter(s => s.is_pass).length,
-      grade: calculateECDGrade(overallPercentage).grade,
-      passStatus: overallPercentage >= 50 ? 'pass' : 'fail'
+      grade: String(overallUnit),
+      grade_symbol: `Unit ${overallUnit}`,
+      passStatus: overallUnit <= 6 ? 'pass' : 'fail'
     };
   } else if (levelCategory === 'a_level') {
     // No maximum number of subjects
@@ -264,16 +233,11 @@ function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7
  */
 function rankStudentResults(studentList = [], levelCategory = 'primary_g4_g7') {
   const sorted = [...studentList].sort((a, b) => {
-    if (levelCategory === 'primary_g4_g7') {
-      if (a.total_units !== b.total_units) {
+    if (levelCategory === 'primary_g4_g7' || levelCategory === 'primary' || levelCategory === 'ecd_to_g3') {
+      if (a.total_units !== b.total_units && a.total_units !== undefined && b.total_units !== undefined) {
         return a.total_units - b.total_units; // Ascending: 6 units is best!
       }
       return (b.overall_percentage || 0) - (a.overall_percentage || 0); // Descending % tie-break
-    } else if (levelCategory === 'ecd_to_g3') {
-      if (a.total_marks !== b.total_marks) {
-        return (b.total_marks || 0) - (a.total_marks || 0); // Descending marks: highest is best!
-      }
-      return (b.overall_percentage || 0) - (a.overall_percentage || 0);
     } else if (levelCategory === 'a_level') {
       if (a.total_points !== b.total_points) {
         return (b.total_points || 0) - (a.total_points || 0); // Descending points: highest points is best!
