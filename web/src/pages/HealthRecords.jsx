@@ -51,19 +51,9 @@ export default function HealthRecords() {
 
   const students = Array.isArray(studentsData) ? studentsData : [];
 
-  // Mock initial clinic visits and allergy registry if backend table isn't populated yet
-  const [visits, setVisits] = useState([
-    { id: 1, student_name: 'Farai Sibanda', class_name: 'Form 3 North', visit_date: '2026-03-24', complaint: 'Sports Injury — Ankle Sprain', treatment: 'Cold compress, crepe bandage, ibuprofen', referred: false },
-    { id: 2, student_name: 'Ruvimbo Choto', class_name: 'Form 4 East', visit_date: '2026-03-22', complaint: 'Acute Asthmatic Wheezing', treatment: 'Salbutamol nebulisation, monitored 45 min', referred: false },
-    { id: 3, student_name: 'Tendai Moyo', class_name: 'Form 2 West', visit_date: '2026-03-20', complaint: 'High Fever (39.2C) & Chills', treatment: 'Rapid Malaria Test (Positive). Paracetamol.', referred: true, referred_to: 'Parirenyatwa General Hospital' },
-    { id: 4, student_name: 'Kudzai Ndlovu', class_name: 'Grade 6 Blue', visit_date: '2026-03-18', complaint: 'Allergic Urticaria (Peanut exposure)', treatment: 'Oral antihistamine administered immediately', referred: false },
-  ]);
-
-  const [chronicRegistry, setChronicRegistry] = useState([
-    { id: 1, student_name: 'Ruvimbo Choto', class_name: 'Form 4 East', blood_group: 'B+', allergies: 'Pollen, Dust', condition: 'Bronchial Asthma', emergency_contact: 'Mrs. Choto (+263 77 289 1102)' },
-    { id: 2, student_name: 'Kudzai Ndlovu', class_name: 'Grade 6 Blue', blood_group: 'O+', allergies: 'Severe Peanut Anaphylaxis', condition: 'Carries Epipen', emergency_contact: 'Mr. Ndlovu (+263 71 884 9920)' },
-    { id: 3, student_name: 'Blessing Musarurwa', class_name: 'Form 1 South', blood_group: 'A+', allergies: 'Penicillin, Sulfa', condition: 'Type 1 Diabetes', emergency_contact: 'Dr. Musarurwa (+263 77 340 1928)' },
-  ]);
+  // Clinic visits and allergy registry logged by nursing staff
+  const [visits, setVisits] = useState([]);
+  const [chronicRegistry, setChronicRegistry] = useState([]);
 
   const handleRecordVisit = (e) => {
     e.preventDefault();

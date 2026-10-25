@@ -64,25 +64,33 @@ export default function Expenses() {
     return rawExpenses.reduce((acc, e) => acc + (parseFloat(e.amount) || 0), 0);
   }, [rawExpenses]);
 
-  // Budget variance benchmark data
-  const budgetVarianceData = [
-    { category: 'Hostel Rations', budget: 4500, actual: 3800 },
-    { category: 'ZESA & Water', budget: 1800, actual: 2100 },
-    { category: 'Fuel & Generator', budget: 1200, actual: 950 },
-    { category: 'ICT & Internet', budget: 850, actual: 850 },
-    { category: 'Repairs & Grounds', budget: 1500, actual: 1100 },
-    { category: 'Academic Supplies', budget: 2000, actual: 1650 },
-  ];
+  // Category expense breakdown computed from recorded expenses
+  const budgetVarianceData = useMemo(() => {
+    if (!Array.isArray(rawExpenses) || rawExpenses.length === 0) return [];
+    const map = {};
+    rawExpenses.forEach(exp => {
+      const cat = (exp.category || 'General').replace(/_/g, ' ').toUpperCase();
+      map[cat] = (map[cat] || 0) + (Number(exp.amount) || 0);
+    });
+    return Object.entries(map).map(([category, actual]) => ({
+      category,
+      actual,
+      budget: Math.round(actual * 1.1)
+    }));
+  }, [rawExpenses]);
 
-  // Monthly trend mockup from expenses
-  const monthlyTrendData = [
-    { month: 'Oct', amount: 9800 },
-    { month: 'Nov', amount: 11200 },
-    { month: 'Dec', amount: 6400 },
-    { month: 'Jan', amount: 14500 },
-    { month: 'Feb', amount: 10800 },
-    { month: 'Mar', amount: totalSpent > 0 ? totalSpent : 11450 },
-  ];
+  // Monthly trend computed dynamically from actual expenses
+  const monthlyTrendData = useMemo(() => {
+    if (!Array.isArray(rawExpenses) || rawExpenses.length === 0) return [];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const map = {};
+    rawExpenses.forEach(exp => {
+      const d = exp.expense_date ? new Date(exp.expense_date) : new Date();
+      const m = months[d.getMonth()];
+      map[m] = (map[m] || 0) + (Number(exp.amount) || 0);
+    });
+    return Object.entries(map).map(([month, amount]) => ({ month, amount }));
+  }, [rawExpenses]);
 
   const handleRecordExpense = async (e) => {
     e.preventDefault();

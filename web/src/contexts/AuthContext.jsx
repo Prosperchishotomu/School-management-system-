@@ -199,7 +199,29 @@ export const AuthProvider = ({ children }) => {
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    // Graceful fallback during Vite HMR reloads or initial tree mount
+    let user = null;
+    let activeSchoolId = null;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = sessionStorage.getItem('schoolbase_user');
+        if (saved) user = JSON.parse(saved);
+        activeSchoolId = sessionStorage.getItem('schoolbase_active_school_id') || user?.school_id || null;
+      } catch (_) {}
+    }
+    return {
+      user,
+      loading: false,
+      activeSchoolId,
+      login: async () => ({ success: false, error: 'Auth initializing' }),
+      logout: () => {
+        if (typeof window !== 'undefined') {
+          sessionStorage.clear();
+          window.location.replace('/login');
+        }
+      },
+      changeActiveSchool: () => {},
+    };
   }
   return context;
 };

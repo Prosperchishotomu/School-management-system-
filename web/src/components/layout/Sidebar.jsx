@@ -50,9 +50,9 @@ export default function Sidebar({ isOpen, onClose }) {
   });
 
   const [license, setLicense] = useState({
-    tier: 'Enterprise',
-    daysLeft: 180,
-    studentLimit: 1000,
+    tier: '',
+    daysLeft: 0,
+    studentLimit: 0,
     studentsCount: 0
   });
 
@@ -73,11 +73,12 @@ export default function Sidebar({ isOpen, onClose }) {
           if (res?.data) {
             const k = res.data.kpis || {};
             const lic = res.data.license || {};
-            setLicense(prev => ({
-              ...prev,
-              daysLeft: lic.days_left ?? prev.daysLeft,
+            setLicense({
+              tier: lic.tier || 'Active',
+              daysLeft: lic.days_left ?? 0,
+              studentLimit: lic.max_students || k.max_students || 0,
               studentsCount: k.total_students || 0
-            }));
+            });
           }
         })
         .catch(() => {});
@@ -305,7 +306,7 @@ export default function Sidebar({ isOpen, onClose }) {
 
         {/* Bottom card: License status (Admin only) & Sign out */}
         <div className="p-3 border-t border-white/10 bg-black/15 shrink-0 space-y-3">
-          {isAdmin && (
+          {isAdmin && Boolean(license.tier) && (
             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs">
               <div className="flex items-center justify-between mb-1.5">
                 <span className="font-semibold text-white/90 text-[11px]">{license.tier} Tier</span>

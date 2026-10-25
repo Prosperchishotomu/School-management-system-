@@ -762,7 +762,7 @@ export default function Staff() {
                 <label className="block text-[11px] font-semibold text-muted mb-1">Initial Password</label>
                 <input
                   type="text"
-                  placeholder="Default: Password123!"
+                  placeholder="Enter initial temporary password"
                   value={form.password}
                   onChange={e => setForm({ ...form, password: e.target.value })}
                   className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-mono"

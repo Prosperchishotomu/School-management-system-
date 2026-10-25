@@ -311,8 +311,12 @@ export default function Hostels() {
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    {['Bed 1', 'Bed 2', 'Bed 3', 'Bed 4'].map((bed, bIdx) => {
-                      const isOccupied = bIdx < 3; // Mocking occupancy
+                    {['Bed 1', 'Bed 2', 'Bed 3', 'Bed 4'].map((bed) => {
+                      const isOccupied = rawAllocations.some(a =>
+                        String(a.hostel_id) === String(selectedHostel?.id) &&
+                        (a.room_number === roomNo || String(a.room_number) === String(101 + rIdx)) &&
+                        a.bed_number === bed
+                      );
                       return (
                         <div
                           key={bed}

@@ -104,8 +104,8 @@ router.post('/', authenticateToken, requireRoles('school_admin', 'super_admin'),
       finalUsername = exists ? (baseUsername + Math.random().toString(36).substr(2, 3)) : baseUsername;
     }
 
-    // Use provided password or generate a default one
-    const finalPassword = password?.trim() || 'Password123!';
+    // Use provided password or generate a random temporary password
+    const finalPassword = password?.trim() || (crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, 'a') + '!9A');
 
     // Enforce email uniqueness across all staff and users
     if (cleanEmail) {
