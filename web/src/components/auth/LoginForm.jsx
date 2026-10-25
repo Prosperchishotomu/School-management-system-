@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   School, Lock, User, Eye, EyeOff, ArrowRight, AlertCircle,
-  ShieldCheck, Check
+  ShieldCheck
 } from 'lucide-react';
 
 export default function LoginForm({ isModal = false, onClose = null, onSuccess = null }) {
@@ -17,7 +17,6 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isShaking, setIsShaking] = useState(false);
-  const [ssoNotice, setSsoNotice] = useState(false);
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
@@ -62,7 +61,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
           navigate('/dashboard', { replace: true });
         }
       } else {
-        setError(result.error || 'Invalid credentials. Please verify your details or contact your school administrator.');
+        setError(result.error || 'Invalid credentials. Please verify your details or contact your administrator.');
         setIsShaking(true);
         setTimeout(() => setIsShaking(false), 500);
       }
@@ -74,106 +73,39 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
     }
   };
 
-  const handleSsoClick = () => {
-    setSsoNotice(true);
-    setTimeout(() => setSsoNotice(false), 3500);
-  };
-
   return (
     <div className={`w-full transition-all duration-300 ${isShaking ? 'animate-shake' : ''}`}>
-      {/* Brand Header */}
-      <div className="flex flex-col items-center text-center mb-6">
-        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-800 border border-emerald-500/30 flex items-center justify-center text-white shadow-xl shadow-emerald-900/20 mb-3.5">
-          <School className="w-7 h-7 text-white" />
+      {/* Brand Icon & Heading */}
+      <div className="flex flex-col items-center text-center mb-7">
+        <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 border border-emerald-400/30 flex items-center justify-center text-white shadow-xl shadow-emerald-950/50 mb-3.5 group-hover:scale-105 transition-transform">
+          <School className="w-6 h-6 text-emerald-100" />
         </div>
 
-        <h2 className="text-2xl font-display font-extrabold text-slate-900 tracking-tight">
-          Welcome to <span className="text-emerald-700">SchoolBase</span>
+        <h2 className="text-2xl font-display font-extrabold text-white tracking-tight">
+          Institutional Portal
         </h2>
-        <p className="text-xs text-slate-600 mt-1 max-w-xs font-sans font-medium">
-          Unified Institutional Access for Staff, Students & Parents
+        <p className="text-xs text-slate-400 mt-1.5 font-sans font-medium">
+          Sign in to access your designated workspace
         </p>
-      </div>
-
-      {/* Enterprise Single Sign-On (SSO) Options */}
-      <div className="space-y-2 mb-5">
-        <div className="grid grid-cols-2 gap-2">
-          {/* Google Workspace for Education */}
-          <button
-            type="button"
-            onClick={handleSsoClick}
-            className="w-full py-2.5 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 text-slate-800 text-xs font-semibold flex items-center justify-center gap-2 transition-all duration-150 cursor-pointer shadow-xs"
-          >
-            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
-              <path
-                fill="#EA4335"
-                d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"
-              />
-              <path
-                fill="#4285F4"
-                d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z"
-              />
-              <path
-                fill="#FBBC05"
-                d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z"
-              />
-              <path
-                fill="#34A853"
-                d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16C3.7 19.7 7.5 23 12 23z"
-              />
-            </svg>
-            <span className="truncate">Google Workspace</span>
-          </button>
-
-          {/* Microsoft 365 Education */}
-          <button
-            type="button"
-            onClick={handleSsoClick}
-            className="w-full py-2.5 px-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 text-slate-800 text-xs font-semibold flex items-center justify-center gap-2 transition-all duration-150 cursor-pointer shadow-xs"
-          >
-            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 23 23">
-              <path fill="#f35325" d="M1 1h10v10H1z" />
-              <path fill="#81bc06" d="M12 1h10v10H12z" />
-              <path fill="#05a6f0" d="M1 12h10v10H1z" />
-              <path fill="#ffba08" d="M12 12h10v10H12z" />
-            </svg>
-            <span className="truncate">Microsoft 365</span>
-          </button>
-        </div>
-
-        {ssoNotice && (
-          <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-800 text-[11px] font-sans font-medium flex items-center gap-2 animate-fadeIn">
-            <Check className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-            <span>Redirecting to institutional Single Sign-On (SSO) provider...</span>
-          </div>
-        )}
-      </div>
-
-      {/* Divider */}
-      <div className="relative flex items-center justify-center mb-5">
-        <div className="border-t border-slate-200 w-full" />
-        <span className="bg-slate-100 text-slate-600 border border-slate-200/80 px-3 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wider font-mono">
-          or institutional credentials
-        </span>
       </div>
 
       {/* Error Banner */}
       {error && (
-        <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-300 text-red-800 text-xs flex items-start gap-2.5 animate-fadeIn font-medium">
-          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
+        <div className="mb-5 p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5 animate-fadeIn font-medium">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
           <div className="flex-1 font-sans text-xs leading-relaxed">{error}</div>
         </div>
       )}
 
-      {/* Form — Single unified entry point */}
+      {/* Form — Clean unified entry */}
       <form onSubmit={handleLoginSubmit} className="space-y-4 text-xs">
         {/* Identifier Input */}
         <div>
-          <label className="block text-xs font-bold text-slate-800 mb-1.5 font-sans">
-            Username. <span className="text-rose-600 font-bold">*</span>
+          <label className="block text-xs font-semibold text-slate-300 mb-1.5 font-sans">
+            Username or Email
           </label>
           <div className="relative group">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 group-focus-within:text-emerald-700 transition-colors">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 group-focus-within:text-emerald-400 transition-colors">
               <User className="w-4 h-4" />
             </div>
             <input
@@ -184,29 +116,29 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setUsername(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="          username or email"
+              placeholder="Enter your username or email"
               autoComplete="username"
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-xs font-medium font-sans placeholder:text-slate-400 focus:outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/15 shadow-xs transition-all"
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700/80 bg-slate-950/70 text-white placeholder-slate-500 text-xs font-medium font-sans focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 shadow-inner transition-all"
             />
           </div>
         </div>
 
-        {/* Password */}
+        {/* Password Input */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-bold text-slate-800 font-sans">
-              Password <span className="text-rose-600 font-bold">*</span>
+            <label className="text-xs font-semibold text-slate-300 font-sans">
+              Password
             </label>
             <Link
               to="/forgot-password"
-              className="text-xs text-emerald-700 hover:text-emerald-800 font-semibold hover:underline transition-colors font-sans"
+              className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold hover:underline transition-colors font-sans"
             >
               Forgot password?
             </Link>
           </div>
 
           <div className="relative group">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 group-focus-within:text-emerald-700 transition-colors">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 group-focus-within:text-emerald-400 transition-colors">
               <Lock className="w-4 h-4" />
             </div>
 
@@ -218,19 +150,19 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setPassword(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="          enter your password"
+              placeholder="Enter your password"
               autoComplete="current-password"
-              className="w-full pl-10 pr-12 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-xs font-medium font-sans placeholder:text-slate-400 focus:outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/15 shadow-xs transition-all"
+              className="w-full pl-10 pr-11 py-3 rounded-xl border border-slate-700/80 bg-slate-950/70 text-white placeholder-slate-500 text-xs font-medium font-sans focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 shadow-inner transition-all"
             />
 
             <button
               type="button"
               onClick={() => setShowPassword(prev => !prev)}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+              className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-white transition-colors cursor-pointer"
             >
               {showPassword ? (
-                <EyeOff className="w-4 h-4 text-emerald-700" />
+                <EyeOff className="w-4 h-4 text-emerald-400" />
               ) : (
                 <Eye className="w-4 h-4" />
               )}
@@ -239,13 +171,13 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
         </div>
 
         {/* Remember Me */}
-        <div className="flex items-center justify-between pt-0.5">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-700 hover:text-slate-900 font-medium font-sans">
+        <div className="flex items-center justify-between pt-1">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-300 hover:text-white font-medium font-sans">
             <input
               type="checkbox"
               checked={rememberMe}
               onChange={e => setRememberMe(e.target.checked)}
-              className="w-4 h-4 rounded text-emerald-600 bg-white border-slate-300 focus:ring-emerald-500 cursor-pointer"
+              className="w-4 h-4 rounded text-emerald-500 bg-slate-950 border-slate-700 focus:ring-emerald-500 cursor-pointer accent-emerald-500"
             />
             <span>Remember this device</span>
           </label>
@@ -255,7 +187,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
         <button
           type="submit"
           disabled={loading}
-          className="group relative w-full mt-2 py-3 px-4 rounded-xl font-sans font-bold text-xs tracking-wide uppercase text-white bg-gradient-to-r from-emerald-600 via-teal-700 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 active:scale-[0.99] transition-all duration-200 shadow-md shadow-emerald-900/20 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+          className="group relative w-full mt-2 py-3.5 px-4 rounded-xl font-sans font-bold text-xs tracking-wider uppercase text-white bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] transition-all duration-200 shadow-lg shadow-emerald-950/50 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
         >
           {loading ? (
             <>
@@ -264,7 +196,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
             </>
           ) : (
             <>
-              <span>Sign In to SchoolBase</span>
+              <span>Sign In to Workspace</span>
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </>
           )}
@@ -272,14 +204,14 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
       </form>
 
       {/* Security Compliance Footer */}
-      <div className="mt-6 pt-4 border-t border-slate-200 flex items-center justify-center gap-3 text-[11px] text-slate-600 font-sans font-medium">
-        <span className="flex items-center gap-1.5 text-slate-800 font-semibold">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+      <div className="mt-7 pt-5 border-t border-white/10 flex items-center justify-center gap-3 text-[11px] text-slate-400 font-sans font-medium">
+        <span className="flex items-center gap-1.5 text-slate-300 font-semibold">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
           <span>256-Bit SSL Encrypted</span>
         </span>
-        <span className="text-slate-400">•</span>
-        <span>Role-Based Access</span>
-        <span className="text-slate-400">•</span>
+        <span className="text-slate-600">•</span>
+        <span>Role-Isolated</span>
+        <span className="text-slate-600">•</span>
         <span>MoPSE Certified</span>
       </div>
     </div>

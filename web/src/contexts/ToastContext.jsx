@@ -11,17 +11,17 @@ const ICONS = {
 };
 
 const STYLES = {
-  success: 'bg-surface border-teal-primary/40 text-teal-dark',
-  error:   'bg-surface border-brick-critical/40 text-brick-critical',
-  warning: 'bg-surface border-amber-warning/40 text-amber-warning',
-  info:    'bg-surface border-sky-info/40 text-ink',
+  success: 'bg-slate-900/95 border-emerald-500/50 text-emerald-100 shadow-lg shadow-black/40',
+  error:   'bg-slate-900/95 border-rose-500/50 text-rose-100 shadow-lg shadow-black/40',
+  warning: 'bg-slate-900/95 border-amber-500/50 text-amber-100 shadow-lg shadow-black/40',
+  info:    'bg-slate-900/95 border-cyan-500/50 text-slate-100 shadow-lg shadow-black/40',
 };
 
 const ICON_STYLES = {
-  success: 'text-teal-primary',
-  error:   'text-brick-critical',
-  warning: 'text-amber-warning',
-  info:    'text-sky-info',
+  success: 'text-emerald-400',
+  error:   'text-rose-400',
+  warning: 'text-amber-400',
+  info:    'text-cyan-400',
 };
 
 let toastId = 0;
@@ -74,11 +74,11 @@ export const ToastProvider = ({ children }) => {
     <ToastContext.Provider value={notify}>
       {children}
 
-      {/* Toast Renderer — bottom-right corner */}
+      {/* Toast Renderer — Top Right-Hand Corner */}
       <div
         aria-live="polite"
-        className="fixed bottom-6 right-6 z-[9999] flex flex-col gap-2 pointer-events-none"
-        style={{ maxWidth: '380px', width: 'calc(100vw - 3rem)' }}
+        className="fixed top-5 right-5 z-[9999] flex flex-col gap-2.5 pointer-events-none"
+        style={{ maxWidth: '400px', width: 'calc(100vw - 2.5rem)' }}
       >
         {toasts.map(t => {
           const Icon = ICONS[t.type] || Info;
@@ -88,19 +88,19 @@ export const ToastProvider = ({ children }) => {
               role={t.type === 'error' ? 'alert' : 'status'}
               className={[
                 'pointer-events-auto flex items-start gap-3 px-4 py-3.5 rounded-2xl',
-                'border shadow-xl backdrop-blur-sm font-sans text-sm',
+                'border shadow-2xl backdrop-blur-xl font-sans text-xs',
                 'transition-all duration-300 ease-out',
                 STYLES[t.type],
-                t.exiting ? 'opacity-0 translate-x-4 scale-95' : 'opacity-100 translate-x-0 scale-100',
+                t.exiting ? 'opacity-0 -translate-y-2 translate-x-4 scale-95' : 'opacity-100 translate-y-0 translate-x-0 scale-100',
               ].join(' ')}
-              style={{ animation: t.exiting ? undefined : 'slideInRight 0.25s ease-out' }}
+              style={{ animation: t.exiting ? undefined : 'slideInTopRight 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}
             >
               <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${ICON_STYLES[t.type]}`} />
-              <span className="flex-1 leading-snug font-medium text-[13px]">{t.message}</span>
+              <span className="flex-1 leading-relaxed font-medium text-xs">{t.message}</span>
               <button
                 onClick={() => dismiss(t.id)}
                 aria-label="Dismiss message"
-                className="shrink-0 opacity-50 hover:opacity-100 transition-opacity cursor-pointer mt-0.5"
+                className="shrink-0 opacity-60 hover:opacity-100 transition-opacity cursor-pointer mt-0.5"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -110,9 +110,9 @@ export const ToastProvider = ({ children }) => {
       </div>
 
       <style>{`
-        @keyframes slideInRight {
-          from { opacity: 0; transform: translateX(24px) scale(0.95); }
-          to   { opacity: 1; transform: translateX(0) scale(1); }
+        @keyframes slideInTopRight {
+          from { opacity: 0; transform: translateY(-16px) translateX(24px) scale(0.95); }
+          to   { opacity: 1; transform: translateY(0) translateX(0) scale(1); }
         }
       `}</style>
     </ToastContext.Provider>

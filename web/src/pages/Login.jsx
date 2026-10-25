@@ -4,35 +4,44 @@ import { useAuth } from '../contexts/AuthContext';
 import LoginForm from '../components/auth/LoginForm';
 import {
   School, ShieldCheck, GraduationCap, ArrowLeft,
-  Layers, Building2, Globe2, Sparkles
+  Layers, Building2, Globe2, Sparkles, CheckCircle2
 } from 'lucide-react';
 
 export default function Login() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // If already authenticated, allow continuation or account switch
+  // If already authenticated in this tab, present active session dashboard gateway
   if (user) {
     return (
-      <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl text-center space-y-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto">
-            <School className="w-6 h-6" />
+      <div className="min-h-screen w-full bg-[#0a0f1d] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
+        <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-40 pointer-events-none" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[550px] h-[550px] rounded-full bg-emerald-500/10 blur-3xl pointer-events-none" />
+
+        <div className="w-full max-w-md bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-xl text-center space-y-5 relative z-10 ring-1 ring-white/5">
+          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto shadow-inner">
+            <School className="w-7 h-7" />
           </div>
-          <h2 className="text-xl font-bold font-display text-white">Active Session Detected</h2>
-          <p className="text-xs text-slate-400">
-            You are currently signed in as <span className="font-bold text-white">{user.username || user.name}</span> (<span className="capitalize font-mono text-emerald-400">{(user.role || '').replace('_', ' ')}</span>).
-          </p>
-          <div className="flex flex-col gap-2 pt-2">
+          <div>
+            <h2 className="text-xl font-bold font-display text-white tracking-tight">Active Session Detected</h2>
+            <p className="text-xs text-slate-400 mt-1.5 leading-relaxed">
+              Signed in on this tab as <span className="font-bold text-white">{user.username || user.name}</span>
+              <span className="block mt-1 font-mono text-emerald-400 font-semibold uppercase tracking-wider text-[11px]">
+                {(user.role || '').replace(/_/g, ' ')}
+              </span>
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2.5 pt-2">
             <button
               onClick={() => navigate('/dashboard')}
-              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-emerald-950/40 cursor-pointer active:scale-[0.99]"
             >
               Continue to Dashboard
             </button>
             <button
               onClick={() => logout()}
-              className="w-full py-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              className="w-full py-2.5 rounded-xl border border-slate-700/80 hover:bg-slate-800/80 text-slate-300 text-xs font-semibold transition cursor-pointer"
             >
               Sign Out & Sign in as Different User
             </button>
@@ -43,13 +52,14 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex flex-col lg:flex-row relative overflow-hidden font-sans select-none">
-      {/* Background Ambient Glows */}
-      <div className="absolute top-0 left-0 -translate-x-1/4 -translate-y-1/4 w-[700px] h-[700px] rounded-full bg-gradient-to-br from-emerald-600/20 via-teal-500/10 to-transparent blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 right-0 translate-x-1/4 translate-y-1/4 w-[750px] h-[750px] rounded-full bg-gradient-to-tl from-cyan-500/10 via-emerald-600/10 to-transparent blur-3xl pointer-events-none" />
+    <div className="min-h-screen w-full bg-[#0a0f1d] text-slate-100 flex flex-col lg:flex-row relative overflow-hidden font-sans select-none">
+      {/* Background Architectural Mesh & Lighting */}
+      <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-35 pointer-events-none" />
+      <div className="absolute top-0 left-0 -translate-x-1/4 -translate-y-1/4 w-[750px] h-[750px] rounded-full bg-gradient-to-br from-emerald-600/15 via-teal-500/5 to-transparent blur-3xl pointer-events-none" />
+      <div className="absolute bottom-0 right-0 translate-x-1/4 translate-y-1/4 w-[750px] h-[750px] rounded-full bg-gradient-to-tl from-cyan-600/10 via-emerald-600/10 to-transparent blur-3xl pointer-events-none" />
 
       {/* Left Feature Column (Visible on Desktop) */}
-      <div className="hidden lg:flex lg:w-1/2 relative p-12 xl:p-16 flex-col justify-between bg-gradient-to-b from-slate-950 via-emerald-950/30 to-slate-950 text-white z-10 border-r border-white/10 backdrop-blur-md overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 relative p-12 xl:p-16 flex-col justify-between bg-gradient-to-b from-[#0a0f1d] via-[#0d162b]/60 to-[#0a0f1d] text-white z-10 border-r border-white/10 backdrop-blur-xl overflow-hidden">
         {/* Top Header */}
         <div className="flex items-center justify-between relative z-10">
           <Link to="/" className="flex items-center gap-3.5 group">
@@ -60,8 +70,8 @@ export default function Login() {
               <span className="font-display font-black text-2xl tracking-tight text-white block leading-none">
                 School<span className="text-emerald-400">Base</span>
               </span>
-              <span className="text-xs text-slate-400 font-medium">
-                Enterprise School Management System
+              <span className="text-[11px] text-slate-400 font-medium tracking-wide">
+                Institutional Management System
               </span>
             </div>
           </Link>
@@ -79,15 +89,15 @@ export default function Login() {
         <div className="my-auto py-10 max-w-lg relative z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-semibold mb-6">
             <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Zimbabwe Educational Standard</span>
+            <span>National Educational Standard • MoPSE Compliant</span>
           </div>
 
           <h1 className="text-3xl xl:text-4xl font-display font-black text-white leading-tight tracking-tight mb-4">
-            Unified Institutional Governance & Examination Engine
+            Next-Generation Educational Governance & Broadside Engine
           </h1>
 
-          <p className="text-sm text-slate-300 leading-relaxed mb-8 font-sans">
-            Engineered specifically for Zimbabwean primary, secondary, and high schools. Seamlessly managing MoPSE statutory returns, ZIMSEC continuous assessments, multi-currency fees, and hostel gates.
+          <p className="text-sm text-slate-300/90 leading-relaxed mb-8 font-sans">
+            Precision administration engineered for primary, secondary, and high schools. Seamlessly unifying admissions, ZIMSEC continuous assessments, dual-currency fees, and boarding security.
           </p>
 
           {/* Pillars Grid */}
@@ -95,18 +105,18 @@ export default function Login() {
             {[
               {
                 icon: GraduationCap,
-                title: 'Primary (Units) & High School (A–U / Points)',
-                desc: 'Automated termly ranking, position calculation, and broadsheets.'
+                title: 'ZIMSEC & Cambridge Assessment Broadsheets',
+                desc: 'Automated termly ranking, grade point calculation, and official broadsheets.'
               },
               {
                 icon: Layers,
-                title: 'Tiered Subject & Stream Allocations',
-                desc: 'Teachers view only their designated subjects and stream rosters.'
+                title: 'Multi-Currency Treasury & Cashier Desk',
+                desc: 'Real-time billing in USD & ZiG with automated receipt generation and debtor aging.'
               },
               {
                 icon: Building2,
-                title: 'Dual Currency & Boarding Exeats',
-                desc: 'Real-time cashiering in USD & ZiG with biometric gate pass validation.'
+                title: 'Hostels, Residences & Biometric Exeats',
+                desc: 'Digital student gate passes, dormitory room occupancy, and guardian notification alerts.'
               }
             ].map((feature, idx) => (
               <div
@@ -133,14 +143,14 @@ export default function Login() {
           </div>
           <span className="flex items-center gap-1.5 text-emerald-300">
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>MoPSE Census Certified</span>
+            <span>MoPSE Certified Platform</span>
           </span>
         </div>
       </div>
 
-      {/* Right Column: Modern Login Card */}
+      {/* Right Column: Sleek Executive Auth Card */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-10 lg:p-12 z-10">
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-[440px]">
           {/* Top back link on mobile */}
           <div className="lg:hidden flex items-center justify-between mb-6">
             <Link to="/" className="flex items-center gap-2">
@@ -161,14 +171,14 @@ export default function Login() {
             </Link>
           </div>
 
-          {/* Clean Card Container */}
-          <div className="rounded-3xl p-6 sm:p-8 border border-slate-200/80 bg-white shadow-2xl shadow-emerald-950/20 animate-slideUp text-slate-900">
+          {/* Unified Executive Glass Card */}
+          <div className="rounded-3xl p-7 sm:p-9 border border-white/10 bg-slate-900/80 backdrop-blur-2xl shadow-2xl shadow-black/70 animate-slideUp text-white ring-1 ring-white/5">
             <LoginForm isModal={false} />
           </div>
 
           {/* Quick Help Footer */}
           <div className="text-center text-xs text-slate-400 mt-6">
-            <span>Need staff or student account activation? </span>
+            <span>Need account activation or access assistance? </span>
             <Link to="/enquiries" className="text-emerald-400 hover:text-emerald-300 font-semibold hover:underline">
               Contact School Administration
             </Link>
