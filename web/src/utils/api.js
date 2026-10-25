@@ -7,17 +7,25 @@ let refreshPromise = null;
 
 async function refreshAccessToken() {
   if (!refreshPromise) {
+    const tabRefreshToken = sessionStorage.getItem('schoolbase_refresh_token');
+    if (!tabRefreshToken) {
+      throw new Error('Session refresh failed: no refresh token in this tab session');
+    }
     refreshPromise = fetch(`${API_URL}/auth/refresh`, {
       method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: tabRefreshToken })
     })
       .then(async response => {
         if (!response.ok) throw new Error('Session refresh failed');
         const result = await response.json();
         const token = result.data?.token;
+        const newRefreshToken = result.data?.refresh_token;
         if (!token) throw new Error('Session refresh returned no token');
         sessionStorage.setItem('schoolbase_token', token);
+        if (newRefreshToken) {
+          sessionStorage.setItem('schoolbase_refresh_token', newRefreshToken);
+        }
         return token;
       })
       .finally(() => { refreshPromise = null; });
@@ -68,7 +76,6 @@ async function request(path, options = {}) {
 
   const config = {
     ...options,
-    credentials: 'include',
     headers,
   };
 
@@ -97,6 +104,7 @@ async function request(path, options = {}) {
       }
       if (response.status === 401 && !path.includes('/auth/login') && !path.includes('/auth/refresh')) {
         sessionStorage.removeItem('schoolbase_token');
+        sessionStorage.removeItem('schoolbase_refresh_token');
         sessionStorage.removeItem('schoolbase_user');
         sessionStorage.removeItem('schoolbase_active_school_id');
         sessionStorage.removeItem('schoolbase_last_active');

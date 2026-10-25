@@ -14,7 +14,8 @@ import {
   CheckCircle,
   Wifi,
   WifiOff,
-  ChevronDown
+  ChevronDown,
+  LogOut
 } from 'lucide-react';
 
 const PAGE_META = {
@@ -43,7 +44,7 @@ const PAGE_META = {
 };
 
 export default function TopBar({ onMenuClick }) {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, logout } = useAuth();
   const location = useLocation();
 
   const [isDark, setIsDark] = useState(() => {
@@ -268,7 +269,7 @@ export default function TopBar({ onMenuClick }) {
             )}
           </div>
 
-          {/* User Profile Chip */}
+          {/* User Profile Chip & Fast Sign Out */}
           <div className="flex items-center gap-2 pl-2 border-l border-line">
             <Avatar name={user?.name || user?.username} size="sm" />
             <div className="hidden sm:block text-left">
@@ -279,6 +280,14 @@ export default function TopBar({ onMenuClick }) {
                 {(user?.role || '').replace('_', ' ')}
               </div>
             </div>
+            <button
+              onClick={() => logout()}
+              title="Sign Out"
+              aria-label="Sign Out"
+              className="p-1.5 text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer ml-1"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       </header>

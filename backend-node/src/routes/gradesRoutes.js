@@ -64,15 +64,21 @@ router.get('/', authenticateToken, async (req, res) => {
 
     if (subject) {
       // Check if student_subjects has enrollments for this class and subject
-      const enrolledStudentIds = await query(
-        `SELECT ss.student_id
-         FROM student_subjects ss
-         LEFT JOIN subjects sub ON ss.subject_id = sub.id
-         WHERE ss.school_id = ? AND (ss.class_id = ? OR ss.class_id IS NULL)
-           AND (ss.subject_id = ? OR LOWER(sub.name) = LOWER(?) OR LOWER(sub.code) = LOWER(?))
-           AND ss.status = 'active'`,
-        [schoolId, classId, subject, subject, subject]
-      );
+      let enrolledStudentIds = [];
+      try {
+        enrolledStudentIds = await query(
+          `SELECT ss.student_id
+           FROM student_subjects ss
+           JOIN students st ON ss.student_id = st.id
+           LEFT JOIN subjects sub ON ss.subject_id = sub.id
+           WHERE st.school_id = ? AND st.class_id = ?
+             AND (ss.subject_id = ? OR LOWER(sub.name) = LOWER(?) OR LOWER(sub.code) = LOWER(?))
+             AND (ss.status = 'active' OR ss.status IS NULL)`,
+          [schoolId, classId, subject, subject, subject]
+        );
+      } catch (subErr) {
+        console.warn('Student subjects lookup warning:', subErr.message);
+      }
 
       if (enrolledStudentIds.length > 0) {
         const idPlaceholders = enrolledStudentIds.map(() => '?').join(',');

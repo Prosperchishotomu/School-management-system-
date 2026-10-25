@@ -182,10 +182,7 @@ function AppRoutes() {
       <Route path="/" element={<Home />} />
 
       {/* Public: Login */}
-      <Route
-        path="/login"
-        element={user ? <Navigate to={user.role === 'super_admin' ? '/admin/command-center' : '/dashboard'} replace /> : <Login />}
-      />
+      <Route path="/login" element={<Login />} />
 
       {/* Public: Password Reset requests */}
       <Route path="/forgot-password" element={<ForgotPassword />} />

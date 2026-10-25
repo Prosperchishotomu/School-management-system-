@@ -8,13 +8,38 @@ import {
 } from 'lucide-react';
 
 export default function Login() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // If already authenticated, redirect
+  // If already authenticated, allow continuation or account switch
   if (user) {
-    navigate('/dashboard', { replace: true });
-    return null;
+    return (
+      <div className="min-h-screen w-full bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl text-center space-y-4">
+          <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center mx-auto">
+            <School className="w-6 h-6" />
+          </div>
+          <h2 className="text-xl font-bold font-display text-white">Active Session Detected</h2>
+          <p className="text-xs text-slate-400">
+            You are currently signed in as <span className="font-bold text-white">{user.username || user.name}</span> (<span className="capitalize font-mono text-emerald-400">{(user.role || '').replace('_', ' ')}</span>).
+          </p>
+          <div className="flex flex-col gap-2 pt-2">
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              Continue to Dashboard
+            </button>
+            <button
+              onClick={() => logout()}
+              className="w-full py-2.5 rounded-xl border border-slate-700 hover:bg-slate-800 text-slate-300 text-xs font-semibold transition cursor-pointer"
+            >
+              Sign Out & Sign in as Different User
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (

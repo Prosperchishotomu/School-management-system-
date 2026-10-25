@@ -26,6 +26,7 @@ export const AuthProvider = ({ children }) => {
   // ─── Clear all auth storage ───────────────────────────────────────────────
   const clearStorage = useCallback(() => {
     store.removeItem(STORAGE_TOKEN_KEY);
+    store.removeItem('schoolbase_refresh_token');
     store.removeItem(STORAGE_USER_KEY);
     store.removeItem(STORAGE_SCHOOL_KEY);
     store.removeItem(STORAGE_LAST_ACTIVE);
@@ -145,10 +146,13 @@ export const AuthProvider = ({ children }) => {
   const login = async (username, password) => {
     try {
       const result = await api.post('/auth/login', { username, password });
-      const { token, user: loggedUser } = result.data;
+      const { token, refresh_token, user: loggedUser } = result.data;
 
-      // Store in sessionStorage (dies when tab is closed)
+      // Store in sessionStorage (strictly tab-scoped — dies when tab is closed)
       store.setItem(STORAGE_TOKEN_KEY, token);
+      if (refresh_token) {
+        store.setItem('schoolbase_refresh_token', refresh_token);
+      }
       store.setItem(STORAGE_USER_KEY, JSON.stringify(loggedUser));
       store.setItem(STORAGE_LAST_ACTIVE, Date.now().toString());
 

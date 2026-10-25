@@ -184,7 +184,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setUsername(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="       staff@school.ac.zw"
+              placeholder="e.g. bursar, schooladmin, or email"
               autoComplete="username"
               className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 bg-white text-slate-900 text-xs font-medium font-sans placeholder:text-slate-400 focus:outline-none focus:border-emerald-600 focus:ring-4 focus:ring-emerald-500/15 shadow-xs transition-all"
             />
@@ -269,6 +269,43 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
             </>
           )}
         </button>
+
+        {/* Fast Role Portals */}
+        <div className="pt-2">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 text-center font-mono">
+            Quick Select Portal Account
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setUsername('bursar'); setPassword('Password123!'); }}
+              className="py-1 px-2 rounded-lg bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-[11px] font-semibold text-slate-700 hover:text-emerald-800 transition text-center cursor-pointer"
+            >
+              Bursar
+            </button>
+            <button
+              type="button"
+              onClick={() => { setUsername('schooladmin'); setPassword('Password123!'); }}
+              className="py-1 px-2 rounded-lg bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-[11px] font-semibold text-slate-700 hover:text-emerald-800 transition text-center cursor-pointer"
+            >
+              School Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => { setUsername('superadmin'); setPassword('Password123!'); }}
+              className="py-1 px-2 rounded-lg bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-[11px] font-semibold text-slate-700 hover:text-emerald-800 transition text-center cursor-pointer"
+            >
+              Super Admin
+            </button>
+            <button
+              type="button"
+              onClick={() => { setUsername('parent'); setPassword('Password123!'); }}
+              className="py-1 px-2 rounded-lg bg-slate-100 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-[11px] font-semibold text-slate-700 hover:text-emerald-800 transition text-center cursor-pointer"
+            >
+              Parent
+            </button>
+          </div>
+        </div>
       </form>
 
       {/* Security Compliance Footer */}

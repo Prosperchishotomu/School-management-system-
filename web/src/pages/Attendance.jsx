@@ -379,7 +379,7 @@ export default function Attendance() {
 
             {/* Students Register List */}
             {studentsLoading ? (
-              <Skeleton variant="table-row" count={6} />
+              <Skeleton count={6} height="2.75rem" className="rounded-xl" />
             ) : students.length === 0 ? (
               <EmptyState title="No students in class" description="This class has no learners assigned." compact={true} />
             ) : (
