@@ -51,6 +51,7 @@ import SchemesOfWork from './pages/SchemesOfWork';
 import ZimsecBoard from './pages/ZimsecBoard';
 import BoardingExeat from './pages/BoardingExeat';
 import EmisReturns from './pages/EmisReturns';
+import UserProfile from './pages/UserProfile';
 
 // Clean role helper to determine home landing path
 export function getHomeRoute(user) {
@@ -165,9 +166,11 @@ const LayoutShell = ({ children }) => {
       <main className="flex-1 lg:ml-[260px] ml-0 min-h-screen bg-canvas overflow-y-auto w-full min-w-0 transition-all">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         <SyncStatus />
-        <ErrorBoundary>
-          {children}
-        </ErrorBoundary>
+        <div className="p-6 md:p-8 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );
@@ -517,6 +520,7 @@ function AppRoutes() {
       />
 
       <Route path="/settings/security" element={<ProtectedRoute><LayoutShell><SecuritySettings /></LayoutShell></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute><LayoutShell><UserProfile /></LayoutShell></ProtectedRoute>} />
       <Route path="/calendar" element={<ProtectedRoute><LayoutShell><Timetable /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/approvals" element={<ProtectedRoute allowedRoles={['head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><EmisReturns /></LayoutShell></ProtectedRoute>} />
       <Route path="/admin/reports/registers" element={<ProtectedRoute allowedRoles={['head', 'deputy_head', 'school_admin', 'super_admin']}><LayoutShell><Reporting /></LayoutShell></ProtectedRoute>} />

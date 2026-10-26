@@ -7,10 +7,6 @@ import TopBar from './TopBar';
 import ErrorBoundary from '../ErrorBoundary';
 import { AlertTriangle } from 'lucide-react';
 
-/**
- * AppShell — Base application layout shell for SchoolBase.
- * Deep-green sidebar (260px) + glass topbar + responsive content area.
- */
 export default function AppShell({ children }) {
   const { user, activeSchoolId } = useAuth();
   const location = useLocation();

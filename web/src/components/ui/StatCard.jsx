@@ -1,6 +1,43 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
+
+function resolveDrillDownRoute(explicitTo, titleStr = '', subtextStr = '') {
+  if (explicitTo) return explicitTo;
+  const text = `${titleStr} ${subtextStr}`.toLowerCase();
+  
+  if (/student|learner|enrol|pupil|roll/i.test(text)) return '/students';
+  if (/class|stream|grade level/i.test(text)) return '/classes';
+  if (/staff|teacher|employee|faculty|form master/i.test(text)) return '/staff';
+  if (/attendance|present|absent/i.test(text)) return '/attendance';
+  if (/fee|tuition|collection|revenue|arrear|debtor|bill|invoice|payment|balance|ledger/i.test(text)) return '/fees';
+  if (/expense|spending|cost|disbursement/i.test(text)) return '/expenses';
+  if (/result|broadsheet|pass rate|distinction|exam/i.test(text)) return '/results';
+  if (/grade|mark|score/i.test(text)) return '/grades';
+  if (/subject|curriculum|department/i.test(text)) return '/academics';
+  if (/hostel|board|dorm|room/i.test(text)) return '/hostels';
+  if (/discipline|incident|misconduct/i.test(text)) return '/discipline';
+  if (/health|clinic|medical/i.test(text)) return '/health';
+  if (/library|book|isbn/i.test(text)) return '/library';
+  if (/asset|inventory|equipment/i.test(text)) return '/assets';
+  if (/message|sms|email/i.test(text)) return '/messages';
+  if (/announcement|broadcast/i.test(text)) return '/announcements';
+  if (/notification/i.test(text)) return '/notifications';
+  if (/task|approval|clearance/i.test(text)) return '/tasks';
+  if (/timetable|schedule|period/i.test(text)) return '/timetable';
+  if (/audit/i.test(text)) return '/audit-log';
+  if (/user|account/i.test(text)) return '/users';
+  if (/setting|config|admin/i.test(text)) return '/admin/system';
+
+  // Security, devices & authentication policies:
+  if (/device|session/i.test(text)) return '#sessions';
+  if (/2-factor|totp|authenticator|mfa|two-factor/i.test(text)) return '#two-factor';
+  if (/timeout|inactivity|idle/i.test(text)) return '#inactivity-timeout';
+  if (/password|health|credential/i.test(text)) return '#password-policy';
+  if (/security/i.test(text)) return '/settings/security';
+
+  return null;
+}
 
 /**
  * Animated count-up hook (respects prefers-reduced-motion)
@@ -108,12 +145,28 @@ export default function StatCard({
   const isPrimary = !isAlert && (importance === 'primary' || importance === 'hero' || featured || size === 'lg');
   const isCompact = !isAlert && !isPrimary && (importance === 'compact' || importance === 'secondary' || size === 'sm');
 
+  const resolvedTo = resolveDrillDownRoute(to, cardTitle, cardSubtext);
   const handleClick = () => {
-    if (to) navigate(to);
-    else if (onClick) onClick();
+    if (onClick) {
+      onClick();
+      return;
+    }
+    if (resolvedTo) {
+      if (resolvedTo.startsWith('#')) {
+        const targetId = resolvedTo.slice(1);
+        const el = document.getElementById(targetId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-brand-500', 'transition-all');
+          setTimeout(() => el.classList.remove('ring-2', 'ring-brand-500'), 2500);
+        }
+      } else {
+        navigate(resolvedTo);
+      }
+    }
   };
 
-  const isClickable = Boolean(to || onClick);
+  const isClickable = Boolean(resolvedTo || onClick);
 
   // Distinct color schemes: Prominent, vibrant theme color for the data (value),
   // paired with clean, readable neutral secondary tone for the description (subtext)
@@ -208,14 +261,14 @@ export default function StatCard({
       ? `${resolvedPrefix}${animatedNumber.toLocaleString()}${suffix}`
       : `${resolvedPrefix}${rawValue ?? '-'}${suffix}`;
 
-  // Compact, sleek card container sizing
-  const containerClasses = `${currentTheme.container} p-2.5 sm:p-3 min-h-[66px] sm:min-h-[72px] rounded-xl border shadow-2xs`;
+  // Generous, airy card container sizing matching Command Center
+  const containerClasses = `${currentTheme.container} p-5 sm:p-5.5 min-h-[96px] sm:min-h-[106px] rounded-2xl border shadow-xs`;
 
-  // Value typography scaled to compact, crisp, readable proportions
-  const valueTypography = `text-xl sm:text-2xl font-black font-display ${currentTheme.value} tracking-tight tabular-nums leading-none`;
+  // Value typography scaled to bold, crisp, prominent display proportions
+  const valueTypography = `text-2xl sm:text-3xl font-bold font-display ${currentTheme.value} tracking-tight tabular-nums leading-none`;
 
-  // Icon container sizes - compact, balanced
-  const iconBoxClasses = 'w-6.5 h-6.5 sm:w-7 sm:h-7 rounded-lg';
+  // Icon container sizes matching Command Center
+  const iconBoxClasses = 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl';
 
   return (
     <div
@@ -223,60 +276,65 @@ export default function StatCard({
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
       onKeyDown={isClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(); } } : undefined}
-      className={`glass-card flex flex-col justify-between transition-all select-none w-full min-w-0 ${containerClasses} ${
-        isClickable ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-xs hover:border-brand-500/50' : ''
+      className={`glass-card group flex flex-col justify-between transition-all select-none w-full min-w-0 ${containerClasses} ${
+        isClickable ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:border-teal-primary/50 ring-0 hover:ring-2 hover:ring-teal-primary/15' : ''
       } ${className}`}
     >
-      {/* Header Row: Displays label, icon, and optional badge */}
-      <div className="flex items-center justify-between gap-1.5 mb-1 min-w-0">
+      {/* Header Row: Displays label, badge, and icon */}
+      <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span
-              className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 tracking-tight truncate block"
+              className="text-xs sm:text-sm font-semibold text-slate-600 dark:text-slate-400 tracking-tight truncate block"
               title={cardTitle}
             >
               {cardTitle}
             </span>
 
             {badge && (
-              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-accent/20 text-accent font-mono uppercase tracking-wider">
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-accent/20 text-accent font-mono uppercase tracking-wider">
                 {badge}
               </span>
             )}
 
             {isPrimary && !badge && (
-              <span className={`px-1.5 py-0.2 rounded text-[9px] font-mono font-bold ${currentTheme.badge} uppercase tracking-wider`}>
+              <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold ${currentTheme.badge} uppercase tracking-wider`}>
                 Key KPI
               </span>
             )}
 
             {isAlert && !badge && (
-              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-rose-500/15 text-rose-700 dark:text-rose-300 uppercase tracking-wider">
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-rose-500/15 text-rose-700 dark:text-rose-300 uppercase tracking-wider">
                 Alert
               </span>
             )}
           </div>
         </div>
 
-        {Icon && (
-          <div className={`${iconBoxClasses} flex items-center justify-center shrink-0 ${currentTheme.icon} transition-transform`}>
-            <Icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </div>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {Icon && (
+            <div className={`${iconBoxClasses} flex items-center justify-center shrink-0 ${currentTheme.icon} transition-transform group-hover:scale-105`}>
+              <Icon className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+            </div>
+          )}
+          {isClickable && (
+            <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 group-hover:text-teal-primary group-hover:translate-x-0.5 transition-all opacity-0 group-hover:opacity-100" />
+          )}
+        </div>
       </div>
 
       {/* Metric Value & Sublabel / Trend Details */}
-      <div className="flex items-baseline justify-between gap-2 min-w-0 mt-auto pt-0.5">
+      <div className="flex items-baseline justify-between gap-2 min-w-0 mt-auto pt-1">
         <div className="min-w-0 flex-1">
           <div className={valueTypography}>
             {renderedValue}
           </div>
 
           {(delta !== null || cardDeltaText || cardSubtext) && (
-            <div className="flex items-center gap-1.5 mt-0.5 text-xs flex-wrap">
+            <div className="flex items-center gap-1.5 mt-1 text-xs flex-wrap">
               {delta !== null && (
                 <span
-                  className={`inline-flex items-center gap-0.5 font-bold px-1.5 py-0.2 rounded text-[10px] ${
+                  className={`inline-flex items-center gap-0.5 font-bold px-1.5 py-0.5 rounded text-[10px] ${
                     delta > 0
                       ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
                       : delta < 0
@@ -290,7 +348,7 @@ export default function StatCard({
               )}
 
               {(cardDeltaText || cardSubtext) && (
-                <span className={`text-[10px] sm:text-[11px] truncate max-w-full font-sans font-medium ${currentTheme.subtext}`}>
+                <span className={`text-[11px] sm:text-xs truncate max-w-full font-sans font-medium ${currentTheme.subtext}`}>
                   {cardDeltaText || cardSubtext}
                 </span>
               )}

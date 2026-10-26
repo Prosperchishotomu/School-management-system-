@@ -7,13 +7,249 @@ const { requireIdempotencyKey, idempotencyMiddleware } = require('../utils/idemp
 const { initializePayment } = require('../services/payments');
 const { broadcastInvalidation } = require('../services/realtime');
 
-const getTermFromDate = (dateVal = new Date()) => {
+// Resolve term strictly by date (or database terms if configured)
+const getTermFromDate = (dateVal = new Date(), termsList = []) => {
   const d = new Date(dateVal);
   const month = d.getMonth(); // 0 = Jan, 11 = Dec
-  if (month >= 0 && month <= 3) return 'Term 1';
-  if (month >= 4 && month <= 7) return 'Term 2';
-  return 'Term 3';
+  const year = d.getFullYear();
+
+  if (termsList && termsList.length > 0) {
+    const dStr = d.toISOString().split('T')[0];
+    const match = termsList.find(t => t.start_date <= dStr && t.end_date >= dStr);
+    if (match) {
+      const num = match.name.replace(/[^0-9]/g, '') || '1';
+      return {
+        term_name: `Term ${num}`,
+        term_number: parseInt(num, 10),
+        academic_year: year,
+        start_date: match.start_date,
+        end_date: match.end_date,
+        is_current: 1
+      };
+    }
+  }
+
+  // Standard Zimbabwe Academic Calendar based on date month:
+  // Jan 1 - Apr 30: Term 1
+  // May 1 - Aug 31: Term 2
+  // Sep 1 - Dec 31: Term 3
+  let termNum = 1;
+  if (month >= 8) termNum = 3;
+  else if (month >= 4) termNum = 2;
+  else termNum = 1;
+
+  return {
+    term_name: `Term ${termNum}`,
+    term_number: termNum,
+    academic_year: year,
+    is_current: 1
+  };
 };
+
+// GET /schools/:schoolId/terms/current — Resolve current term strictly by date
+router.get('/schools/:schoolId/terms/current', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    let terms = [];
+    try {
+      terms = await query('SELECT * FROM terms WHERE school_id = ? ORDER BY start_date ASC', [schoolId]);
+    } catch (e) {}
+
+    const currentTerm = getTermFromDate(new Date(), terms);
+    return res.json({ data: currentTerm });
+  } catch (err) {
+    console.error('Get current term error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to resolve current term.' } });
+  }
+});
+
+// GET /schools/:schoolId/students/:id/ledger — Accurate verified financial ledger
+router.get('/schools/:schoolId/students/:id/ledger', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const userRole = req.user?.role;
+
+    // Access control
+    if (userRole === 'parent') {
+      const isLinked = await queryOne(
+        `SELECT 1 FROM student_guardians sg
+         JOIN guardians g ON sg.guardian_id = g.id
+         WHERE (g.user_id = ? OR (g.email IS NOT NULL AND g.email != '' AND g.email = ?) OR (g.phone IS NOT NULL AND g.phone != '' AND g.phone = ?))
+           AND sg.student_id = ?`,
+        [req.user.id, req.user.email || '', req.user.phone || '', id]
+      );
+      if (!isLinked) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied: You can only view ledger for linked students.' } });
+      }
+    } else if (userRole === 'student') {
+      const isSelf = await queryOne(
+        `SELECT 1 FROM students WHERE id = ? AND (id = ? OR user_id = ?)`,
+        [id, req.user.id, req.user.id]
+      );
+      if (!isSelf) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied: You can only view your own student ledger.' } });
+      }
+    } else if (userRole === 'teacher') {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Teachers do not have access to financial ledgers.' } });
+    }
+
+    const student = await queryOne(
+      `SELECT st.*, c.name as class_name, s.name as school_name, COALESCE(s.currency, 'USD') as school_currency
+       FROM students st
+       JOIN schools s ON st.school_id = s.id
+       LEFT JOIN classes c ON st.class_id = c.id
+       WHERE st.id = ? AND st.school_id = ?`,
+      [id, schoolId]
+    );
+
+    if (!student) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Student not found.' } });
+    }
+
+    // Invoices / Fee Debits
+    const feesRows = await query(
+      `SELECT id, school_id, student_id, title, amount_due, amount_paid, term, due_date, status, created_at
+       FROM fees
+       WHERE student_id = ? AND school_id = ?
+       ORDER BY created_at ASC`,
+      [id, schoolId]
+    );
+
+    // Payments / Fee Credits
+    const paymentRows = await query(
+      `SELECT fp.id, fp.school_id, fp.student_id, fp.fee_id, fp.amount_paid, fp.payment_date,
+              fp.payment_method, fp.payment_currency, fp.reference, fp.created_at,
+              f.title as fee_title, f.term
+       FROM fee_payments fp
+       LEFT JOIN fees f ON fp.fee_id = f.id
+       WHERE fp.student_id = ? AND fp.school_id = ?
+       ORDER BY COALESCE(fp.payment_date, fp.created_at) ASC`,
+      [id, schoolId]
+    );
+
+    const allEntries = [];
+
+    for (const f of feesRows) {
+      allEntries.push({
+        id: f.id,
+        transaction_date: f.created_at,
+        reference: f.id,
+        entry_type: 'debit',
+        title: f.title || `${f.term || 'Term'} Fee Charge`,
+        term: f.term || 'Current',
+        due_date: f.due_date,
+        payment_method: null,
+        payment_currency: student.school_currency || 'USD',
+        debit: parseFloat(f.amount_due || 0),
+        credit: 0,
+        status: f.status
+      });
+    }
+
+    for (const p of paymentRows) {
+      allEntries.push({
+        id: p.id,
+        transaction_date: p.payment_date || p.created_at,
+        reference: p.reference || p.id,
+        entry_type: 'credit',
+        title: `Payment: ${p.fee_title || p.term || 'Tuition'}`,
+        term: p.term || 'Current',
+        due_date: null,
+        payment_method: p.payment_method || 'cash',
+        payment_currency: p.payment_currency || student.school_currency || 'USD',
+        debit: 0,
+        credit: parseFloat(p.amount_paid || 0),
+        status: 'verified'
+      });
+    }
+
+    // Sort chronologically to compute running balance
+    allEntries.sort((a, b) => new Date(a.transaction_date) - new Date(b.transaction_date));
+
+    let runningBalance = 0;
+    let totalBilled = 0;
+    let totalPaid = 0;
+
+    const ledger = allEntries.map(entry => {
+      if (entry.entry_type === 'debit') {
+        runningBalance += entry.debit;
+        totalBilled += entry.debit;
+      } else {
+        runningBalance -= entry.credit;
+        totalPaid += entry.credit;
+      }
+      return {
+        ...entry,
+        running_balance: parseFloat(runningBalance.toFixed(2))
+      };
+    });
+
+    const netBalance = parseFloat((totalBilled - totalPaid).toFixed(2));
+    const ledgerStatus = netBalance <= 0 ? 'cleared' : (totalPaid > 0 ? 'partial' : 'unpaid');
+
+    return res.json({
+      data: {
+        student: {
+          id: student.id,
+          admission_number: student.admission_number,
+          name: `${student.first_name} ${student.last_name}`,
+          class_name: student.class_name,
+          school_name: student.school_name,
+          is_boarding: Boolean(student.is_boarding)
+        },
+        summary: {
+          total_billed: parseFloat(totalBilled.toFixed(2)),
+          total_paid: parseFloat(totalPaid.toFixed(2)),
+          balance_due: Math.max(0, netBalance),
+          net_balance: netBalance,
+          currency: student.school_currency || 'USD',
+          status: ledgerStatus,
+          total_transactions: ledger.length
+        },
+        ledger: [...ledger].reverse() // Return most recent first for display
+      }
+    });
+  } catch (err) {
+    console.error('Get student financial ledger error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to retrieve student financial ledger.' } });
+  }
+});
+
+// POST /schools/:schoolId/students/:id/charges — Add charge / debit to student ledger
+router.post('/schools/:schoolId/students/:id/charges', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { title, amount, term, due_date } = req.body;
+
+    if (!title || !amount || parseFloat(amount) <= 0) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Charge title and valid amount are required.' } });
+    }
+
+    const currentTermObj = getTermFromDate(new Date());
+    const resolvedTerm = term || currentTermObj.term_name;
+    const feeId = 'CHG' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).substr(2, 4).toUpperCase();
+
+    await query(
+      `INSERT INTO fees (id, school_id, student_id, title, amount_due, amount_paid, term, due_date, status)
+       VALUES (?, ?, ?, ?, ?, 0.00, ?, ?, 'unpaid')`,
+      [feeId, schoolId, id, title.trim(), parseFloat(amount), resolvedTerm, due_date || null]
+    );
+
+    broadcastInvalidation(schoolId, [
+      'fees',
+      'fees_ledger',
+      'fees_summary',
+      `student_profile_${schoolId}_${id}`,
+      `student_ledger_${schoolId}_${id}`
+    ], 'fee_charged');
+
+    const created = await queryOne('SELECT * FROM fees WHERE id = ?', [feeId]);
+    return res.status(201).json({ data: created, message: 'Fee charge successfully posted to student financial ledger.' });
+  } catch (err) {
+    console.error('Add charge error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to post charge to student ledger.' } });
+  }
+});
 
 // GET /schools/:schoolId/fees/calculator
 router.get('/schools/:schoolId/fees/calculator', authenticateToken, requireRoles('school_admin', 'bursar', 'super_admin'), async (req, res) => {

@@ -65,20 +65,20 @@ export default function BursarDashboard() {
   return (
     <div className="space-y-6">
       {/* Greeting Hero */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10">
+            <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20">
               Finance & Bursary Desk
             </span>
-            <span className="text-xs text-white/60 font-mono">
+            <span className="text-xs text-muted font-mono">
               Multi-Currency Treasury
             </span>
           </div>
-          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
             Treasury Overview: {user?.name || 'Bursar'}
           </h1>
-          <p className="text-xs md:text-sm text-brand-100/90 mt-1.5 max-w-2xl leading-relaxed">
+          <p className="text-xs md:text-sm text-muted mt-1.5 max-w-2xl leading-relaxed">
             Multi-currency collections are active. Current collection rate is {kpis.collection_rate ?? 0}%.
           </p>
         </div>
@@ -143,29 +143,41 @@ export default function BursarDashboard() {
 
       {/* Multi-Currency FX Card */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="glass-card p-4 flex items-center justify-between">
+        <div 
+          onClick={() => navigate('/fees')} 
+          className="glass-card p-4 flex items-center justify-between cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Click to drill down to Fee Schedules & Billing"
+        >
           <div>
             <span className="text-[11px] font-mono text-muted uppercase">Base Currency</span>
             <div className="text-xl font-bold font-display text-ink mt-0.5">USD (US$)</div>
-            <span className="text-[10px] text-muted">Primary billing denomination</span>
+            <span className="text-[10px] text-muted">Primary billing denomination • Click to drill down →</span>
           </div>
           <span className="text-xs font-mono font-bold px-2 py-1 rounded bg-brand-100 text-brand-700">1.00</span>
         </div>
 
-        <div className="glass-card p-4 flex items-center justify-between">
+        <div 
+          onClick={() => navigate('/fees')} 
+          className="glass-card p-4 flex items-center justify-between cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Click to drill down to Multi-Currency Rates & Fees"
+        >
           <div>
             <span className="text-[11px] font-mono text-muted uppercase">Zimbabwe Gold (ZiG)</span>
             <div className="text-xl font-bold font-display text-ink mt-0.5">ZiG 26.85</div>
-            <span className="text-[10px] text-muted">RBZ Interbank Weighted Rate</span>
+            <span className="text-[10px] text-muted">RBZ Interbank Weighted Rate • Drill down →</span>
           </div>
           <span className="text-xs font-mono font-bold px-2 py-1 rounded bg-amber-100 text-accent">Active</span>
         </div>
 
-        <div className="glass-card p-4 flex items-center justify-between">
+        <div 
+          onClick={() => navigate('/fees')} 
+          className="glass-card p-4 flex items-center justify-between cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Click to drill down to Multi-Currency Rates & Fees"
+        >
           <div>
             <span className="text-[11px] font-mono text-muted uppercase">South African Rand</span>
             <div className="text-xl font-bold font-display text-ink mt-0.5">ZAR 18.40</div>
-            <span className="text-[10px] text-muted">Cross-rate spot conversion</span>
+            <span className="text-[10px] text-muted">Cross-rate spot conversion • Drill down →</span>
           </div>
           <span className="text-xs font-mono font-bold px-2 py-1 rounded bg-blue-100 text-info">Active</span>
         </div>

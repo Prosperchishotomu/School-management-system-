@@ -34,15 +34,15 @@ export default function SuperAdminDashboard() {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10 block w-fit mb-1.5">
+          <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20 block w-fit mb-1.5">
             Platform Governance
           </span>
-          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
             Command Center
           </h1>
-          <p className="text-xs md:text-sm text-brand-100/90 mt-1 max-w-xl">
+          <p className="text-xs md:text-sm text-muted mt-1 max-w-xl">
             Multi-tenant telemetry, database cluster status and license compliance monitoring.
           </p>
         </div>
@@ -95,41 +95,58 @@ export default function SuperAdminDashboard() {
       </KpiStrip>
 
       {/* System Health Tiles */}
+      {/* System Health Tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="glass-card p-4">
+        <div 
+          onClick={() => navigate('/admin/command-center')}
+          className="glass-card p-4 cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Drill down to Command Center & Database Health"
+        >
           <div className="flex items-center justify-between text-xs text-muted mb-1">
             <span>DB Connection Pool</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-brand-500" />
           </div>
           <div className="font-mono font-bold text-lg text-ink">10 / 10 Idle</div>
-          <span className="text-[10px] text-muted">Avg latency 4.2ms</span>
+          <span className="text-[10px] text-muted">Avg latency 4.2ms • Drill down →</span>
         </div>
 
-        <div className="glass-card p-4">
+        <div 
+          onClick={() => navigate('/admin/command-center')}
+          className="glass-card p-4 cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Drill down to Delivery Outbox & Queue Monitoring"
+        >
           <div className="flex items-center justify-between text-xs text-muted mb-1">
             <span>Delivery Outbox</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-brand-500" />
           </div>
           <div className="font-mono font-bold text-lg text-ink">0 Queued</div>
-          <span className="text-[10px] text-muted">100% dispatch rate</span>
+          <span className="text-[10px] text-muted">100% dispatch rate • Drill down →</span>
         </div>
 
-        <div className="glass-card p-4">
+        <div 
+          onClick={() => navigate('/admin/command-center')}
+          className="glass-card p-4 cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Drill down to WebSocket Mesh"
+        >
           <div className="flex items-center justify-between text-xs text-muted mb-1">
             <span>WebSocket Gateway</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-brand-500" />
           </div>
           <div className="font-mono font-bold text-lg text-ink">28 Connected</div>
-          <span className="text-[10px] text-muted">Broadcast mesh active</span>
+          <span className="text-[10px] text-muted">Broadcast mesh active • Drill down →</span>
         </div>
 
-        <div className="glass-card p-4">
+        <div 
+          onClick={() => navigate('/admin/command-center')}
+          className="glass-card p-4 cursor-pointer hover:border-brand-500/50 hover:shadow-md transition-all hover:-translate-y-0.5"
+          title="Drill down to Background Workers"
+        >
           <div className="flex items-center justify-between text-xs text-muted mb-1">
             <span>Background Workers</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-brand-500" />
           </div>
           <div className="font-mono font-bold text-lg text-ink">Active</div>
-          <span className="text-[10px] text-muted">Exeat & billing cron OK</span>
+          <span className="text-[10px] text-muted">Exeat & billing cron OK • Drill down →</span>
         </div>
       </div>
 

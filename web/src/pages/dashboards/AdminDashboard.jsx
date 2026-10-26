@@ -28,16 +28,18 @@ import {
   Printer, Download, Filter, Search, Award, BookOpen, Layers,
   ChevronDown, RefreshCw, Eye, Sparkles, AlertTriangle, FileText
 } from 'lucide-react';
+import { getCurrentTerm } from '../../utils/dateTerms';
 
 export default function AdminDashboard() {
   const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
   const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const currentTerm = getCurrentTerm();
 
   // Active executive lens tab: 'overview' | 'academics' | 'finance' | 'campus'
   const [activeLens, setActiveLens] = useState('overview');
-  const [selectedTerm, setSelectedTerm] = useState('Term 1');
-  const [selectedYear, setSelectedYear] = useState('2026');
+  const [selectedTerm, setSelectedTerm] = useState(() => currentTerm.name);
+  const [selectedYear, setSelectedYear] = useState(() => String(currentTerm.year));
 
   // Class Results Filter State (Principal Class Explorer)
   const [selectedClassId, setSelectedClassId] = useState('');
@@ -242,28 +244,28 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       {/* ─── 1. Out-of-This-Earth Executive Cockpit Hero ─── */}
-      <div className="rounded-2xl p-4 sm:p-5 md:p-6 bg-gradient-to-br from-slate-950 via-brand-950 to-slate-900 text-white shadow-xl border border-brand-500/30 relative overflow-hidden">
+      <div className="rounded-2xl p-4 sm:p-5 md:p-6 bg-surface border border-line text-ink shadow-xs relative overflow-hidden">
         {/* Ambient Background Aura */}
-        <div className="absolute top-0 right-0 w-80 h-80 bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-accent/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-0 right-0 w-80 h-80 bg-brand-500/5 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-accent/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-mono tracking-widest text-emerald-400 uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 font-bold">
+              <span className="text-[10px] font-mono tracking-widest text-emerald-600 dark:text-emerald-400 uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 font-bold">
                 PRINCIPAL & HEADMASTER EXECUTIVE CONSOLE
               </span>
-              <span className="text-[10px] font-mono text-slate-400 bg-white/5 px-2 py-0.5 rounded-full border border-white/10 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[10px] font-mono text-muted bg-surface-alt px-2 py-0.5 rounded-full border border-line flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span>OVERSIGHT MODE</span>
               </span>
             </div>
 
-            <h1 className="text-xl md:text-2xl font-display font-bold text-white tracking-tight leading-tight">
+            <h1 className="text-xl md:text-2xl font-display font-bold text-ink tracking-tight leading-tight">
               Institutional Command Center
             </h1>
 
-            <p className="text-xs text-slate-300 max-w-2xl font-sans leading-relaxed">
+            <p className="text-xs text-muted max-w-2xl font-sans leading-relaxed">
               Comprehensive 360° governance across all academic streams, live term assessments, financial health, staff allocations, and statutory returns.
             </p>
           </div>
@@ -271,7 +273,7 @@ export default function AdminDashboard() {
           {/* Quick Scope Selectors (Term & Print Broadsheet) */}
           <div className="flex flex-wrap items-center gap-3 shrink-0">
             {/* Term Selector */}
-            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-white/10 border border-white/15 text-xs font-mono">
+            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-surface-alt border border-line text-xs font-mono">
               {['Term 1', 'Term 2', 'Term 3'].map(term => (
                 <button
                   key={term}
@@ -279,7 +281,7 @@ export default function AdminDashboard() {
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                     selectedTerm === term
                       ? 'bg-emerald-600 text-white font-bold shadow-xs'
-                      : 'text-slate-300 hover:text-white hover:bg-white/10'
+                      : 'text-muted hover:text-ink hover:bg-surface'
                   }`}
                 >
                   {term}
@@ -290,7 +292,7 @@ export default function AdminDashboard() {
             {/* Print Broadsheet Action */}
             <button
               onClick={() => setPrintModalOpen(true)}
-              className="px-4 py-2.5 rounded-xl text-xs font-sans font-bold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white transition-all shadow-lg shadow-emerald-950/40 flex items-center gap-2 cursor-pointer border border-emerald-400/30"
+              className="px-4 py-2.5 rounded-xl text-xs font-sans font-bold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white transition-all shadow-sm flex items-center gap-2 cursor-pointer border border-emerald-500/30"
               title="Generate Autofitted Class Broadsheet Report"
             >
               <Printer className="w-4 h-4" />
@@ -299,45 +301,61 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Live Campus Telemetry Ribbon */}
-        <div className="mt-6 pt-5 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-sans">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+        {/* Live Campus Telemetry Ribbon (Clickable Drill-Down) */}
+        <div className="mt-6 pt-5 border-t border-line grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-sans">
+          <div
+            onClick={() => navigate('/attendance')}
+            className="flex items-center gap-3 p-2 -m-2 rounded-xl hover:bg-surface-alt cursor-pointer transition-all group"
+            title="Drill down to Attendance Register"
+          >
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400 group-hover:scale-105 transition-transform">
               <CalendarCheck className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Campus Attendance</span>
-              <span className="font-display font-bold text-white text-sm">{kpis.attendance_today_pct ?? 0}% Present</span>
+              <span className="text-[10px] text-muted block uppercase font-mono group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">Campus Attendance →</span>
+              <span className="font-display font-bold text-ink text-sm">{kpis.attendance_today_pct ?? 0}% Present</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
+          <div
+            onClick={() => navigate('/fees')}
+            className="flex items-center gap-3 p-2 -m-2 rounded-xl hover:bg-surface-alt cursor-pointer transition-all group"
+            title="Drill down to Fee Collections"
+          >
+            <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-600 dark:text-cyan-400 group-hover:scale-105 transition-transform">
               <DollarSign className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Collection Target</span>
-              <span className="font-display font-bold text-white text-sm">{kpis.collection_rate ?? 0}% Realized</span>
+              <span className="text-[10px] text-muted block uppercase font-mono group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors">Collection Target →</span>
+              <span className="font-display font-bold text-ink text-sm">{kpis.collection_rate ?? 0}% Realized</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-violet-500/20 border border-violet-500/40 flex items-center justify-center text-violet-400">
+          <div
+            onClick={() => navigate('/students')}
+            className="flex items-center gap-3 p-2 -m-2 rounded-xl hover:bg-surface-alt cursor-pointer transition-all group"
+            title="Drill down to Student Directory"
+          >
+            <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-600 dark:text-violet-400 group-hover:scale-105 transition-transform">
               <Users className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Active Learners</span>
-              <span className="font-display font-bold text-white text-sm">{kpis.total_students ?? 0} Enrolled</span>
+              <span className="text-[10px] text-muted block uppercase font-mono group-hover:text-violet-600 dark:group-hover:text-violet-400 transition-colors">Active Learners →</span>
+              <span className="font-display font-bold text-ink text-sm">{kpis.total_students ?? 0} Enrolled</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+          <div
+            onClick={() => navigate('/tasks')}
+            className="flex items-center gap-3 p-2 -m-2 rounded-xl hover:bg-surface-alt cursor-pointer transition-all group"
+            title="Drill down to Pending Clearances & Tasks"
+          >
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400 group-hover:scale-105 transition-transform">
               <Clock className="w-4 h-4" />
             </div>
             <div>
-              <span className="text-[10px] text-slate-400 block uppercase font-mono">Pending Clearances</span>
-              <span className="font-display font-bold text-white text-sm">{kpis.pending_approvals ?? 0} Approvals</span>
+              <span className="text-[10px] text-muted block uppercase font-mono group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">Pending Clearances →</span>
+              <span className="font-display font-bold text-ink text-sm">{kpis.pending_approvals ?? 0} Approvals</span>
             </div>
           </div>
         </div>
@@ -572,32 +590,60 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Class Vital Statistics KPIs */}
+          {/* Class Vital Statistics KPIs (Clickable Drill-Down) */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-3.5">
-            <div className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs">
-              <span className="text-[11px] font-mono uppercase text-muted block mb-0.5">Class Average</span>
+            <div
+              onClick={() => navigate(`/results?class_id=${currentClassId}`)}
+              className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Results Broadsheet"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono uppercase text-muted block mb-0.5 group-hover:text-brand-600 transition-colors">Class Average</span>
+                <span className="text-[10px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Drill down →</span>
+              </div>
               <span className="text-xl font-display font-bold text-ink">{classAnalytics.meanScore}%</span>
               <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block mt-0.5">
                 Highest Mark: {classAnalytics.highestMark}%
               </span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs">
-              <span className="text-[11px] font-mono uppercase text-muted block mb-0.5">Pass Rate</span>
+            <div
+              onClick={() => navigate(`/results?class_id=${currentClassId}`)}
+              className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Results Broadsheet"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono uppercase text-muted block mb-0.5 group-hover:text-brand-600 transition-colors">Pass Rate</span>
+                <span className="text-[10px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Drill down →</span>
+              </div>
               <span className="text-xl font-display font-bold text-brand-700 dark:text-brand-400">
                 {classAnalytics.passRate}%
               </span>
               <span className="text-[10px] text-muted block mt-0.5">Score ≥ 50% / Grade C</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs">
-              <span className="text-[11px] font-mono uppercase text-muted block mb-0.5">Distinction Rate</span>
+            <div
+              onClick={() => navigate(`/results?class_id=${currentClassId}`)}
+              className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Results Broadsheet"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono uppercase text-muted block mb-0.5 group-hover:text-brand-600 transition-colors">Distinction Rate</span>
+                <span className="text-[10px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Drill down →</span>
+              </div>
               <span className="text-xl font-display font-bold text-accent">{classAnalytics.distinctionRate}%</span>
               <span className="text-[10px] text-muted block mt-0.5">Grade A (75%+)</span>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs">
-              <span className="text-[11px] font-mono uppercase text-muted block mb-0.5">Class Candidates</span>
+            <div
+              onClick={() => navigate(`/students?class_id=${currentClassId}`)}
+              className="p-3.5 rounded-xl bg-surface border border-line shadow-2xs hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Class Students Roll"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-mono uppercase text-muted block mb-0.5 group-hover:text-brand-600 transition-colors">Class Candidates</span>
+                <span className="text-[10px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">Drill down →</span>
+              </div>
               <span className="text-xl font-display font-bold text-ink">{classAnalytics.totalStudents}</span>
               <span className="text-[10px] text-muted block mt-0.5">Evaluated this term</span>
             </div>
@@ -702,34 +748,69 @@ export default function AdminDashboard() {
       {/* ─── 5. LENS 3: FINANCIAL & DEBTORS OVERSIGHT ─── */}
       {activeLens === 'finance' && (
         <div className="space-y-6 animate-fadeIn">
-          {/* Debtors Ageing Analysis Strip */}
+          {/* Debtors Ageing Analysis Strip (Clickable Drill-Down) */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-            <div className="p-4 rounded-2xl bg-surface border border-line">
-              <span className="text-[10px] font-mono uppercase text-muted block mb-1">0–30 Days (Current)</span>
+            <div
+              onClick={() => navigate('/fees')}
+              className="p-4 rounded-2xl bg-surface border border-line hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Fees Ledger"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase text-muted block mb-1 group-hover:text-brand-600 transition-colors">0–30 Days (Current)</span>
+                <span className="text-[9px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+              </div>
               <span className="text-xl font-display font-bold text-ink">{money(ageing?.['0-30 days'] ?? 0)}</span>
               <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5">Prompt Settlement</span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-surface border border-line">
-              <span className="text-[10px] font-mono uppercase text-muted block mb-1">31–60 Days</span>
+            <div
+              onClick={() => navigate('/fees')}
+              className="p-4 rounded-2xl bg-surface border border-line hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Fees Ledger"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase text-muted block mb-1 group-hover:text-brand-600 transition-colors">31–60 Days</span>
+                <span className="text-[9px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+              </div>
               <span className="text-xl font-display font-bold text-accent">{money(ageing?.['31-60 days'] ?? 0)}</span>
               <span className="text-[10px] text-muted block mt-0.5">Reminder Issued</span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-surface border border-line">
-              <span className="text-[10px] font-mono uppercase text-muted block mb-1">61–90 Days</span>
+            <div
+              onClick={() => navigate('/fees')}
+              className="p-4 rounded-2xl bg-surface border border-line hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Fees Ledger"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase text-muted block mb-1 group-hover:text-brand-600 transition-colors">61–90 Days</span>
+                <span className="text-[9px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+              </div>
               <span className="text-xl font-display font-bold text-amber-600">{money(ageing?.['61-90 days'] ?? 0)}</span>
               <span className="text-[10px] text-amber-600 font-semibold block mt-0.5">Follow-up Letter</span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-surface border border-line">
-              <span className="text-[10px] font-mono uppercase text-muted block mb-1">90+ Days (Critical)</span>
+            <div
+              onClick={() => navigate('/fees')}
+              className="p-4 rounded-2xl bg-surface border border-line hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Fees Ledger"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase text-muted block mb-1 group-hover:text-brand-600 transition-colors">90+ Days (Critical)</span>
+                <span className="text-[9px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+              </div>
               <span className="text-xl font-display font-bold text-danger">{money(ageing?.['90+ days'] ?? 0)}</span>
               <span className="text-[10px] text-danger font-semibold block mt-0.5">Admin Hold</span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-brand-50/60 dark:bg-brand-950/30 border border-brand-200/50 dark:border-brand-900/40 col-span-2 md:col-span-1">
-              <span className="text-[10px] font-mono uppercase text-brand-700 dark:text-brand-300 block mb-1 font-bold">Total Arrears</span>
+            <div
+              onClick={() => navigate('/fees')}
+              className="p-4 rounded-2xl bg-brand-50/60 dark:bg-brand-950/30 border border-brand-200/50 dark:border-brand-900/40 col-span-2 md:col-span-1 hover:border-brand-500/50 hover:-translate-y-0.5 hover:shadow-md transition-all cursor-pointer group"
+              title="Drill down to Fees Ledger"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase text-brand-700 dark:text-brand-300 block mb-1 font-bold">Total Arrears</span>
+                <span className="text-[9px] text-brand-600 font-bold opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+              </div>
               <span className="text-xl font-display font-black text-brand-900 dark:text-brand-100">{money(ageing?.total_outstanding ?? (kpis.outstanding_balance ?? 0))}</span>
               <span className="text-[10px] text-muted block mt-0.5">Across School Ledger</span>
             </div>

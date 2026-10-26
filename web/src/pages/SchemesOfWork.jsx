@@ -48,6 +48,21 @@ export default function SchemesOfWork() {
     { deps: [activeSchoolId] }
   );
 
+  const { data: classesData } = useApi(
+    `classes_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/classes`).then(r => r.data || r || []),
+    { deps: [activeSchoolId] }
+  );
+
+  const { data: subjectsData } = useApi(
+    `subjects_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/subjects`).then(r => r.data || r || []),
+    { deps: [activeSchoolId] }
+  );
+
+  const availableClasses = Array.isArray(classesData) ? classesData : [];
+  const availableSubjects = Array.isArray(subjectsData) ? subjectsData : [];
+
   const schemes = Array.isArray(schemesData) ? schemesData : [];
   const lessonPlans = Array.isArray(plansData) ? plansData : [];
 
@@ -63,18 +78,26 @@ export default function SchemesOfWork() {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const payload = {
+        ...form,
+        class_id: form.class_id || form.class_level,
+        subject_id: form.subject_id || form.subject,
+        term_id: form.term_id || 1,
+        SOM: form.resources,
+        evaluation: form.evaluation_remarks
+      };
       if (activeTab === 'schemes') {
-        await api.post(`/schools/${activeSchoolId}/schemes`, form);
+        await api.post(`/schools/${activeSchoolId}/schemes`, payload);
         toast.success(`Scheme for Week ${form.week_number} recorded.`);
         invalidate(`schemes_${activeSchoolId}`);
       } else {
-        await api.post(`/schools/${activeSchoolId}/lesson-plans`, form);
+        await api.post(`/schools/${activeSchoolId}/lesson-plans`, payload);
         toast.success('Lesson plan created.');
         invalidate(`lesson_plans_${activeSchoolId}`);
       }
       setShowModal(false);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save scheme.');
+      toast.error(err.response?.data?.message || err.message || 'Failed to save scheme.');
     } finally {
       setSubmitting(false);
     }
@@ -380,23 +403,53 @@ export default function SchemesOfWork() {
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Subject</label>
-              <input
-                type="text"
-                required
-                value={form.subject}
-                onChange={e => setForm({ ...form, subject: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-              />
+              {availableSubjects.length > 0 ? (
+                <select
+                  value={form.subject}
+                  onChange={e => {
+                    const sel = availableSubjects.find(s => s.name === e.target.value || s.id === e.target.value);
+                    setForm({ ...form, subject: e.target.value, subject_id: sel?.id || e.target.value });
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+                >
+                  {availableSubjects.map(s => (
+                    <option key={s.id || s.name} value={s.name || s.id}>{s.name || s.code}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={form.subject}
+                  onChange={e => setForm({ ...form, subject: e.target.value, subject_id: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+                />
+              )}
             </div>
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Class Level</label>
-              <input
-                type="text"
-                required
-                value={form.class_level}
-                onChange={e => setForm({ ...form, class_level: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-              />
+              {availableClasses.length > 0 ? (
+                <select
+                  value={form.class_level}
+                  onChange={e => {
+                    const sel = availableClasses.find(c => c.name === e.target.value || c.id === e.target.value);
+                    setForm({ ...form, class_level: e.target.value, class_id: sel?.id || e.target.value });
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+                >
+                  {availableClasses.map(c => (
+                    <option key={c.id || c.name} value={c.name || c.id}>{c.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  required
+                  value={form.class_level}
+                  onChange={e => setForm({ ...form, class_level: e.target.value, class_id: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+                />
+              )}
             </div>
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Term Week #</label>

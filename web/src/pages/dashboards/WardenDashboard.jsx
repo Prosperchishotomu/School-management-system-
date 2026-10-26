@@ -40,15 +40,15 @@ export default function WardenDashboard() {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10 block w-fit mb-1.5">
+          <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20 block w-fit mb-1.5">
             Boarding & Gate Operations
           </span>
-          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
             Warden & Gate Desk
           </h1>
-          <p className="text-xs md:text-sm text-brand-100/90 mt-1 max-w-xl">
+          <p className="text-xs md:text-sm text-muted mt-1 max-w-xl">
             235 boarders in residence. 14 students currently off campus on active exeat passes.
           </p>
         </div>
@@ -108,6 +108,7 @@ export default function WardenDashboard() {
             title={h.name}
             subtitle={`${h.occupied} of ${h.capacity} beds allocated`}
             action={<StatusPill status="present" label="Operational" />}
+            to="/hostels"
           >
             <div className="flex items-center justify-between py-2">
               <div>

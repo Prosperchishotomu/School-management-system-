@@ -63,7 +63,7 @@ export default function KpiStrip({
   // 2 cards: 50% / 50%
   if (count === 2) {
     return (
-      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-3.5 mb-4 sm:mb-5 ${className}`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5 md:gap-6 mb-6 ${className}`}>
         {childArray.map((child, idx) => (
           <div key={idx} className="min-w-0">
             {React.cloneElement(child, {
@@ -78,7 +78,7 @@ export default function KpiStrip({
   // 3 cards: 1/3 each
   if (count === 3) {
     return (
-      <div className={`grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-3.5 mb-4 sm:mb-5 ${className}`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-5 md:gap-6 mb-6 ${className}`}>
         {childArray.map((child, idx) => (
           <div key={idx} className="min-w-0">
             {React.cloneElement(child, {
@@ -93,7 +93,7 @@ export default function KpiStrip({
   // 4 cards (Standard across all admin modules: Students, Staff, Timetable, Tasks, etc.)
   if (count === 4) {
     return (
-      <div className={`grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5 mb-4 sm:mb-5 ${className}`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 md:gap-6 mb-6 ${className}`}>
         {childArray.map((child, idx) => (
           <div key={idx} className="min-w-0">
             {React.cloneElement(child, {
@@ -108,7 +108,7 @@ export default function KpiStrip({
   // 5 cards
   if (count === 5) {
     return (
-      <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5 mb-4 sm:mb-5 ${className}`}>
+      <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-5 mb-6 ${className}`}>
         {childArray.map((child, idx) => (
           <div key={idx} className="min-w-0">
             {React.cloneElement(child, {
@@ -122,7 +122,7 @@ export default function KpiStrip({
 
   // 6 or more cards
   return (
-    <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5 mb-4 sm:mb-5 ${className}`}>
+    <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 sm:gap-5 mb-6 ${className}`}>
       {childArray.map((child, idx) => (
         <div key={idx} className="min-w-0">
           {React.cloneElement(child, {

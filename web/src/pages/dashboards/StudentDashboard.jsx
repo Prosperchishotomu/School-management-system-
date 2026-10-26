@@ -31,14 +31,14 @@ export default function StudentDashboard() {
   return (
     <div className="space-y-6">
       {/* Hero */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md">
-        <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10 block w-fit mb-1.5">
+      <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs">
+        <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20 block w-fit mb-1.5">
           Student Desk
         </span>
-        <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+        <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
           Hello, {user?.name || user?.username || 'Student'}
         </h1>
-        <p className="text-xs md:text-sm text-brand-100/90 mt-1 max-w-xl">
+        <p className="text-xs md:text-sm text-muted mt-1 max-w-xl">
           Welcome to your learning portal. 3 assignments are active and mid-term results are published.
         </p>
       </div>
@@ -98,10 +98,15 @@ export default function StudentDashboard() {
         >
           <div className="divide-y divide-line/60">
             {subjects.map(s => (
-              <div key={s.name} className="py-2.5 flex items-center justify-between">
+              <div 
+                key={s.name} 
+                onClick={() => navigate('/results')}
+                className="py-2.5 flex items-center justify-between cursor-pointer hover:bg-canvas/50 px-2 rounded-lg transition-colors"
+                title="Click to drill down to Results & Gradebook"
+              >
                 <div>
                   <div className="font-semibold text-xs text-ink">{s.name}</div>
-                  <div className="text-[11px] text-muted">{s.teacher}</div>
+                  <div className="text-[11px] text-muted">{s.teacher} • Drill down →</div>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="font-mono font-bold text-xs text-ink tabular-nums">{s.score}%</span>
@@ -131,10 +136,15 @@ export default function StudentDashboard() {
               { period: '3', time: '09:40 - 10:25', name: 'Physics', room: 'Science Block' },
               { period: '4', time: '10:45 - 11:30', name: 'Chemistry', room: 'Lab 1' }
             ].map(t => (
-              <div key={t.period} className="p-3 rounded-xl bg-canvas border border-line flex items-center justify-between text-xs">
+              <div 
+                key={t.period} 
+                onClick={() => navigate('/timetable')}
+                className="p-3 rounded-xl bg-canvas border border-line flex items-center justify-between text-xs cursor-pointer hover:border-brand-500/50 hover:shadow-sm transition-all hover:-translate-y-0.5"
+                title="Click to drill down to Full Timetable"
+              >
                 <div>
                   <span className="font-bold text-ink">{t.name}</span>
-                  <div className="text-[11px] text-muted">{t.room} • Period {t.period}</div>
+                  <div className="text-[11px] text-muted">{t.room} • Period {t.period} • Drill down →</div>
                 </div>
                 <span className="font-mono text-[11px] text-muted">{t.time}</span>
               </div>

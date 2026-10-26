@@ -78,14 +78,14 @@ export default function ParentDashboard() {
   if (summary && children.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md">
-          <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10 block w-fit mb-1.5">
+        <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs">
+          <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20 block w-fit mb-1.5">
             Parent & Guardian Portal
           </span>
-          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
             Family Workspace
           </h1>
-          <p className="text-xs md:text-sm text-brand-100/90 mt-1">
+          <p className="text-xs md:text-sm text-muted mt-1">
             Welcome to the school parent portal.
           </p>
         </div>
@@ -114,31 +114,31 @@ export default function ParentDashboard() {
   return (
     <div className="space-y-6">
       {/* Hero with Child Switcher Tabs */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md">
+      <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10 block w-fit mb-1.5">
+            <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20 block w-fit mb-1.5">
               Parent & Guardian Portal
             </span>
-            <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+            <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
               Family Workspace
             </h1>
-            <p className="text-xs md:text-sm text-brand-100/90 mt-1">
+            <p className="text-xs md:text-sm text-muted mt-1">
               Select child to review academic progress, fees & welfare.
             </p>
           </div>
 
           {/* Child Switcher Tabs */}
           {children.length > 0 && (
-            <div className="flex items-center gap-2 bg-white/10 p-1.5 rounded-2xl shrink-0 overflow-x-auto">
+            <div className="flex items-center gap-2 bg-surface-alt border border-line p-1.5 rounded-2xl shrink-0 overflow-x-auto">
               {children.map((c, idx) => (
                 <button
                   key={c.id || idx}
                   onClick={() => setSelectedChildIndex(idx)}
                   className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
                     selectedChildIndex === idx
-                      ? 'bg-white text-brand-950 shadow-sm'
-                      : 'text-white/80 hover:text-white hover:bg-white/10'
+                      ? 'bg-brand-600 text-white shadow-sm'
+                      : 'text-muted hover:text-ink hover:bg-surface'
                   }`}
                 >
                   <Avatar name={c?.name || 'Child'} size="xs" />

@@ -379,7 +379,7 @@ export default function Notifications() {
   });
 
   return (
-    <div className="module-page p-6 max-w-7xl mx-auto space-y-6 animate-fadeIn font-sans">
+    <div className="module-page space-y-6 animate-fadeIn font-sans">
       {/* Top Header & Integrated Navigation Tabs */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-line-border/30 pb-4">
         <div>

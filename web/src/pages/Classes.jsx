@@ -227,12 +227,12 @@ export default function Classes() {
     }
   };
 
-  const schoolType = schoolInfo?.school_type || 'primary';
-  const isHighSchool = schoolType === 'high_school' || schoolType === 'combined';
-  const isSecondary = schoolType === 'secondary';
-  const gradeLevels = isHighSchool
+  const schoolType = (schoolInfo?.school_type || 'primary').toLowerCase();
+  const hasAlevel = Boolean(schoolInfo?.has_alevel || schoolType === 'high_school' || schoolType === 'combined' || schoolType === 'a_level');
+  const isOrdinaryLevel = (schoolType === 'secondary' || schoolType === 'o_level' || schoolType === 'secondary_o_level') && !hasAlevel;
+  const gradeLevels = hasAlevel
     ? ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6']
-    : isSecondary
+    : isOrdinaryLevel
     ? ['Form 1', 'Form 2', 'Form 3', 'Form 4']
     : ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'];
 
@@ -241,6 +241,8 @@ export default function Classes() {
       <PageHeader
         title="Classes & Academic Streams"
         subtitle={`Academic directory for ${schoolInfo?.name || 'Harare Academy'}. Manage classes, teacher allocations, and student roll.`}
+        backTo="/dashboard"
+        backLabel="Dashboard"
         actions={
           <div className="flex items-center gap-2">
             <button

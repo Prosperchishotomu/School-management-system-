@@ -19,9 +19,11 @@ import {
   GraduationCap, CalendarCheck, BookOpen, AlertCircle, Users, Check
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip } from 'recharts';
+import { getCurrentTerm } from '../utils/dateTerms';
 
 export default function Results() {
   const { user, activeSchoolId } = useAuth();
+  const currentTerm = getCurrentTerm();
   const toast = useToast();
   const [searchParams] = useSearchParams();
 
@@ -36,6 +38,24 @@ export default function Results() {
   const [activeStudentReport, setActiveStudentReport] = useState(null);
 
   // ==========================================
+  // ACADEMIC PERIOD ARCHIVE & HISTORICAL NAVIGATION
+  // ==========================================
+  const [selectedTerm, setSelectedTerm] = useState(() => searchParams.get('term') || currentTerm.name || 'Term 3');
+  const [selectedYear, setSelectedYear] = useState(() => searchParams.get('year') || String(currentTerm.year || 2026));
+
+  const isHistorical = selectedYear !== String(currentTerm.year) || selectedTerm !== currentTerm.name;
+
+  const availableYears = useMemo(() => {
+    const startYear = 2000;
+    const endYear = currentTerm.year || 2026;
+    const yrs = [];
+    for (let y = endYear; y >= startYear; y--) {
+      yrs.push(String(y));
+    }
+    return yrs;
+  }, [currentTerm.year]);
+
+  // ==========================================
   // PARENT FLOW: CHILD SWITCHER & SCOPED DATA
   // ==========================================
   const [selectedChildId, setSelectedChildId] = useState('');
@@ -46,8 +66,8 @@ export default function Results() {
     loading: parentLoading, 
     refetch: refetchParentResults 
   } = useApi(
-    isParent ? `parent_results_${schoolId}_${user?.id}` : null,
-    () => api.get(`/schools/${schoolId}/results`),
+    isParent ? `parent_results_${schoolId}_${user?.id}_${selectedTerm}_${selectedYear}` : null,
+    () => api.get(`/schools/${schoolId}/results?term=${encodeURIComponent(selectedTerm)}&year=${selectedYear}`),
     { enabled: isParent }
   );
 
@@ -86,7 +106,9 @@ export default function Results() {
     // 2. Check children_list from results payload
     const fromChildrenList = Array.isArray(parentResultsPayload?.children_list)
       ? parentResultsPayload.children_list
-      : [];
+      : (Array.isArray(parentResultsPayload?.data?.children_list)
+          ? parentResultsPayload.data.children_list
+          : []);
 
     fromChildrenList.forEach(c => {
       if (c && c.id) {
@@ -108,7 +130,9 @@ export default function Results() {
       ? parentResultsPayload
       : (Array.isArray(parentResultsPayload?.results)
           ? parentResultsPayload.results
-          : (Array.isArray(parentResultsPayload?.data) ? parentResultsPayload.data : []));
+          : (Array.isArray(parentResultsPayload?.data?.results)
+              ? parentResultsPayload.data.results
+              : (Array.isArray(parentResultsPayload?.data) ? parentResultsPayload.data : [])));
 
     rawResults.forEach(r => {
       const sId = r.student_id || r.id;
@@ -138,6 +162,7 @@ export default function Results() {
     if (!parentResultsPayload) return [];
     if (Array.isArray(parentResultsPayload)) return parentResultsPayload;
     if (Array.isArray(parentResultsPayload.results)) return parentResultsPayload.results;
+    if (Array.isArray(parentResultsPayload.data?.results)) return parentResultsPayload.data.results;
     if (Array.isArray(parentResultsPayload.data)) return parentResultsPayload.data;
     return [];
   }, [parentResultsPayload]);
@@ -178,7 +203,9 @@ export default function Results() {
     () => api.get(`/schools/${schoolId}/classes`),
     { enabled: !isParent }
   );
-  const allClasses = classesData || [];
+  const allClasses = Array.isArray(classesData)
+    ? classesData
+    : (Array.isArray(classesData?.data) ? classesData.data : (Array.isArray(classesData?.classes) ? classesData.classes : []));
 
   // Scoped classes for teachers (only classes where they are Form Master or Subject Teacher)
   const availableClasses = useMemo(() => {
@@ -219,21 +246,24 @@ export default function Results() {
     loading: classResultsLoading, 
     refetch: refetchClassResults 
   } = useApi(
-    !isParent && selectedClassId ? `class_results_${schoolId}_${selectedClassId}` : null,
-    () => api.get(`/schools/${schoolId}/results?class_id=${selectedClassId}`),
+    !isParent && selectedClassId ? `class_results_${schoolId}_${selectedClassId}_${selectedTerm}_${selectedYear}` : null,
+    () => api.get(`/schools/${schoolId}/results?class_id=${selectedClassId}&term=${encodeURIComponent(selectedTerm)}&year=${selectedYear}`),
     { enabled: Boolean(!isParent && selectedClassId) }
   );
 
   const studentsResults = useMemo(() => {
-    if (isParent) return [];
-    if (!classResultsPayload) return [];
-    return Array.isArray(classResultsPayload.data) ? classResultsPayload.data : (classResultsPayload || []);
+    if (isParent || !classResultsPayload) return [];
+    if (Array.isArray(classResultsPayload)) return classResultsPayload;
+    if (Array.isArray(classResultsPayload.results)) return classResultsPayload.results;
+    if (Array.isArray(classResultsPayload.data?.results)) return classResultsPayload.data.results;
+    if (Array.isArray(classResultsPayload.data)) return classResultsPayload.data;
+    return [];
   }, [isParent, classResultsPayload]);
 
-  const isClassTeacher = Boolean(classResultsPayload?.is_class_teacher || isAdmin);
-  const isSubjectTeacher = Boolean(classResultsPayload?.is_subject_teacher);
-  const assignedSubjects = classResultsPayload?.assigned_subjects || [];
-  const isSecondary = Boolean(classResultsPayload?.is_secondary);
+  const isClassTeacher = Boolean(classResultsPayload?.is_class_teacher || classResultsPayload?.data?.is_class_teacher || isAdmin);
+  const isSubjectTeacher = Boolean(classResultsPayload?.is_subject_teacher || classResultsPayload?.data?.is_subject_teacher);
+  const assignedSubjects = classResultsPayload?.assigned_subjects || classResultsPayload?.data?.assigned_subjects || [];
+  const isSecondary = Boolean(classResultsPayload?.is_secondary || classResultsPayload?.data?.is_secondary);
 
   const currentClassObj = availableClasses.find(c => c.id === selectedClassId) || allClasses.find(c => c.id === selectedClassId);
   const currentClassName = currentClassObj?.name || 'Class Broadsheet';
@@ -259,7 +289,12 @@ export default function Results() {
   };
 
   const handleOpenReport = (student) => {
-    setActiveStudentReport(student);
+    setActiveStudentReport({
+      ...student,
+      term: student.term || selectedTerm,
+      year: student.academic_year || student.year || selectedYear,
+      academic_year: student.academic_year || student.year || selectedYear
+    });
     setReportModalOpen(true);
   };
 
@@ -309,7 +344,7 @@ export default function Results() {
 
   // Cohort grade distribution (teacher & admin view only)
   const gradeDistribution = useMemo(() => {
-    if (isParent) return [];
+    if (isParent || !Array.isArray(studentsResults)) return [];
     const counts = {};
     studentsResults.forEach(st => {
       const g = isPrimary
@@ -334,13 +369,13 @@ export default function Results() {
   }, [isParent, studentsResults, isPrimary]);
 
   const cohortPassRate = useMemo(() => {
-    if (!studentsResults.length) return 86.4;
+    if (!Array.isArray(studentsResults) || !studentsResults.length) return 86.4;
     const passes = studentsResults.filter(s => s.pass_status === 'pass' || (s.overall_percentage >= 50));
     return parseFloat(((passes.length / studentsResults.length) * 100).toFixed(1));
   }, [studentsResults]);
 
   const cohortAggregateKpi = useMemo(() => {
-    if (!studentsResults.length) {
+    if (!Array.isArray(studentsResults) || !studentsResults.length) {
       if (isPrimary) return { label: 'Cohort Units Average', val: '—', note: 'Primary school units (Unit 1 is highest distinction)' };
       if (levelCategory === 'a_level') return { label: 'Points Average', val: '—', note: '5-point scale (A=5, B=4, C=3, D=2, E=1)' };
       return { label: 'Average Passes', val: '—', note: 'Pass grades: A, B, C (Symbols: A-U)' };
@@ -357,6 +392,100 @@ export default function Results() {
     const avgPasses = (studentsResults.reduce((acc, s) => acc + (s.passes_count || 0), 0) / studentsResults.length).toFixed(1);
     return { label: 'Average Quality Passes', val: `${avgPasses} Passes`, note: 'Symbols: A, B, C, D, E, U' };
   }, [studentsResults, levelCategory, isPrimary]);
+
+  // Academic Period Archive & Historical Navigator Component
+  const renderPeriodNavigator = () => (
+    <div className="glass-card p-4 rounded-2xl border border-line bg-surface/90 shadow-xs space-y-3">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-brand-500/10 text-brand-700 dark:text-brand-400 flex items-center justify-center shrink-0">
+            <CalendarCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="text-xs font-bold text-ink uppercase tracking-wider font-mono flex items-center gap-2">
+              <span>Academic Period Navigation & Historical Archives</span>
+              {isHistorical ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                  Historical Archive ({selectedTerm}, {selectedYear})
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                  Active Live Period
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-muted">
+              Explore terminal examination results, report cards, and broadsheets across past terms and years (e.g. 3rd Term of 2001).
+            </p>
+          </div>
+        </div>
+
+        {/* Controls: Year Selector, Term Selector & Preset Buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Year Picker */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-line bg-canvas/60 text-xs">
+            <span className="text-[11px] font-semibold text-muted font-mono">Academic Year:</span>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+              className="bg-transparent font-bold text-ink focus:outline-hidden cursor-pointer"
+            >
+              {availableYears.map(yr => (
+                <option key={yr} value={yr} className="text-ink bg-surface">
+                  {yr} {yr === '2001' ? '• (Archive 2001)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Term Buttons */}
+          <div className="flex items-center gap-1 p-1 rounded-xl border border-line bg-canvas/60 text-xs font-mono">
+            {['Term 1', 'Term 2', 'Term 3'].map(term => (
+              <button
+                key={term}
+                onClick={() => setSelectedTerm(term)}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  selectedTerm === term
+                    ? 'bg-brand-700 text-white shadow-xs'
+                    : 'text-muted hover:text-ink hover:bg-surface'
+                }`}
+              >
+                {term}
+              </button>
+            ))}
+          </div>
+
+          {/* Quick jump to 2001 Term 3 */}
+          {(selectedYear !== '2001' || selectedTerm !== 'Term 3') && (
+            <button
+              onClick={() => {
+                setSelectedYear('2001');
+                setSelectedTerm('Term 3');
+              }}
+              className="px-2.5 py-1.5 rounded-xl border border-line bg-surface hover:bg-canvas text-muted hover:text-ink text-[11px] font-mono transition cursor-pointer"
+              title="Jump to Term 3, 2001"
+            >
+              Jump to 2001 Term 3
+            </button>
+          )}
+
+          {/* Return to Current Term */}
+          {isHistorical && (
+            <button
+              onClick={() => {
+                setSelectedTerm(currentTerm.name || 'Term 3');
+                setSelectedYear(String(currentTerm.year || 2026));
+              }}
+              className="px-3 py-1.5 rounded-xl border border-brand-500/30 bg-brand-500/10 hover:bg-brand-500/20 text-brand-700 dark:text-brand-300 font-bold text-xs transition cursor-pointer"
+              title="Reset to current active term"
+            >
+              Current Term →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   // =========================================================================
   // RENDER: PARENT VIEW (STRICT CHILD PRIVACY WITH INTERACTIVE CHILD SWITCHER)
@@ -379,6 +508,9 @@ export default function Results() {
             )
           }
         />
+
+        {/* Academic Period Archive Navigator */}
+        {renderPeriodNavigator()}
 
         {/* CHILD SWITCHER BAR */}
         <div className="glass-card p-4 rounded-2xl border border-line">
@@ -474,11 +606,11 @@ export default function Results() {
         {!parentLoading && activeChildResult && (
           <div className="space-y-6">
             {/* Child Profile Banner */}
-            <div className="p-6 rounded-2xl bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="p-6 rounded-2xl bg-surface border border-line text-ink shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2.5 py-0.5 rounded-full bg-white/10">
-                    {activeChildResult.class_name} • Term 1, 2026
+                  <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 uppercase px-2.5 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20">
+                    {activeChildResult.class_name} • {activeChildResult.term || currentTerm.name}, {activeChildResult.year || currentTerm.year}
                   </span>
                   <StatusPill
                     status={activeChildResult.is_published ? 'published' : 'draft'}
@@ -486,20 +618,20 @@ export default function Results() {
                     size="sm"
                   />
                 </div>
-                <h2 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+                <h2 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
                   {activeChildResult.student_name}
                 </h2>
-                <p className="text-xs md:text-sm text-brand-100/90 mt-1">
-                  Admission No: <span className="font-mono font-bold">{activeChildResult.admission_number}</span> • Form Master: <span className="font-semibold">{activeChildResult.form_master_name}</span>
+                <p className="text-xs md:text-sm text-muted mt-1">
+                  Admission No: <span className="font-mono font-bold text-ink">{activeChildResult.admission_number}</span> • Form Master: <span className="font-semibold text-ink">{activeChildResult.form_master_name}</span>
                 </p>
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
                 <button
                   onClick={() => handleOpenReport(activeChildResult)}
-                  className="px-4 py-2.5 rounded-xl bg-white text-brand-950 font-bold text-xs hover:bg-neutral-100 transition-colors shadow-sm flex items-center gap-2 cursor-pointer"
+                  className="px-4 py-2.5 rounded-xl bg-brand-600 text-white font-bold text-xs hover:bg-brand-700 transition-colors shadow-xs flex items-center gap-2 cursor-pointer"
                 >
-                  <Printer className="w-4 h-4 text-brand-700" />
+                  <Printer className="w-4 h-4 text-white" />
                   <span>View & Print Transcript</span>
                 </button>
               </div>
@@ -689,6 +821,18 @@ export default function Results() {
         }
         actions={
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const token = sessionStorage.getItem('schoolbase_token') || localStorage.getItem('schoolbase_token');
+                window.open(`/api/schools/${schoolId}/classes/${selectedClassId}/results/export?term=${encodeURIComponent(selectedTerm)}&year=${selectedYear}&token=${token}`, '_blank');
+              }}
+              className="btn-secondary text-xs flex items-center gap-1.5"
+              title="Download CSV Broadsheet for this Term & Year"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export CSV</span>
+            </button>
+
             {isAdmin && (
               <button
                 onClick={handleTogglePublish}
@@ -712,6 +856,9 @@ export default function Results() {
         }
       />
 
+      {/* Academic Period Archive Navigator */}
+      {renderPeriodNavigator()}
+
       {/* TEACHER ROLE ACCESS BANNER */}
       {isTeacher && (
         <div className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${
@@ -732,7 +879,7 @@ export default function Results() {
               <div className="text-xs mt-0.5 opacity-90">
                 {isClassTeacher
                   ? `You are the Form Master for ${currentClassName}. You have full broadsheet authorization to view student results across all subjects.`
-                  : `You are assigned as Subject Teacher. You are authorized to view marks for your allocated subject(s): ${assignedSubjects.map(s => s.subject_name).join(', ') || 'Assigned Subject'}. Full broadsheets are restricted to the Class Teacher.`}
+                  : `You are assigned as Subject Teacher. You are authorized to view marks for your allocated subject(s): ${(Array.isArray(assignedSubjects) ? assignedSubjects : []).map(s => s.subject_name).join(', ') || 'Assigned Subject'}. Full broadsheets are restricted to the Class Teacher.`}
               </div>
             </div>
           </div>
@@ -1011,7 +1158,7 @@ export default function Results() {
                 Ministry of Primary & Secondary Education Centre #6024
               </p>
               <h3 className="text-sm font-bold font-sans mt-2 underline">
-                OFFICIAL TERMINAL REPORT CARD — TERM 1, 2026
+                OFFICIAL TERMINAL REPORT CARD — {(activeStudentReport?.term || selectedTerm).toUpperCase()}, {activeStudentReport?.academic_year || activeStudentReport?.year || selectedYear}
               </h3>
             </div>
 

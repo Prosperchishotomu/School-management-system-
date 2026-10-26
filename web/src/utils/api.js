@@ -114,7 +114,7 @@ async function request(path, options = {}) {
       if (result.error?.code === 'LICENSE_EXPIRED') {
         sessionStorage.setItem('schoolbase_license_expired', 'true');
       }
-      if (response.status === 404 && (result.error?.message?.toLowerCase().includes('school not found') || path.startsWith('/schools/'))) {
+      if (response.status === 404 && (result.error?.message?.toLowerCase().includes('school not found') || result.error?.code === 'SCHOOL_NOT_FOUND')) {
         sessionStorage.removeItem('schoolbase_active_school_id');
         window.dispatchEvent(new CustomEvent('schoolbase:school-not-found', { detail: { path } }));
       }

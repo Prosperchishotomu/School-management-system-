@@ -89,7 +89,10 @@ router.get('/terms', authenticateToken, async (req, res) => {
   try {
     const schoolId = req.params.schoolId || req.user.school_id;
     const terms = await query(
-      `SELECT t.*, s.year as session_year, s.name as session_name 
+      `SELECT t.*, s.year as session_year, s.name as session_name,
+              CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE 0 END as is_current_by_date,
+              CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE COALESCE(t.is_current, 0) END as is_current,
+              CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 'active' ELSE 'inactive' END as status
        FROM terms t 
        LEFT JOIN academic_sessions s ON t.session_id = s.id 
        WHERE t.school_id = ? OR t.school_id IS NULL 
@@ -99,6 +102,39 @@ router.get('/terms', authenticateToken, async (req, res) => {
     return res.json({ data: terms });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch terms.' } });
+  }
+});
+
+// GET /academics/terms/current
+router.get('/terms/current', authenticateToken, async (req, res) => {
+  try {
+    const schoolId = req.params.schoolId || req.user.school_id;
+    let current = await queryOne(
+      `SELECT t.*, s.year as session_year, s.name as session_name, 1 as is_current_by_date, 'active' as status
+       FROM terms t
+       LEFT JOIN academic_sessions s ON t.session_id = s.id
+       WHERE (t.school_id = ? OR t.school_id IS NULL)
+         AND CURRENT_DATE BETWEEN t.start_date AND t.end_date
+       ORDER BY t.school_id DESC, t.start_date DESC
+       LIMIT 1`,
+      [schoolId]
+    );
+
+    if (!current) {
+      // Find upcoming or latest term
+      current = await queryOne(
+        `SELECT t.*, s.year as session_year, s.name as session_name, 0 as is_current_by_date, 'holiday' as status
+         FROM terms t
+         LEFT JOIN academic_sessions s ON t.session_id = s.id
+         WHERE (t.school_id = ? OR t.school_id IS NULL)
+         ORDER BY t.start_date DESC
+         LIMIT 1`,
+        [schoolId]
+      );
+    }
+    return res.json({ data: current });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch current term.' } });
   }
 });
 
@@ -128,6 +164,43 @@ router.post('/terms', authenticateToken, requireRoles('school_admin', 'super_adm
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create term.' } });
   }
 });
+
+// PUT / PATCH /academics/terms/:id (Edit Term)
+const handleEditTerm = async (req, res) => {
+  try {
+    const schoolId = req.params.schoolId || req.user.school_id;
+    const { id } = req.params;
+    const { name, start_date, end_date, is_current, session_id, term_number } = req.body;
+
+    const updates = [];
+    const params = [];
+    if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+    if (start_date !== undefined) { updates.push('start_date = ?'); params.push(start_date); }
+    if (end_date !== undefined) { updates.push('end_date = ?'); params.push(end_date); }
+    if (session_id !== undefined) { updates.push('session_id = ?'); params.push(session_id); }
+    if (term_number !== undefined) { updates.push('term_number = ?'); params.push(term_number); }
+    if (is_current !== undefined) {
+      if (is_current) {
+        await query('UPDATE terms SET is_current = FALSE WHERE school_id = ?', [schoolId]);
+      }
+      updates.push('is_current = ?');
+      params.push(is_current ? 1 : 0);
+    }
+
+    if (updates.length > 0) {
+      params.push(id, schoolId, req.user.role);
+      await query(`UPDATE terms SET ${updates.join(', ')} WHERE id = ? AND (school_id = ? OR ? = 'super_admin')`, params);
+    }
+
+    const updated = await queryOne('SELECT * FROM terms WHERE id = ?', [id]);
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update term.' } });
+  }
+};
+
+router.put('/terms/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleEditTerm);
+router.patch('/terms/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleEditTerm);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DEPARTMENTS

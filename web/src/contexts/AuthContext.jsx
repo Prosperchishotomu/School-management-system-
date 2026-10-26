@@ -21,6 +21,7 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser]               = useState(null);
   const [loading, setLoading]         = useState(true);
   const [activeSchoolId, setActiveSchoolId] = useState(null);
+  const [schools, setSchools]         = useState([]);
   const inactivityTimer               = useRef(null);
 
   // ─── Clear all auth storage ───────────────────────────────────────────────
@@ -94,13 +95,21 @@ export const AuthProvider = ({ children }) => {
         api.get('/schools', { silent: true }).then(res => {
           const schoolList = res?.data || res || [];
           if (Array.isArray(schoolList) && schoolList.length > 0) {
-            const currentSelected = store.getItem(STORAGE_SCHOOL_KEY) || parsedUser.school_id;
-            const valid = schoolList.find(s => s.id === currentSelected);
-            const activeId = valid ? valid.id : schoolList[0].id;
-            setActiveSchoolId(activeId);
-            store.setItem(STORAGE_SCHOOL_KEY, activeId);
+            setSchools(schoolList);
+            if (parsedUser.role === 'super_admin') {
+              const currentSelected = store.getItem(STORAGE_SCHOOL_KEY) || parsedUser.school_id;
+              const valid = schoolList.find(s => s.id === currentSelected);
+              const activeId = valid ? valid.id : schoolList[0].id;
+              setActiveSchoolId(activeId);
+              store.setItem(STORAGE_SCHOOL_KEY, activeId);
+            } else {
+              const userSchool = parsedUser.school_id;
+              setActiveSchoolId(userSchool);
+              if (userSchool) store.setItem(STORAGE_SCHOOL_KEY, userSchool);
+            }
           } else {
             setActiveSchoolId(parsedUser.school_id || null);
+            if (parsedUser.school_id) store.setItem(STORAGE_SCHOOL_KEY, parsedUser.school_id);
           }
         }).catch(() => {
           if (parsedUser.role === 'super_admin') {
@@ -109,6 +118,7 @@ export const AuthProvider = ({ children }) => {
             store.setItem(STORAGE_SCHOOL_KEY, savedSchool);
           } else {
             setActiveSchoolId(parsedUser.school_id);
+            if (parsedUser.school_id) store.setItem(STORAGE_SCHOOL_KEY, parsedUser.school_id);
           }
         });
 
@@ -120,8 +130,12 @@ export const AuthProvider = ({ children }) => {
 
     setLoading(false);
 
-    // Listen for deleted school 404s and auto-heal to valid school
+    // Listen for deleted school 404s and auto-heal to valid school (super admin only)
     const handleSchoolNotFound = () => {
+      const savedUserStr = store.getItem(STORAGE_USER_KEY);
+      const currentUser = savedUserStr ? JSON.parse(savedUserStr) : null;
+      if (currentUser?.role !== 'super_admin') return;
+
       store.removeItem(STORAGE_SCHOOL_KEY);
       api.get('/schools', { silent: true }).then(r => {
         const schools = r?.data || r || [];
@@ -163,7 +177,18 @@ export const AuthProvider = ({ children }) => {
         store.setItem(STORAGE_SCHOOL_KEY, defaultSchool);
       } else {
         setActiveSchoolId(loggedUser.school_id);
+        if (loggedUser.school_id) {
+          store.setItem(STORAGE_SCHOOL_KEY, loggedUser.school_id);
+        }
       }
+
+      // Populate schools list immediately on login
+      api.get('/schools', { silent: true }).then(res => {
+        const schoolList = res?.data || res || [];
+        if (Array.isArray(schoolList) && schoolList.length > 0) {
+          setSchools(schoolList);
+        }
+      }).catch(() => {});
 
       startActivityTracking();
       return { success: true };
@@ -184,12 +209,29 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const updateUser = useCallback((updatedFields) => {
+    setUser(prev => {
+      const merged = { ...prev, ...updatedFields };
+      try {
+        store.setItem(STORAGE_USER_KEY, JSON.stringify(merged));
+      } catch (_) {}
+      return merged;
+    });
+  }, []);
+
+  const activeSchool = schools.find(s => s.id === (activeSchoolId || user?.school_id)) || (user?.school_name ? { id: user.school_id, name: user.school_name } : null);
+  const schoolName = activeSchool?.name || user?.school_name || '';
+
   const value = {
     user,
     loading,
     activeSchoolId,
+    activeSchool,
+    schoolName,
+    schools,
     login,
     logout,
+    updateUser,
     changeActiveSchool,
   };
 
@@ -213,6 +255,9 @@ export const useAuth = () => {
       user,
       loading: false,
       activeSchoolId,
+      activeSchool: user?.school_name ? { id: user?.school_id, name: user.school_name } : null,
+      schoolName: user?.school_name || '',
+      schools: [],
       login: async () => ({ success: false, error: 'Auth initializing' }),
       logout: () => {
         if (typeof window !== 'undefined') {

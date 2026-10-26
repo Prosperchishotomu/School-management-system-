@@ -231,6 +231,28 @@ router.delete('/schools/:schoolId/teaching-assignments/:id', authenticateToken, 
   }
 });
 
+router.patch('/schools/:schoolId/teaching-assignments/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { class_id, subject_id, teacher_id } = req.body;
+    const updates = [];
+    const params = [];
+    if (class_id !== undefined) { updates.push('class_id = ?'); params.push(class_id); }
+    if (subject_id !== undefined) { updates.push('subject_id = ?'); params.push(subject_id); }
+    if (teacher_id !== undefined) { updates.push('teacher_id = ?'); params.push(teacher_id); }
+
+    if (updates.length > 0) {
+      params.push(id, schoolId);
+      await query(`UPDATE teaching_assignments SET ${updates.join(', ')} WHERE id = ? AND school_id = ?`, params);
+    }
+
+    const updated = await queryOne('SELECT * FROM teaching_assignments WHERE id = ?', [id]);
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update teaching assignment.' } });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // TEACHER MESSAGES (Staff.jsx uses /schools/:schoolId/teacher-messages)
 // GET /schools/:schoolId/teacher-messages
@@ -331,7 +353,10 @@ router.post('/schools/:schoolId/teacher-messages', authenticateToken, async (req
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    const { schoolId } = req.params;
+    const targetSchool = req.user.role === 'super_admin'
+      ? (req.body.school_id || req.params.schoolId)
+      : req.user.school_id;
+
     const { username, email, role, password, student_id, name, phone } = req.body;
     if (!username || !role || !password) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Username, role, and password are required.' } });
@@ -341,41 +366,39 @@ router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_
       return res.status(409).json({ error: { code: 'DUPLICATE', message: 'Username already exists.' } });
     }
     const id = 'USR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-    const hash = bcrypt.hashSync(password, 10);
+    const hash = bcrypt.hashSync(String(password).trim(), 10);
     await query(
       `INSERT INTO users (id, school_id, username, email, password_hash, role, student_id, phone, name, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
-      [id, schoolId, username.trim(), email || null, hash, role, student_id || null, phone || null, name || null]
+      [id, targetSchool, username.trim(), email || null, hash, role, student_id || null, phone || null, name || null]
     );
 
     // If creating a parent, link the user to their guardian record
     if (role === 'parent' && student_id) {
       try {
-        // Find guardian linked to this student
         const sg = await queryOne(
           `SELECT g.* FROM guardians g JOIN student_guardians sg ON g.id = sg.guardian_id WHERE sg.student_id = ? AND g.school_id = ? LIMIT 1`,
-          [student_id, schoolId]
+          [student_id, targetSchool]
         );
         if (sg && !sg.user_id) {
           await query('UPDATE guardians SET user_id = ? WHERE id = ?', [id, sg.id]);
         }
-        // Also update student record for direct lookup
         await query('UPDATE users SET student_id = ? WHERE id = ?', [student_id, id]);
       } catch (linkErr) {
         console.warn('Parent-guardian link warning:', linkErr.message);
       }
     }
 
-    // If creating a teacher or school_admin/principal, ensure staff profile exists
-    if (role === 'teacher' || role === 'school_admin') {
+    // If creating a staff/leadership user, ensure staff profile exists
+    if (['teacher', 'school_admin', 'principal', 'headmaster', 'head', 'deputy_head', 'bursar'].includes(role)) {
       try {
         const staffName = name || username.trim();
-        const roleTitle = role === 'school_admin' ? 'Principal' : 'Teacher';
-        const existingStaff = await queryOne('SELECT id FROM staff WHERE user_id = ? OR (school_id = ? AND email IS NOT NULL AND LOWER(email) = LOWER(?))', [id, schoolId, email || '']);
+        const roleTitle = role === 'teacher' ? 'Teacher' : (role === 'bursar' ? 'Bursar' : 'Principal / Administrator');
+        const existingStaff = await queryOne('SELECT id FROM staff WHERE user_id = ? OR (school_id = ? AND email IS NOT NULL AND LOWER(email) = LOWER(?))', [id, targetSchool, email || '']);
         if (!existingStaff) {
           const staffId = 'STF' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
           await query(
             'INSERT INTO staff (id, school_id, user_id, name, email, phone, role_title, status) VALUES (?, ?, ?, ?, ?, ?, ?, "active")',
-            [staffId, schoolId, id, staffName, email || null, phone || null, roleTitle]
+            [staffId, targetSchool, id, staffName, email || null, phone || null, roleTitle]
           );
         }
       } catch (staffErr) {
@@ -383,7 +406,7 @@ router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_
       }
     }
 
-    const created = await queryOne('SELECT id, username, email, role, status, created_at, phone, name FROM users WHERE id = ?', [id]);
+    const created = await queryOne('SELECT id, school_id, username, email, role, status, created_at, phone, name FROM users WHERE id = ?', [id]);
     return res.status(201).json({ data: created, credentials: { username: username.trim(), password } });
   } catch (err) {
     console.error('Create user error:', err);
@@ -391,14 +414,71 @@ router.post('/schools/:schoolId/users', authenticateToken, requireRoles('school_
   }
 });
 
+// User soft-deactivation (Do NOT delete users)
 router.delete('/schools/:schoolId/users/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    await query('DELETE FROM users WHERE id = ? AND school_id = ?', [req.params.id, req.params.schoolId]);
-    return res.json({ data: { message: 'User account deleted.' } });
+    const targetSchool = req.user.role === 'super_admin' ? req.params.schoolId : req.user.school_id;
+    await query("UPDATE users SET status = 'deactivated' WHERE id = ? AND (school_id = ? OR ? = 'super_admin')", [req.params.id, targetSchool, req.user.role]);
+    await query("UPDATE staff SET status = 'inactive' WHERE user_id = ?", [req.params.id]);
+    return res.json({ data: { message: 'User account has been deactivated/suspended.' } });
   } catch (err) {
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to delete user.' } });
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to deactivate user.' } });
   }
 });
+
+// Update / Edit user account
+const handleUpdateUser = async (req, res) => {
+  try {
+    const targetSchool = req.user.role === 'super_admin' ? (req.body.school_id || req.params.schoolId) : req.user.school_id;
+    const { id } = req.params;
+    const { name, email, phone, role, status, password } = req.body;
+
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) { updates.push('name = ?'); params.push(name ? name.trim() : null); }
+    if (email !== undefined) { updates.push('email = ?'); params.push(email ? email.trim() : null); }
+    if (phone !== undefined) { updates.push('phone = ?'); params.push(phone ? phone.trim() : null); }
+    if (role !== undefined) { updates.push('role = ?'); params.push(role); }
+    if (status !== undefined) { updates.push('status = ?'); params.push(status); }
+    if (password) {
+      updates.push('password_hash = ?');
+      params.push(bcrypt.hashSync(String(password).trim(), 10));
+    }
+    if (req.user.role === 'super_admin' && req.body.school_id) {
+      updates.push('school_id = ?');
+      params.push(req.body.school_id);
+    }
+
+    if (updates.length > 0) {
+      params.push(id, targetSchool, req.user.role);
+      await query(`UPDATE users SET ${updates.join(', ')} WHERE id = ? AND (school_id = ? OR ? = 'super_admin')`, params);
+
+      // Keep staff row synced
+      const staffUpdates = [];
+      const staffParams = [];
+      if (name !== undefined) { staffUpdates.push('name = ?'); staffParams.push(name ? name.trim() : null); }
+      if (email !== undefined) { staffUpdates.push('email = ?'); staffParams.push(email ? email.trim() : null); }
+      if (phone !== undefined) { staffUpdates.push('phone = ?'); staffParams.push(phone ? phone.trim() : null); }
+      if (status !== undefined) { staffUpdates.push('status = ?'); staffParams.push(status === 'active' ? 'active' : 'inactive'); }
+      if (role !== undefined) { staffUpdates.push('role_title = ?'); staffParams.push(role); }
+
+      if (staffUpdates.length > 0) {
+        staffParams.push(id);
+        await query(`UPDATE staff SET ${staffUpdates.join(', ')} WHERE user_id = ?`, staffParams);
+      }
+    }
+
+    const updated = await queryOne('SELECT id, school_id, username, email, role, status, created_at, phone, name FROM users WHERE id = ?', [id]);
+    return res.json({ data: updated });
+  } catch (err) {
+    console.error('Update user error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update user account.' } });
+  }
+};
+
+router.put('/schools/:schoolId/users/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleUpdateUser);
+router.patch('/schools/:schoolId/users/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleUpdateUser);
 
 const handleResetPassword = async (req, res) => {
   try {
@@ -446,18 +526,20 @@ router.post('/auth/reset-password', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ADMIN SYSTEM SETTINGS
-// GET /admin/system-settings/:schoolId
-// PUT /admin/system-settings/:schoolId
-// GET /admin/system-reports
-// PUT /admin/override/:entity/:id
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/admin/system-settings/:schoolId', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const school = await queryOne('SELECT * FROM schools WHERE id = ?', [req.params.schoolId]);
     if (!school) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'School not found.' } });
-    return res.json({ data: school });
+
+    let integrations = {};
+    try {
+      const cfgRow = await queryOne('SELECT `value` FROM system_config WHERE `key` = ?', [`school_settings_${req.params.schoolId}`]);
+      if (cfgRow && cfgRow.value) {
+        integrations = JSON.parse(cfgRow.value);
+      }
+    } catch (e) {}
+
+    return res.json({ data: { ...school, ...integrations } });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch system settings.' } });
   }
@@ -467,32 +549,56 @@ router.put('/admin/system-settings/:schoolId', authenticateToken, requireRoles('
   try {
     const { schoolId } = req.params;
     const {
-      name, email, phone, address, motto, principal_name, type, academic_year,
-      bank_name, account_number, currency, email_from_address, sms_gateway
+      name, email, phone, address, motto, principal_name, type, school_type, academic_year,
+      bank_name, account_number, currency, email_from_address, sms_gateway,
+      head_title, is_boarding, boarding_type, tuition_fee_benchmark,
+      sms_gateway_url, sms_api_key, sms_sender_id,
+      email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass, email_from_name,
+      payment_gateway_type, payment_merchant_id, payment_merchant_key, payment_api_url,
+      notify_attendance_absent, notify_results_published, notify_fees_overdue, notify_discipline_incident
     } = req.body;
+
+    const resolvedSchoolType = school_type || type;
+    const hasAlevelVal = (resolvedSchoolType === 'high_school' || resolvedSchoolType === 'combined' || resolvedSchoolType === 'a_level') ? 1 : 0;
+    const isBoardingVal = is_boarding !== undefined ? (is_boarding ? 1 : 0) : null;
 
     await query(
       `UPDATE schools SET
          name = COALESCE(?, name),
-         email = COALESCE(?, email),
-         phone = COALESCE(?, phone),
-         address = COALESCE(?, address),
-         motto = COALESCE(?, motto),
-         principal_name = COALESCE(?, principal_name),
-         type = COALESCE(?, type),
-         academic_year = COALESCE(?, academic_year),
+         school_type = COALESCE(?, school_type),
+         has_alevel = ?,
+         head_title = COALESCE(?, head_title),
+         is_boarding = COALESCE(?, is_boarding),
+         boarding_type = COALESCE(?, boarding_type),
+         tuition_fee_benchmark = COALESCE(?, tuition_fee_benchmark),
          bank_name = COALESCE(?, bank_name),
          account_number = COALESCE(?, account_number),
-         currency = COALESCE(?, currency),
-         email_from_address = COALESCE(?, email_from_address),
-         sms_gateway = COALESCE(?, sms_gateway)
+         currency = COALESCE(?, currency)
        WHERE id = ?`,
-      [name, email, phone, address, motto, principal_name, type, academic_year,
-       bank_name, account_number, currency, email_from_address, sms_gateway, schoolId]
+      [name, resolvedSchoolType, hasAlevelVal, head_title, isBoardingVal, boarding_type, tuition_fee_benchmark,
+       bank_name, account_number, currency, schoolId]
     );
+
+    const integrationPayload = {
+      sms_gateway_url, sms_api_key, sms_sender_id,
+      email_smtp_host, email_smtp_port, email_smtp_user, email_smtp_pass, email_from_name, email_from_address,
+      payment_gateway_type, payment_merchant_id, payment_merchant_key, payment_api_url,
+      notify_attendance_absent, notify_results_published, notify_fees_overdue, notify_discipline_incident
+    };
+
+    try {
+      await query(
+        'INSERT INTO system_config (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+        [`school_settings_${schoolId}`, JSON.stringify(integrationPayload)]
+      );
+    } catch (e) {}
+
+    broadcastInvalidation(schoolId, ['schools', 'settings', 'dashboard'], 'settings_updated');
+
     const updated = await queryOne('SELECT * FROM schools WHERE id = ?', [schoolId]);
-    return res.json({ data: updated });
+    return res.json({ data: { ...updated, ...integrationPayload } });
   } catch (err) {
+    console.error('Update system settings error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update system settings.' } });
   }
 });
@@ -1630,6 +1736,55 @@ router.post('/schools/:schoolId/assets/:id/return', authenticateToken, async (re
   }
 });
 
+// Configurable Teaching Periods per School
+router.get('/schools/:schoolId/timetable/periods', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const configRow = await queryOne('SELECT `value` FROM system_config WHERE `key` = ?', [`timetable_periods_${schoolId}`]);
+    if (configRow && configRow.value) {
+      try {
+        const periods = JSON.parse(configRow.value);
+        if (Array.isArray(periods) && periods.length > 0) {
+          return res.json({ data: periods });
+        }
+      } catch (e) {}
+    }
+
+    const defaultPeriods = [
+      { id: '1', name: 'Period 1', time: '08:00 - 08:45', start_time: '08:00', end_time: '08:45', isBreak: false },
+      { id: '2', name: 'Period 2', time: '08:45 - 09:30', start_time: '08:45', end_time: '09:30', isBreak: false },
+      { id: '3', name: 'Period 3', time: '09:30 - 10:15', start_time: '09:30', end_time: '10:15', isBreak: false },
+      { id: 'break', name: 'Morning Tea', time: '10:15 - 10:45', start_time: '10:15', end_time: '10:45', isBreak: true },
+      { id: '4', name: 'Period 4', time: '10:45 - 11:30', start_time: '10:45', end_time: '11:30', isBreak: false },
+      { id: '5', name: 'Period 5', time: '11:30 - 12:15', start_time: '11:30', end_time: '12:15', isBreak: false },
+      { id: 'lunch', name: 'Lunch Break', time: '12:15 - 13:15', start_time: '12:15', end_time: '13:15', isBreak: true },
+      { id: '6', name: 'Period 6', time: '13:15 - 14:00', start_time: '13:15', end_time: '14:00', isBreak: false },
+      { id: '7', name: 'Period 7', time: '14:00 - 14:45', start_time: '14:00', end_time: '14:45', isBreak: false },
+      { id: '8', name: 'Period 8', time: '14:45 - 15:30', start_time: '14:45', end_time: '15:30', isBreak: false },
+    ];
+    return res.json({ data: defaultPeriods });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch timetable periods.' } });
+  }
+});
+
+router.post('/schools/:schoolId/timetable/periods', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { periods } = req.body;
+    if (!Array.isArray(periods)) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'periods array is required.' } });
+    }
+    await query(
+      'INSERT INTO system_config (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+      [`timetable_periods_${schoolId}`, JSON.stringify(periods)]
+    );
+    return res.json({ data: periods, message: 'Teaching periods updated successfully.' });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save timetable periods.' } });
+  }
+});
+
 router.get('/schools/:schoolId/timetable', authenticateToken, async (req, res) => {
   try {
     const { class_id, teacher_name, teacher_id, mode } = req.query;
@@ -1916,6 +2071,110 @@ async function seedDefaultGradeThresholds(schoolId, schoolType) {
   }
 }
 
+async function provisionSchoolDefaults(schoolId, schoolType, headTitle, adminUsername, adminEmail, adminPassword, superAdminUserId) {
+  try {
+    // 1. Seed default grading system matching school type
+    await seedDefaultGradeThresholds(schoolId, schoolType);
+
+    // 2. Provision default academic session and terms if none exist
+    let sessionId = null;
+    const existingSession = await queryOne('SELECT id FROM academic_sessions WHERE school_id = ? LIMIT 1', [schoolId]);
+    if (existingSession) {
+      sessionId = existingSession.id;
+    } else {
+      const sessRes = await query(
+        `INSERT INTO academic_sessions (school_id, year, name, start_date, end_date, is_current, status)
+         VALUES (?, 2026, 'Academic Year 2026', '2026-01-12', '2026-12-04', 1, 'active')`,
+        [schoolId]
+      );
+      sessionId = sessRes.insertId;
+    }
+
+    if (sessionId) {
+      const existingTerms = await query('SELECT id FROM terms WHERE school_id = ?', [schoolId]);
+      if (!existingTerms || existingTerms.length === 0) {
+        await query(
+          `INSERT INTO terms (school_id, session_id, name, start_date, end_date, is_current) VALUES
+           (?, ?, 'term_1', '2026-01-12', '2026-04-03', 1),
+           (?, ?, 'term_2', '2026-05-05', '2026-08-07', 0),
+           (?, ?, 'term_3', '2026-09-08', '2026-12-04', 0)`,
+          [schoolId, sessionId, schoolId, sessionId, schoolId, sessionId]
+        );
+      }
+    }
+
+    // 3. Provision default classes matching school type if none exist
+    const existingClasses = await query('SELECT id FROM classes WHERE school_id = ?', [schoolId]);
+    if (!existingClasses || existingClasses.length === 0) {
+      const isPrimary = String(schoolType || '').toLowerCase() === 'primary';
+      const defaultClassNames = isPrimary
+        ? ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7']
+        : ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6'];
+
+      for (const cName of defaultClassNames) {
+        const cId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+        await query(
+          `INSERT INTO classes (id, school_id, name, grade_level, level, status)
+           VALUES (?, ?, ?, ?, ?, 'active')`,
+          [cId, schoolId, cName, cName, isPrimary ? 'Primary' : 'Secondary']
+        );
+      }
+    }
+
+    // 4. Provision default active license
+    const existingLic = await queryOne('SELECT id FROM licenses WHERE school_id = ?', [schoolId]);
+    if (!existingLic) {
+      const licId = 'LIC' + Date.now().toString(36).substr(-4) + Math.random().toString(36).substr(2, 3).toUpperCase();
+      const licKey = Buffer.from(JSON.stringify({ school_id: schoolId, plan: 'full', expires_at: '2028-12-31' })).toString('base64');
+      const issuerId = superAdminUserId || 'USR00001';
+      await query(
+        `INSERT INTO licenses (id, school_id, license_key, plan, status, issued_at, expires_at, max_users, issued_by)
+         VALUES (?, ?, ?, 'full', 'active', NOW(), DATE_ADD(NOW(), INTERVAL 2 YEAR), 1000, ?)`,
+        [licId, schoolId, licKey, issuerId]
+      );
+    }
+
+    // 5. Provision Administrator User & Staff Record
+    const rawUsername = adminUsername ? String(adminUsername).trim().toLowerCase() : `${schoolId.toLowerCase()}admin`;
+    const rawPassword = adminPassword ? String(adminPassword).trim() : 'admin123';
+    const rawEmail = adminEmail ? String(adminEmail).trim().toLowerCase() : null;
+    const bcrypt = require('bcryptjs');
+    const adminPassHash = bcrypt.hashSync(rawPassword, 10);
+
+    const existingUser = await queryOne('SELECT id FROM users WHERE username = ?', [rawUsername]);
+    let adminUserId = existingUser?.id;
+
+    if (existingUser) {
+      await query(
+        `UPDATE users SET school_id = ?, password_hash = ?, role = 'school_admin', status = 'active' WHERE id = ?`,
+        [schoolId, adminPassHash, adminUserId]
+      );
+    } else {
+      adminUserId = 'USR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+      await query(
+        `INSERT INTO users (id, school_id, username, email, password_hash, role, status, name)
+         VALUES (?, ?, ?, ?, ?, 'school_admin', 'active', ?)`,
+        [adminUserId, schoolId, rawUsername, rawEmail, adminPassHash, headTitle || 'School Principal']
+      );
+    }
+
+    // Provision matching staff record for leadership
+    const existingStaff = await queryOne('SELECT id FROM staff WHERE user_id = ? OR (school_id = ? AND role_title = ?)', [adminUserId, schoolId, headTitle || 'Principal']);
+    if (!existingStaff) {
+      const staffId = 'STF' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+      await query(
+        `INSERT INTO staff (id, school_id, user_id, name, email, role_title, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+        [staffId, schoolId, adminUserId, headTitle || 'School Principal', rawEmail, headTitle || 'Principal']
+      );
+    }
+
+    return { admin_username: rawUsername, admin_password: rawPassword };
+  } catch (provErr) {
+    console.error('provisionSchoolDefaults error:', provErr);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // SCHOOLS — Create/Edit (CommandCenter)
 // POST /schools
@@ -1949,26 +2208,22 @@ router.post('/schools', authenticateToken, requireRoles('super_admin'), async (r
       );
     }
 
-    // If initial admin user credentials are provided, provision school admin
-    if (admin_username && admin_password) {
-      try {
-        const bcrypt = require('bcryptjs');
-        const adminPassHash = bcrypt.hashSync(admin_password, 10);
-        const adminId = 'USR' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-        await query(
-          `INSERT INTO users (id, school_id, username, email, password_hash, role, status) VALUES (?, ?, ?, ?, ?, 'school_admin', 'active')`,
-          [adminId, schoolIdUpper, admin_username.trim(), admin_email ? admin_email.trim() : null, adminPassHash]
-        );
-      } catch (adminErr) {
-        console.error('Failed to provision initial school admin account:', adminErr);
-      }
-    }
-
-    // Seed default grading system matching the school type
-    await seedDefaultGradeThresholds(schoolIdUpper, resolvedType);
+    // Automatically provision grading, terms, classes, license, and admin account
+    const provResult = await provisionSchoolDefaults(
+      schoolIdUpper,
+      resolvedType,
+      head_title || 'Headmaster',
+      admin_username,
+      admin_email,
+      admin_password,
+      req.user?.id
+    );
 
     const created = await queryOne('SELECT * FROM schools WHERE id = ?', [schoolIdUpper]);
-    return res.status(201).json({ data: created });
+    return res.status(201).json({
+      data: created,
+      provisioned_admin: provResult
+    });
   } catch (err) {
     console.error('Create school error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create school.' } });
@@ -2297,21 +2552,42 @@ router.get('/schools/:schoolId/license', authenticateToken, async (req, res) => 
   }
 });
 
-router.post('/schools/:schoolId/license/renewal-request', authenticateToken, async (req, res) => {
+router.post('/schools/:schoolId/license/renewal-request', authenticateToken, requireRoles('school_admin', 'super_admin', 'principal', 'head'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { contact_name, contact_email, message } = req.body;
-    // Log the renewal request in audit log if table exists
+    const { contact_name, contact_email, contact_phone, preferred_plan, message } = req.body;
+
+    const school = await queryOne('SELECT name FROM schools WHERE id = ?', [schoolId]);
+    const schoolName = school?.name || schoolId;
+
+    // 1. Log renewal request in audit log
     try {
       await query(
         `INSERT INTO audit_logs (id, school_id, user_id, action, details, created_at)
          VALUES (?, ?, ?, 'license_renewal_request', ?, NOW())`,
         ['AUD' + Date.now().toString(36), schoolId, req.user.id,
-         JSON.stringify({ contact_name, contact_email, message })]
+         JSON.stringify({ contact_name, contact_email, contact_phone, preferred_plan, message })]
       );
-    } catch (e) { /* audit_logs table may not exist */ }
-    return res.json({ data: { message: 'Renewal request submitted. The system administrator will contact you shortly.' } });
+    } catch (e) { /* audit_logs table fallback */ }
+
+    // 2. Dispatch real-time notification to Super Administrators
+    try {
+      const notifId = 'NOT' + Date.now().toString(36);
+      await query(
+        `INSERT INTO notifications (id, school_id, user_id, title, message, type, is_read, created_at)
+         SELECT ?, NULL, u.id, 'License Renewal Requested', ?, 'alert', 0, NOW()
+         FROM users u WHERE u.role = 'super_admin'`,
+        [notifId, `School Admin for ${schoolName} has requested a license renewal (${preferred_plan || 'Enterprise'}). Contact: ${contact_phone || req.user.email || 'N/A'}.`]
+      );
+    } catch (e) { /* notifications table fallback */ }
+
+    return res.json({
+      data: {
+        message: 'Renewal request submitted successfully. The system administrator has been notified.'
+      }
+    });
   } catch (err) {
+    console.error('Renewal request error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to submit renewal request.' } });
   }
 });
@@ -2793,43 +3069,147 @@ router.get('/schools/:schoolId/terms', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
     let terms = [];
-    try { terms = await query('SELECT * FROM term_config WHERE school_id = ? ORDER BY year DESC, term_number ASC', [schoolId]); } catch(e) {}
+    try {
+      terms = await query(
+        `SELECT t.id, t.school_id, t.session_id, t.name, t.name as term_name, t.start_date, t.end_date,
+                COALESCE(s.year, YEAR(t.start_date), YEAR(CURRENT_DATE)) as year,
+                CASE 
+                  WHEN LOWER(t.name) LIKE '%1%' THEN 1
+                  WHEN LOWER(t.name) LIKE '%2%' THEN 2
+                  WHEN LOWER(t.name) LIKE '%3%' THEN 3
+                  ELSE 1
+                END as term_number,
+                CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE 0 END as is_current_by_date,
+                CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE COALESCE(t.is_current, 0) END as is_current,
+                CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE COALESCE(t.is_current, 0) END as is_active,
+                CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 'active' ELSE 'inactive' END as status
+         FROM terms t
+         LEFT JOIN academic_sessions s ON t.session_id = s.id
+         WHERE t.school_id = ? OR t.school_id IS NULL
+         ORDER BY t.start_date ASC`,
+        [schoolId]
+      );
+    } catch(e) {
+      console.warn('terms query error:', e.message);
+    }
+
+    if (!terms || terms.length === 0) {
+      try {
+        terms = await query(
+          `SELECT tc.id, tc.school_id, tc.term_name as name, tc.term_name, tc.start_date, tc.end_date, tc.year, tc.term_number,
+                  CASE WHEN CURRENT_DATE BETWEEN tc.start_date AND tc.end_date THEN 1 ELSE 0 END as is_current_by_date,
+                  CASE WHEN CURRENT_DATE BETWEEN tc.start_date AND tc.end_date THEN 1 ELSE COALESCE(tc.is_active, 1) END as is_current,
+                  CASE WHEN CURRENT_DATE BETWEEN tc.start_date AND tc.end_date THEN 1 ELSE COALESCE(tc.is_active, 1) END as is_active,
+                  CASE WHEN CURRENT_DATE BETWEEN tc.start_date AND tc.end_date THEN 'active' ELSE 'inactive' END as status
+           FROM term_config tc
+           WHERE tc.school_id = ?
+           ORDER BY tc.year DESC, tc.term_number ASC`,
+          [schoolId]
+        );
+      } catch(e) {}
+    }
+
     return res.json({ data: terms });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch terms.' } });
   }
 });
 
+router.get('/schools/:schoolId/terms/current', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    let current = await queryOne(
+      `SELECT t.*, s.year as session_year, s.name as session_name, 1 as is_current_by_date, 'active' as status
+       FROM terms t
+       LEFT JOIN academic_sessions s ON t.session_id = s.id
+       WHERE (t.school_id = ? OR t.school_id IS NULL)
+         AND CURRENT_DATE BETWEEN t.start_date AND t.end_date
+       ORDER BY t.school_id DESC, t.start_date DESC
+       LIMIT 1`,
+      [schoolId]
+    );
+
+    if (!current) {
+      current = await queryOne(
+        `SELECT t.*, s.year as session_year, s.name as session_name, 0 as is_current_by_date, 'holiday' as status
+         FROM terms t
+         LEFT JOIN academic_sessions s ON t.session_id = s.id
+         WHERE (t.school_id = ? OR t.school_id IS NULL)
+         ORDER BY t.start_date DESC
+         LIMIT 1`,
+        [schoolId]
+      );
+    }
+    return res.json({ data: current });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch current term.' } });
+  }
+});
+
 router.post('/schools/:schoolId/terms', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const { term_name, start_date, end_date, year, term_number } = req.body;
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS term_config (
-          id VARCHAR(50) PRIMARY KEY,
-          school_id VARCHAR(50) NOT NULL,
-          term_name VARCHAR(100) NOT NULL,
-          start_date DATE NULL,
-          end_date DATE NULL,
-          year INT NULL,
-          term_number INT NULL,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-      `);
-    } catch(e) {}
+    const { term_name, name, start_date, end_date, year, term_number, is_current } = req.body;
+    const finalName = term_name || name || `Term ${term_number || 1}`;
 
-    const termId = 'TRM' + Math.random().toString(36).substr(2, 6).toUpperCase();
-    await query(
-      `INSERT INTO term_config (id, school_id, term_name, start_date, end_date, year, term_number)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [termId, schoolId, term_name || `Term ${term_number || 1}`, start_date || null, end_date || null, year || new Date().getFullYear(), term_number || 1]
+    // Get or create session
+    let sess = await queryOne('SELECT id FROM academic_sessions WHERE school_id = ? ORDER BY year DESC LIMIT 1', [schoolId]);
+    let sessionId = sess?.id;
+    if (!sessionId) {
+      const sessRes = await query(
+        `INSERT INTO academic_sessions (school_id, year, name, start_date, end_date, is_current, status)
+         VALUES (?, ?, ?, ?, ?, 1, 'active')`,
+        [schoolId, year || new Date().getFullYear(), `Academic Year ${year || new Date().getFullYear()}`, start_date || '2026-01-01', end_date || '2026-12-31']
+      );
+      sessionId = sessRes.insertId;
+    }
+
+    if (is_current) {
+      await query('UPDATE terms SET is_current = FALSE WHERE school_id = ?', [schoolId]);
+    }
+
+    const result = await query(
+      `INSERT INTO terms (school_id, session_id, name, start_date, end_date, is_current)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [schoolId, sessionId, finalName, start_date || null, end_date || null, is_current ? 1 : 0]
     );
 
-    const created = await queryOne('SELECT * FROM term_config WHERE id = ?', [termId]);
+    const created = await queryOne('SELECT * FROM terms WHERE id = ?', [result.insertId]);
     return res.status(201).json({ data: created });
   } catch (err) {
+    console.error('Create term error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create term.' } });
+  }
+});
+
+router.patch('/schools/:schoolId/terms/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { name, term_name, start_date, end_date, is_current } = req.body;
+    const finalName = name || term_name;
+
+    const updates = [];
+    const params = [];
+    if (finalName !== undefined) { updates.push('name = ?'); params.push(finalName); }
+    if (start_date !== undefined) { updates.push('start_date = ?'); params.push(start_date); }
+    if (end_date !== undefined) { updates.push('end_date = ?'); params.push(end_date); }
+    if (is_current !== undefined) {
+      if (is_current) {
+        await query('UPDATE terms SET is_current = FALSE WHERE school_id = ?', [schoolId]);
+      }
+      updates.push('is_current = ?');
+      params.push(is_current ? 1 : 0);
+    }
+
+    if (updates.length > 0) {
+      params.push(id, schoolId);
+      await query(`UPDATE terms SET ${updates.join(', ')} WHERE id = ? AND school_id = ?`, params);
+    }
+
+    const updated = await queryOne('SELECT * FROM terms WHERE id = ?', [id]);
+    return res.json({ data: updated });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update term.' } });
   }
 });
 

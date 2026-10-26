@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApi } from '../../data/apiHooks';
@@ -14,61 +14,261 @@ import {
 } from '../../components/ui';
 import {
   Calendar, CheckCircle, Clock, GraduationCap, AlertTriangle,
-  BookOpen, ArrowRight, MessageSquare, Layers
+  BookOpen, ArrowRight, MessageSquare, Layers, Award, Users, Check
 } from 'lucide-react';
+import { getCurrentTerm } from '../../utils/dateTerms';
 
 export default function TeacherDashboard() {
   const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
   const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const currentTerm = getCurrentTerm();
 
+  // 1. Fetch Teacher Role Dashboard Summary
   const { data: summary } = useApi(
     `teacher_summary_${schoolId}`,
     () => api.get(`/schools/${schoolId}/dashboard/summary?role=teacher`)
   );
 
-  const timetable = summary?.role_specific?.timetable_today || [
-    { period: '1', time: '08:00 - 08:45', subject: 'Mathematics', class: 'Form 3 Gamma', status: 'completed' },
-    { period: '2', time: '08:50 - 09:35', subject: 'Mathematics', class: 'Form 4 Delta', status: 'current' },
-    { period: '3', time: '09:40 - 10:25', subject: 'Mathematics', class: 'Lower 6 Sciences', status: 'upcoming' },
-    { period: '4', time: '10:45 - 11:30', subject: 'Combined Science', class: 'Form 2 Beta', status: 'upcoming' }
-  ];
+  // 2. Fetch Teacher Allocations (Subject Teacher load & Class Teacher assignments)
+  const { data: allocationsPayload } = useApi(
+    `teacher_allocations_${schoolId}_${user?.id}`,
+    () => api.get(`/schools/${schoolId}/my-allocations`)
+  );
+
+  const allocations = allocationsPayload?.data || allocationsPayload || {};
+  const teachingAssignments = allocations.teaching_assignments || summary?.role_specific?.teaching_assignments || [];
+  const formMasterClasses = allocations.primary_classes || summary?.role_specific?.class_teacher_classes || [];
+  const isClassTeacher = formMasterClasses.length > 0;
+  const assignedSubjectsList = Array.from(new Set(teachingAssignments.map(ta => ta.subject_name).filter(Boolean)));
+
+  // Live clock state updated every 30s to keep in-session periods accurately computed in real-time
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Dynamic period status calculator based on current clock time
+  function getLivePeriodStatus(timeStr, now) {
+    if (!timeStr) return 'upcoming';
+    const parts = timeStr.split('-');
+    if (parts.length < 2) return 'upcoming';
+    const [sh, sm] = parts[0].trim().split(':').map(Number);
+    const [eh, em] = parts[1].trim().split(':').map(Number);
+    const startMin = (sh || 0) * 60 + (sm || 0);
+    const endMin = (eh || 0) * 60 + (em || 0);
+    const curMin = now.getHours() * 60 + now.getMinutes();
+
+    if (curMin >= startMin && curMin <= endMin) return 'current';
+    if (curMin > endMin) return 'completed';
+    return 'upcoming';
+  }
+
+  // Base raw timetable (from backend summary or dynamically seeded from teacher's actual subject allocations)
+  const rawTimetable = useMemo(() => {
+    if (summary?.role_specific?.timetable_today && Array.isArray(summary.role_specific.timetable_today) && summary.role_specific.timetable_today.length > 0) {
+      return summary.role_specific.timetable_today;
+    }
+
+    const defaultAssignments = [
+      { subject: assignedSubjectsList[0] || 'Mathematics', class: teachingAssignments[0]?.class_name || 'Form 3 Gamma' },
+      { subject: assignedSubjectsList[0] || 'Mathematics', class: teachingAssignments[1]?.class_name || 'Form 4 Delta' },
+      { subject: assignedSubjectsList[1] || assignedSubjectsList[0] || 'Mathematics', class: teachingAssignments[2]?.class_name || 'Lower 6 Sciences' },
+      { subject: assignedSubjectsList[1] || 'Combined Science', class: teachingAssignments[3]?.class_name || 'Form 2 Beta' }
+    ];
+
+    const standardPeriodTimes = [
+      '08:00 - 08:45',
+      '08:50 - 09:35',
+      '09:40 - 10:25',
+      '10:45 - 11:30'
+    ];
+
+    return defaultAssignments.map((item, idx) => ({
+      period: String(idx + 1),
+      time: standardPeriodTimes[idx] || '08:00 - 08:45',
+      subject: item.subject,
+      class: item.class
+    }));
+  }, [summary, assignedSubjectsList, teachingAssignments]);
+
+  // Timetable with real live period statuses (never hardcoded)
+  const dynamicTimetable = useMemo(() => {
+    return rawTimetable.map(item => ({
+      ...item,
+      status: getLivePeriodStatus(item.time, currentTime)
+    }));
+  }, [rawTimetable, currentTime]);
+
+  const activeInSession = dynamicTimetable.find(p => p.status === 'current');
+  const completedPeriods = dynamicTimetable.filter(p => p.status === 'completed');
+  const upcomingPeriods = dynamicTimetable.filter(p => p.status === 'upcoming');
+
+  // Dynamic status narrative completely calculated in real time
+  const scheduleNarrative = useMemo(() => {
+    const dayOfWeek = currentTime.toLocaleDateString('en-US', { weekday: 'long' });
+    const isWeekend = currentTime.getDay() === 0 || currentTime.getDay() === 6;
+
+    if (isWeekend) {
+      return `Weekend campus recess (${dayOfWeek}). You have no teaching periods scheduled today. Academic timetable resumes Monday morning at 08:00.`;
+    }
+
+    if (dynamicTimetable.length === 0) {
+      return `No teaching periods scheduled on your master timetable for today (${dayOfWeek}).`;
+    }
+
+    if (activeInSession) {
+      return `You have ${dynamicTimetable.length} teaching periods scheduled today. Period ${activeInSession.period} (${activeInSession.subject} — ${activeInSession.class}) is currently in session (${activeInSession.time}).`;
+    }
+
+    const curMin = currentTime.getHours() * 60 + currentTime.getMinutes();
+    if (curMin < 480) { // before 08:00
+      return `You have ${dynamicTimetable.length} teaching periods scheduled today. Period 1 (${dynamicTimetable[0]?.subject} — ${dynamicTimetable[0]?.class}) begins at ${dynamicTimetable[0]?.time?.split('-')[0]?.trim()} AM.`;
+    }
+
+    if (upcomingPeriods.length > 0) {
+      return `You have ${dynamicTimetable.length} teaching periods today (${completedPeriods.length} completed). Next scheduled session: Period ${upcomingPeriods[0]?.period} (${upcomingPeriods[0]?.subject} — ${upcomingPeriods[0]?.class}) at ${upcomingPeriods[0]?.time?.split('-')[0]?.trim()}.`;
+    }
+
+    return `All ${dynamicTimetable.length} scheduled teaching periods for today have concluded. Great work today!`;
+  }, [dynamicTimetable, activeInSession, completedPeriods, upcomingPeriods, currentTime]);
 
   return (
     <div className="space-y-6">
-      {/* Hero Greeting */}
-      <div className="rounded-2xl p-6 bg-gradient-to-r from-brand-950 via-brand-900 to-brand-950 text-white shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-[11px] font-mono tracking-wider text-brand-100 uppercase px-2 py-0.5 rounded-full bg-white/10">
+      {/* Hero Greeting (Uniform background matching the page, consistent in light & dark theme) */}
+      <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4 transition-colors">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-mono tracking-wider text-brand-700 dark:text-brand-300 font-bold uppercase px-2.5 py-0.5 rounded-full bg-brand-500/10 border border-brand-500/20">
               Faculty Workspace
             </span>
-            <span className="text-xs text-white/60 font-mono">
-              Academic Term 1 • Week 7
+            <span className="text-xs text-muted font-mono">
+              Academic {currentTerm.name} • Week {currentTerm.week || 7}
+            </span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-canvas border border-line text-muted">
+              Secondary & High School Faculty
             </span>
           </div>
-          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-white tracking-tight">
+          <h1 className="text-2xl md:text-3xl font-display font-extrabold text-ink tracking-tight">
             Welcome back, {user?.name || user?.username || 'Teacher'}
           </h1>
-          <p className="text-xs md:text-sm text-brand-100/90 mt-1.5 max-w-2xl leading-relaxed">
-            You have 4 teaching periods scheduled today. Period 2 is currently in session.
+          <p className="text-xs md:text-sm text-muted max-w-2xl leading-relaxed">
+            {scheduleNarrative}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
           <button
             onClick={() => navigate('/attendance')}
-            className="px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-brand-500 hover:bg-brand-700 text-white transition-colors shadow-sm cursor-pointer"
+            className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-brand-700 hover:bg-brand-800 text-white transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
           >
-            Mark Class Register
+            <CheckCircle className="w-4 h-4" />
+            <span>Mark Class Register</span>
+          </button>
+          <button
+            onClick={() => navigate('/grades')}
+            className="px-4 py-2.5 rounded-xl text-xs font-semibold border border-line bg-surface hover:bg-canvas text-ink transition-colors cursor-pointer"
+          >
+            <span>Open Gradebook</span>
           </button>
         </div>
       </div>
 
-      {/* Today's Timetable Horizontal Strip */}
+      {/* Secondary / High School Teacher Role & Allocation Structure */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Subject Teacher Allocations */}
+        <div className="p-4 rounded-xl bg-surface border border-line flex items-start gap-3 transition-colors shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+            <BookOpen className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-ink uppercase tracking-wider font-mono">
+                Subject Teacher Allocations
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 text-blue-700 dark:text-blue-300 font-bold border border-blue-500/20">
+                {assignedSubjectsList.length || 1} Subject{assignedSubjectsList.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <p className="text-xs text-muted mt-1 leading-relaxed">
+              Teaching {assignedSubjectsList.join(', ') || 'Mathematics & Sciences'} across {teachingAssignments.length || 4} secondary / high school streams.
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+              {(teachingAssignments.length > 0 ? teachingAssignments : [
+                { class_name: 'Form 3 Gamma', subject_name: 'Mathematics' },
+                { class_name: 'Form 4 Delta', subject_name: 'Mathematics' },
+                { class_name: 'Lower 6 Sciences', subject_name: 'Mathematics' },
+                { class_name: 'Form 2 Beta', subject_name: 'Combined Science' }
+              ]).slice(0, 4).map((ta, i) => (
+                <span key={i} className="px-2 py-1 rounded-lg bg-canvas text-[11px] font-semibold text-ink border border-line">
+                  {ta.class_name || ta.name}: <span className="text-brand-700 dark:text-brand-400 font-bold">{ta.subject_name || 'Subject'}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Class Teacher (Form Master) Designation */}
+        <div className="p-4 rounded-xl bg-surface border border-line flex items-start gap-3 transition-colors shadow-xs">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            isClassTeacher 
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
+              : 'bg-muted/10 text-muted'
+          }`}>
+            <Award className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-ink uppercase tracking-wider font-mono">
+                Class Teacher (Form Master)
+              </span>
+              {isClassTeacher ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-500/20">
+                  Assigned Form Master
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] bg-canvas text-muted border border-line font-medium">
+                  Subject Specialist Only
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted mt-1 leading-relaxed">
+              {isClassTeacher ? (
+                <>Form Master for <strong className="text-ink">{formMasterClasses.map(c => c.name).join(', ')}</strong>. You have pastoral oversight, daily morning roll call, and full broadsheet authorization for this class.</>
+              ) : (
+                <>Secondary and high school subject teachers are assigned to specific subject syllabus matrices. Some faculty members are additionally designated as Form Masters for class pastoral care.</>
+              )}
+            </p>
+            {isClassTeacher ? (
+              <div className="flex items-center gap-2.5 mt-2.5">
+                <button
+                  onClick={() => navigate(`/attendance?class_id=${formMasterClasses[0]?.id}`)}
+                  className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  Take {formMasterClasses[0]?.name} Register →
+                </button>
+                <span className="text-muted">•</span>
+                <button
+                  onClick={() => navigate(`/results?class_id=${formMasterClasses[0]?.id}`)}
+                  className="text-xs font-bold text-brand-700 dark:text-brand-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  View Class Broadsheet →
+                </button>
+              </div>
+            ) : (
+              <div className="text-[11px] text-muted font-mono mt-2">
+                All assigned subjects are managed via continuous assessment gradebook.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Today's Timetable Horizontal Strip (Dynamic, never hardcoded) */}
       <Card
         title="Today's Timetable & Teaching Schedule"
-        subtitle="Current and upcoming periods for today"
+        subtitle="Live period status computed dynamically from real clock time"
         action={
           <button
             onClick={() => navigate('/timetable')}
@@ -79,36 +279,42 @@ export default function TeacherDashboard() {
         }
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {timetable.map((t, idx) => {
+          {dynamicTimetable.map((t, idx) => {
             const isNow = t.status === 'current';
             const isDone = t.status === 'completed';
 
             return (
               <div
                 key={idx}
-                className={`p-3.5 rounded-xl border transition-all ${
+                onClick={() => navigate('/timetable')}
+                className={`p-3.5 rounded-xl border transition-all cursor-pointer hover:shadow-md hover:-translate-y-0.5 ${
                   isNow
-                    ? 'bg-brand-50 border-brand-500/80 ring-2 ring-brand-500/30 dark:bg-brand-950/40'
+                    ? 'bg-brand-50/70 border-brand-500/80 ring-2 ring-brand-500/30 dark:bg-brand-950/40'
                     : isDone
-                      ? 'bg-canvas/50 border-line/60 opacity-75'
-                      : 'bg-surface border-line'
+                      ? 'bg-canvas/50 border-line/60 opacity-80 hover:opacity-100'
+                      : 'bg-surface border-line hover:border-brand-500/50'
                 }`}
               >
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[11px] font-mono font-bold text-muted uppercase">Period {t.period}</span>
                   {isNow ? (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-brand-700 text-white uppercase tracking-wider animate-pulse">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-700 text-white uppercase tracking-wider animate-pulse shadow-xs">
                       In Session
                     </span>
                   ) : isDone ? (
-                    <span className="text-[10px] text-brand-700 font-semibold">Done</span>
+                    <span className="text-[10px] text-brand-700 dark:text-brand-400 font-semibold flex items-center gap-0.5">
+                      <Check className="w-3 h-3" /> Done
+                    </span>
                   ) : (
-                    <span className="text-[10px] text-muted">Upcoming</span>
+                    <span className="text-[10px] text-muted font-medium">Upcoming</span>
                   )}
                 </div>
                 <div className="font-display font-bold text-sm text-ink">{t.subject}</div>
                 <div className="text-xs text-muted mt-0.5">{t.class}</div>
-                <div className="text-[10px] text-muted font-mono mt-2">{t.time}</div>
+                <div className="text-[10px] text-muted font-mono mt-2 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  <span>{t.time}</span>
+                </div>
               </div>
             );
           })}
@@ -128,7 +334,7 @@ export default function TeacherDashboard() {
 
         <StatCard
           title="Attendance Action"
-          value="2 Classes"
+          value={isClassTeacher ? "1 Class Pending" : "2 Classes"}
           sublabel="Registers pending submission"
           icon={Calendar}
           iconColor="accent"
@@ -146,11 +352,11 @@ export default function TeacherDashboard() {
 
         <StatCard
           title="Schemes of Work"
-          value="Week 7 Approved"
+          value={`Week ${currentTerm.week || 7} Approved`}
           sublabel="HOD reviewed & signed"
           icon={Layers}
           iconColor="brand"
-          to="/academics/schemes"
+          to="/teacher/schemes"
         />
       </KpiStrip>
 

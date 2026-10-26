@@ -244,24 +244,32 @@ export default function Reporting() {
           value={enrolmentReport.reduce((acc, c) => acc + c.total, 0)}
           icon={Users}
           color="brand"
+          onClick={() => setActiveTab('enrolment')}
+          subtext="View Cohort Demographics"
         />
         <StatCard
           label="Faculty Teaching Staff"
           value={staff.length}
           icon={UserCheck}
           color="info"
+          onClick={() => setActiveTab('staff')}
+          subtext="View Allocation Matrix"
         />
         <StatCard
           label="Avg Academic Pass Rate"
           value={academicReport.length > 0 ? `${Math.round(academicReport.reduce((a, b) => a + (parseFloat(b.pass_rate || b.passRate) || 0), 0) / academicReport.length)}%` : '0%'}
           icon={Award}
           color="accent"
+          onClick={() => setActiveTab('academics')}
+          subtext="View Class Performance"
         />
         <StatCard
           label="Active Fee Ledgers"
           value={feesData?.length > 0 ? `${feesData.length} Periods` : '0 Records'}
           icon={DollarSign}
           color="violet"
+          onClick={() => setActiveTab('finance')}
+          subtext="View Financial Collections"
         />
       </KpiStrip>
 

@@ -114,6 +114,20 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class name is required.' } });
     }
 
+    const school = await queryOne('SELECT school_type, has_alevel FROM schools WHERE id = ?', [schoolId]);
+    const schoolType = (school?.school_type || 'primary').toLowerCase();
+    const hasAlevel = Boolean(school?.has_alevel || schoolType === 'high_school' || schoolType === 'combined' || schoolType === 'a_level');
+    const isOrdinaryLevel = (schoolType === 'secondary' || schoolType === 'o_level' || schoolType === 'secondary_o_level') && !hasAlevel;
+
+    if (isOrdinaryLevel && (/form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(cleanName) || /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b/i.test(grade_level || ''))) {
+      return res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Ordinary level secondary schools offer Form 1 to Form 4 only. Form 5 and Form 6 (Advanced Level) are not available for Ordinary Level institutions.'
+        }
+      });
+    }
+
     const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, cleanName]);
     if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${cleanName}' already exists in this school.` } });
 
@@ -166,6 +180,20 @@ router.patch('/classes/:id', authenticateToken, requireRoles('school_admin', 'su
     const updatedFormMaster = form_master_id !== undefined ? (form_master_id || null) : existing.form_master_id;
 
     if (name !== undefined && name.trim().toLowerCase() !== existing.name.toLowerCase()) {
+      const school = await queryOne('SELECT school_type, has_alevel FROM schools WHERE id = ?', [schoolId]);
+      const schoolType = (school?.school_type || 'primary').toLowerCase();
+      const hasAlevel = Boolean(school?.has_alevel || schoolType === 'high_school' || schoolType === 'combined' || schoolType === 'a_level');
+      const isOrdinaryLevel = (schoolType === 'secondary' || schoolType === 'o_level' || schoolType === 'secondary_o_level') && !hasAlevel;
+
+      if (isOrdinaryLevel && (/form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(name.trim()) || /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b/i.test(level || ''))) {
+        return res.status(400).json({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Ordinary level secondary schools offer Form 1 to Form 4 only. Form 5 and Form 6 (Advanced Level) are not available for Ordinary Level institutions.'
+          }
+        });
+      }
+
       const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, name.trim()]);
       if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${name.trim()}' already exists.` } });
     }
@@ -290,6 +318,35 @@ router.delete('/subjects/:id', authenticateToken, requireRoles('school_admin', '
   }
 });
 
+// PATCH / PUT /schools/:schoolId/subjects/:id (Edit Subject)
+const handleEditSubject = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, code, category, department, level } = req.body;
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) { updates.push('name = ?'); params.push(name.trim()); }
+    if (code !== undefined) { updates.push('code = ?'); params.push(code ? code.trim().toUpperCase() : null); }
+    if (category !== undefined || department !== undefined) { updates.push('category = ?'); params.push(category || department); }
+    if (level !== undefined) { updates.push('level = ?'); params.push(level); }
+
+    if (updates.length > 0) {
+      params.push(id);
+      await query(`UPDATE subjects SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    const updated = await queryOne('SELECT * FROM subjects WHERE id = ?', [id]);
+    return res.json({ data: updated });
+  } catch (err) {
+    console.error('Edit subject error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update subject.' } });
+  }
+};
+
+router.patch('/subjects/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleEditSubject);
+router.put('/subjects/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), handleEditSubject);
+
 // GET /schools/:schoolId/classes/:classId/attendance
 router.get('/classes/:classId/attendance', authenticateToken, async (req, res) => {
   try {
@@ -395,7 +452,7 @@ router.post('/classes/:classId/attendance', authenticateToken, requireRoles('tea
 
 
 // Helper to compute results and universal rankings for a class
-async function computeClassResults(schoolId, classId, term, userRole, userId, userEmail, requestedStudentId = null, userPhone = null) {
+async function computeClassResults(schoolId, classId, term, userRole, userId, userEmail, requestedStudentId = null, userPhone = null, year = null) {
   // ==========================================
   // CASE 1: PARENT / GUARDIAN ACCESS
   // Parents ONLY see marks of their own kids. They NEVER see other students.
@@ -502,8 +559,12 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       `;
       const gParams = [schoolId, kid.id];
       if (term) {
-        gSql += ' AND g.term = ?';
-        gParams.push(term);
+        gSql += ' AND (g.term = ? OR g.term LIKE ?)';
+        gParams.push(term, `%${term}%`);
+      }
+      if (year) {
+        gSql += ' AND (YEAR(g.created_at) = ? OR g.term LIKE ?)';
+        gParams.push(year, `%${year}%`);
       }
       gSql += ' GROUP BY g.subject, sub.name, sub.code';
       const subjectResults = await query(gSql, gParams);
@@ -531,8 +592,12 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
             `;
             const pParams = [schoolId, peer.id];
             if (term) {
-              pSql += ' AND g.term = ?';
-              pParams.push(term);
+              pSql += ' AND (g.term = ? OR g.term LIKE ?)';
+              pParams.push(term, `%${term}%`);
+            }
+            if (year) {
+              pSql += ' AND (YEAR(g.created_at) = ? OR g.term LIKE ?)';
+              pParams.push(year, `%${year}%`);
             }
             pSql += ' GROUP BY g.subject';
             const pSubjs = await query(pSql, pParams);
@@ -587,6 +652,9 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
         school_name: kid.school_name || 'Harare High School',
         form_master_name: kid.form_master_name || 'Class Teacher',
         level_category: levelCategory,
+        term: term || 'Term 3',
+        academic_year: year || 2026,
+        academic_period: `${term || 'Term 3'}, ${year || 2026}`,
         is_published: isPublished,
         status: isPublished ? 'published' : 'draft',
         rank: isPublished ? childRank : null,
@@ -730,8 +798,12 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
     `;
     const params = [schoolId, st.student_id];
     if (term) {
-      sql += ' AND g.term = ?';
-      params.push(term);
+      sql += ' AND (g.term = ? OR g.term LIKE ?)';
+      params.push(term, `%${term}%`);
+    }
+    if (year) {
+      sql += ' AND (YEAR(g.created_at) = ? OR g.term LIKE ?)';
+      params.push(year, `%${year}%`);
     }
     sql += ' GROUP BY g.subject, sub.name, sub.code';
 
@@ -771,6 +843,9 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       grade_symbol: processed.grade_symbol,
       pass_status: processed.passStatus,
       status: isPublished ? 'published' : 'draft',
+      term: term || 'Term 3',
+      academic_year: year || 2026,
+      academic_period: `${term || 'Term 3'}, ${year || 2026}`,
       level_category: levelCategory
     });
   }
@@ -803,7 +878,8 @@ router.get(['/classes/:classId/results/export', '/results/export'], authenticate
       req.user.id,
       req.user.email,
       req.query.student_id,
-      req.user.phone
+      req.user.phone,
+      req.query.year
     );
 
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
@@ -871,7 +947,8 @@ router.get(['/classes/:classId/results', '/results'], authenticateToken, async (
       req.user.id,
       req.user.email,
       req.query.student_id,
-      req.user.phone
+      req.user.phone,
+      req.query.year
     );
 
     if (result.error && result.status !== 200) {

@@ -213,16 +213,124 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
         currencies: currMap
       };
     } else if (role === 'teacher') {
+      const teacherUserId = req.user?.id;
+      const now = new Date();
+      const currentMinutes = now.getHours() * 60 + now.getMinutes();
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const todayDay = dayNames[now.getDay()];
+
+      let staffMember = null;
+      try {
+        staffMember = await queryOne('SELECT id, name, class_id FROM staff WHERE user_id = ? OR id = ?', [teacherUserId, teacherUserId]);
+      } catch (_) {}
+      const staffId = staffMember?.id || teacherUserId;
+
+      // Subject teacher assignments (for secondary and high school)
+      let myAssignments = [];
+      try {
+        myAssignments = await query(
+          `SELECT ta.*, c.name as class_name, c.level as class_level, sub.name as subject_name, sub.code as subject_code
+           FROM teaching_assignments ta
+           JOIN classes c ON ta.class_id = c.id
+           JOIN subjects sub ON ta.subject_id = sub.id
+           WHERE ta.school_id = ? AND (ta.teacher_id = ? OR ta.teacher_id = ?)
+           ORDER BY c.name ASC, sub.name ASC`,
+          [schoolId, staffId, teacherUserId]
+        );
+      } catch (_) {}
+
+      // Class teacher assignments (Form master allocations)
+      let formMasterClasses = [];
+      try {
+        formMasterClasses = await query(
+          `SELECT c.id, c.name, c.level, c.grade_level
+           FROM classes c
+           WHERE c.school_id = ? AND (
+             c.form_master_id = ?
+             OR c.form_master_id = ?
+             OR c.id IN (SELECT class_id FROM staff WHERE (user_id = ? OR id = ?) AND class_id IS NOT NULL)
+           )`,
+          [schoolId, staffId, teacherUserId, teacherUserId, teacherUserId]
+        );
+      } catch (_) {}
+
+      // Check real timetable entries for today
+      let todaySchedule = [];
+      try {
+        todaySchedule = await query(
+          `SELECT tt.period, tt.subject, c.name as class_name, tt.teacher
+           FROM timetable tt
+           LEFT JOIN classes c ON tt.class_id = c.id
+           WHERE tt.school_id = ? AND (tt.day = ? OR LOWER(tt.day) = LOWER(?))
+             AND (tt.teacher = ? OR tt.teacher = ? OR tt.teacher LIKE ?)
+           ORDER BY tt.period ASC`,
+          [schoolId, todayDay, todayDay, staffMember?.name || '', String(staffId), `%${staffMember?.name || ''}%`]
+        );
+      } catch (_) {}
+
+      const periodTimes = [
+        { period: '1', time: '08:00 - 08:45', start: 480, end: 525 },
+        { period: '2', time: '08:50 - 09:35', start: 530, end: 575 },
+        { period: '3', time: '09:40 - 10:25', start: 580, end: 625 },
+        { period: '4', time: '10:45 - 11:30', start: 645, end: 690 },
+        { period: '5', time: '11:35 - 12:20', start: 695, end: 740 },
+        { period: '6', time: '13:30 - 14:15', start: 810, end: 855 },
+        { period: '7', time: '14:20 - 15:05', start: 860, end: 905 }
+      ];
+
+      let computedTimetable = [];
+
+      if (todaySchedule && todaySchedule.length > 0) {
+        computedTimetable = todaySchedule.map(s => {
+          const pt = periodTimes.find(p => String(p.period) === String(s.period)) || { time: '08:00 - 08:45', start: 480, end: 525 };
+          const status = currentMinutes >= pt.start && currentMinutes <= pt.end
+            ? 'current'
+            : currentMinutes > pt.end ? 'completed' : 'upcoming';
+          return {
+            period: String(s.period),
+            time: pt.time,
+            subject: s.subject || 'Subject Lesson',
+            class: s.class_name || 'Class Stream',
+            status
+          };
+        });
+      } else {
+        const pool = myAssignments.length > 0 ? myAssignments : [
+          { subject_name: 'Mathematics', class_name: 'Form 3 Gamma' },
+          { subject_name: 'Mathematics', class_name: 'Form 4 Delta' },
+          { subject_name: 'Mathematics', class_name: 'Lower 6 Sciences' },
+          { subject_name: 'Combined Science', class_name: 'Form 2 Beta' }
+        ];
+
+        computedTimetable = pool.slice(0, 4).map((assign, idx) => {
+          const pt = periodTimes[idx] || periodTimes[0];
+          const status = currentMinutes >= pt.start && currentMinutes <= pt.end
+            ? 'current'
+            : currentMinutes > pt.end ? 'completed' : 'upcoming';
+          return {
+            period: String(pt.period),
+            time: pt.time,
+            subject: assign.subject_name || 'Subject',
+            class: assign.class_name || 'Form Stream',
+            status
+          };
+        });
+      }
+
+      const activeNow = computedTimetable.find(p => p.status === 'current');
+
       roleData = {
-        classes_to_mark: 2,
+        classes_to_mark: myAssignments.length || 2,
         marks_entered_pct: 78,
         students_at_risk: 6,
-        timetable_today: [
-          { period: '1', time: '08:00 - 08:45', subject: 'Mathematics', class: 'Form 3 Gamma', status: 'completed' },
-          { period: '2', time: '08:50 - 09:35', subject: 'Mathematics', class: 'Form 4 Delta', status: 'current' },
-          { period: '3', time: '09:40 - 10:25', subject: 'Mathematics', class: 'Lower 6 Sciences', status: 'upcoming' },
-          { period: '4', time: '10:45 - 11:30', subject: 'Combined Science', class: 'Form 2 Beta', status: 'upcoming' }
-        ]
+        is_class_teacher: formMasterClasses.length > 0,
+        class_teacher_classes: formMasterClasses,
+        teaching_assignments: myAssignments,
+        timetable_today: computedTimetable,
+        current_period: activeNow || null,
+        scheduled_count: computedTimetable.length,
+        day_of_week: todayDay,
+        is_weekend: now.getDay() === 0 || now.getDay() === 6
       };
     } else if (role === 'student') {
       roleData = {

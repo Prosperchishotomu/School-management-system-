@@ -15,8 +15,10 @@ import {
   Wifi,
   WifiOff,
   ChevronDown,
-  LogOut
+  LogOut,
+  School
 } from 'lucide-react';
+import { getCurrentTerm } from '../../utils/dateTerms';
 
 const PAGE_META = {
   '/dashboard':            { title: 'Dashboard', subtitle: 'Real-time school performance & operational pulse' },
@@ -41,10 +43,11 @@ const PAGE_META = {
   '/admin/command-center': { title: 'Command Center', subtitle: 'Multi-school governance, platform telemetry & health' },
   '/reports/emis':         { title: 'EMIS Statutory Returns', subtitle: 'Ministry statistical enumeration & SHA-256 snapshots' },
   '/school-admin/license': { title: 'License Status', subtitle: 'Subscription quota, student cap & renewal requests' },
+  '/profile':              { title: 'My Profile & Account', subtitle: 'Personal credentials, avatar picture & account security' },
 };
 
 export default function TopBar({ onMenuClick }) {
-  const { user, activeSchoolId, logout } = useAuth();
+  const { user, activeSchoolId, schoolName, logout } = useAuth();
   const location = useLocation();
 
   const [isDark, setIsDark] = useState(() => {
@@ -128,10 +131,13 @@ export default function TopBar({ onMenuClick }) {
       .catch(() => {});
   };
 
+  const currentTerm = getCurrentTerm();
+  const displaySchool = schoolName || user?.school_name || '';
+
   // Resolve current route meta
   const meta = PAGE_META[location.pathname] || {
     title: 'SchoolBase',
-    subtitle: 'Harare Academy & College • Term 1, 2026'
+    subtitle: `${displaySchool ? displaySchool + ' • ' : ''}${currentTerm.label}`
   };
 
   const todayStr = new Date().toLocaleDateString('en-GB', {
@@ -174,14 +180,28 @@ export default function TopBar({ onMenuClick }) {
               </span>
             </div>
 
-            <p className="text-[11px] text-muted hidden sm:block truncate mt-0.5">
-              Harare Academy & College • Term 1, 2026 • {todayStr}
+            <p className="text-[11px] text-muted hidden sm:flex items-center gap-1.5 truncate mt-0.5">
+              {displaySchool && (
+                <>
+                  <span className="font-semibold text-ink/90">{displaySchool}</span>
+                  <span className="text-muted/60">•</span>
+                </>
+              )}
+              <span className="font-medium text-brand-600 dark:text-brand-400">{currentTerm.label}</span>
+              <span className="text-muted/60">•</span>
+              <span>{todayStr}</span>
             </p>
           </div>
         </div>
 
         {/* Right: Search, Notifications, Theme, User */}
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
+          {displaySchool && (
+            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-700 dark:text-brand-300 text-xs font-semibold">
+              <School className="w-3.5 h-3.5 text-brand-500 shrink-0" />
+              <span className="truncate max-w-[220px]">{displaySchool}</span>
+            </div>
+          )}
           {/* Global search trigger */}
           <button
             type="button"
@@ -270,16 +290,22 @@ export default function TopBar({ onMenuClick }) {
           </div>
 
           {/* User Profile Chip & Fast Sign Out */}
-          <div className="flex items-center gap-2 pl-2 border-l border-line">
-            <Avatar name={user?.name || user?.username} size="sm" />
-            <div className="hidden sm:block text-left">
-              <div className="text-xs font-semibold text-ink leading-none">
-                {user?.name || user?.username}
+          <div className="flex items-center gap-1.5 pl-2 border-l border-line">
+            <Link
+              to="/profile"
+              title="Manage Profile & Photo"
+              className="flex items-center gap-2 p-1 -m-1 rounded-xl hover:bg-canvas transition-colors cursor-pointer group"
+            >
+              <Avatar name={user?.name || user?.username} src={user?.avatar_url} size="sm" />
+              <div className="hidden sm:block text-left">
+                <div className="text-xs font-semibold text-ink leading-none group-hover:text-brand-600 transition-colors">
+                  {user?.name || user?.username}
+                </div>
+                <div className="text-[10px] text-muted capitalize font-mono mt-0.5">
+                  {(user?.role || '').replace('_', ' ')}
+                </div>
               </div>
-              <div className="text-[10px] text-muted capitalize font-mono mt-0.5">
-                {(user?.role || '').replace('_', ' ')}
-              </div>
-            </div>
+            </Link>
             <button
               onClick={() => logout()}
               title="Sign Out"

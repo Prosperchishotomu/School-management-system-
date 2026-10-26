@@ -266,7 +266,7 @@ const ParentPortal = () => {
   ].filter(item => item.value > 0);
 
   return (
-    <div className="module-page parent-page p-8 max-w-7xl mx-auto space-y-6 animate-fadeIn">
+    <div className="module-page parent-page space-y-6 animate-fadeIn">
       {/* Header */}
       <div className="flex flex-wrap gap-4 justify-between items-center border-b border-line pb-4">
         <div>

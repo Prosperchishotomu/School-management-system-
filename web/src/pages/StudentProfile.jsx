@@ -24,7 +24,8 @@ import {
 import {
   GraduationCap, CalendarCheck, DollarSign, Building2, HeartPulse,
   AlertTriangle, FileText, ArrowLeft, PlusCircle, CheckCircle2,
-  Printer, Shield, Phone, Mail, Award, BookOpen
+  Printer, Shield, Phone, Mail, Award, BookOpen, ArrowDownRight,
+  ArrowUpRight, Plus, Receipt, CreditCard
 } from 'lucide-react';
 
 export default function StudentProfile() {
@@ -43,14 +44,32 @@ export default function StudentProfile() {
   const [payCurrency, setPayCurrency] = useState('USD');
   const [payLoading, setPayLoading] = useState(false);
 
+  const [chargeModalOpen, setChargeModalOpen] = useState(false);
+  const [chargeTitle, setChargeTitle] = useState('');
+  const [chargeAmount, setChargeAmount] = useState('');
+  const [chargeDueDate, setChargeDueDate] = useState('');
+  const [chargeLoading, setChargeLoading] = useState(false);
+
   // Fetch 360 Student Profile
   const { data: profile, loading, refetch } = useApi(
     `student_profile_${schoolId}_${id}`,
     () => api.get(`/schools/${schoolId}/students/${id}/profile`)
   );
 
+  // Fetch verified student financial ledger
+  const { data: ledgerPayload, loading: ledgerLoading, refetch: refetchLedger } = useApi(
+    `student_ledger_${schoolId}_${id}`,
+    () => api.get(`/schools/${schoolId}/students/${id}/ledger`)
+  );
+
   const student = profile?.student || {};
   const feeSummary = profile?.fee_summary || {};
+  const ledgerSummary = ledgerPayload?.data?.summary || ledgerPayload?.summary || {};
+  const ledgerEntries = ledgerPayload?.data?.ledger || ledgerPayload?.ledger || [];
+  const feeBalance = typeof ledgerSummary.balance_due === 'number'
+    ? ledgerSummary.balance_due
+    : (typeof feeSummary.balance === 'number' ? feeSummary.balance : 0);
+
   const subjects = profile?.subjects || [];
   const attendanceStats = profile?.attendance_summary || { present: 41, total: 43, rate: 95 };
   const healthInfo = profile?.health || {};
@@ -81,18 +100,57 @@ export default function StudentProfile() {
       setPaymentModalOpen(false);
       setPayAmount('');
 
-      // Cross-entity invalidation pass (Section 6.1)
+      // Cross-entity invalidation pass
       invalidate([
         `student_profile_${schoolId}_${id}`,
+        `student_ledger_${schoolId}_${id}`,
         `students_list_${schoolId}`,
         `summary_${schoolId}`,
         `fees_`
       ]);
       refetch();
+      refetchLedger();
     } catch (err) {
       toast.error(err?.message || 'Failed to record payment.');
     } finally {
       setPayLoading(false);
+    }
+  };
+
+  const handleAddCharge = async (e) => {
+    e.preventDefault();
+    if (!chargeTitle || !chargeAmount || Number(chargeAmount) <= 0) {
+      toast.error('Please enter a charge title and valid amount.');
+      return;
+    }
+
+    setChargeLoading(true);
+    try {
+      await api.post(`/schools/${schoolId}/students/${id}/charges`, {
+        title: chargeTitle,
+        amount: Number(chargeAmount),
+        due_date: chargeDueDate || null
+      });
+
+      toast.success('Fee charge successfully posted to student financial ledger.');
+      setChargeModalOpen(false);
+      setChargeTitle('');
+      setChargeAmount('');
+      setChargeDueDate('');
+
+      invalidate([
+        `student_profile_${schoolId}_${id}`,
+        `student_ledger_${schoolId}_${id}`,
+        `students_list_${schoolId}`,
+        `summary_${schoolId}`,
+        `fees_`
+      ]);
+      refetch();
+      refetchLedger();
+    } catch (err) {
+      toast.error(err?.message || 'Failed to post charge to student ledger.');
+    } finally {
+      setChargeLoading(false);
     }
   };
 
@@ -113,8 +171,6 @@ export default function StudentProfile() {
       </div>
     );
   }
-
-  const feeBalance = parseFloat(feeSummary.balance ?? feeSummary.amount_due ?? 0);
 
   return (
     <div className="space-y-6">
@@ -339,33 +395,195 @@ export default function StudentProfile() {
         </Card>
       )}
 
-      {/* Tab 4: Finance Ledger */}
+      {/* Tab 4: Accurate Student Financial Ledger */}
       {activeTab === 'finance' && (
-        <Card
-          title="Student Fee Statement"
-          subtitle="Termly invoices and verified receipts"
-          action={
-            <button
-              onClick={() => setPaymentModalOpen(true)}
-              className="btn-primary text-xs"
-            >
-              + Record Payment
-            </button>
-          }
-        >
-          <div className="space-y-3">
-            <div className="p-4 rounded-xl bg-canvas border border-line flex items-center justify-between">
-              <div>
-                <span className="font-semibold text-xs text-ink">Term 1 Tuition & Boarding Invoice</span>
-                <div className="text-[11px] text-muted font-mono">Invoice #INV-2026-0041 • Due 31 Jan 2026</div>
-              </div>
-              <div className="text-right font-mono">
-                <div className="font-bold text-sm text-ink">{money(480.00)}</div>
-                <StatusPill status={feeBalance === 0 ? 'paid' : 'partial'} size="sm" />
-              </div>
-            </div>
+        <div className="space-y-6">
+          {/* Summary KPIs Row matching Command Center aesthetics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+            <StatCard
+              title="Total Billed / Invoiced"
+              value={money(ledgerSummary.total_billed || 0)}
+              sub="Accumulated charges & levies"
+              icon={FileText}
+              color="brand"
+            />
+            <StatCard
+              title="Total Collected / Paid"
+              value={money(ledgerSummary.total_paid || 0)}
+              sub="Verified cashier & online payments"
+              icon={CheckCircle2}
+              color="emerald"
+            />
+            <StatCard
+              title="Outstanding Balance Due"
+              value={money(ledgerSummary.balance_due || 0)}
+              sub={ledgerSummary.balance_due > 0 ? "Immediate settlement required" : "Account fully cleared"}
+              icon={DollarSign}
+              color={ledgerSummary.balance_due > 0 ? "rose" : "brand"}
+            />
+            <StatCard
+              title="Ledger Status"
+              value={(ledgerSummary.status || 'cleared').toUpperCase()}
+              sub={`${ledgerEntries.length} verified transactions`}
+              icon={CreditCard}
+              color={ledgerSummary.status === 'cleared' ? 'emerald' : 'amber'}
+            />
           </div>
-        </Card>
+
+          {/* Action Bar & Transaction History Card */}
+          <Card
+            title="Student Financial Ledger"
+            subtitle="Append-only chronological debits, cashier receipts and running balance"
+            action={
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Statement</span>
+                </button>
+                {['school_admin', 'bursar', 'super_admin'].includes(user?.role) && (
+                  <button
+                    type="button"
+                    onClick={() => setChargeModalOpen(true)}
+                    className="btn-secondary text-xs flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Post Charge</span>
+                  </button>
+                )}
+                {['school_admin', 'bursar', 'super_admin', 'parent'].includes(user?.role) && (
+                  <button
+                    type="button"
+                    onClick={() => setPaymentModalOpen(true)}
+                    className="btn-primary text-xs flex items-center gap-1.5"
+                  >
+                    <DollarSign className="w-3.5 h-3.5" />
+                    <span>+ Record Payment</span>
+                  </button>
+                )}
+              </div>
+            }
+          >
+            {ledgerLoading ? (
+              <div className="space-y-3 py-4">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : ledgerEntries.length === 0 ? (
+              <div className="py-8">
+                <EmptyState
+                  icon={Receipt}
+                  title="No financial transactions recorded"
+                  message="This student has no posted charges or payments on file. Post a fee charge or record an initial payment to start the running ledger."
+                  action={
+                    ['school_admin', 'bursar', 'super_admin'].includes(user?.role) ? (
+                      <button
+                        onClick={() => setChargeModalOpen(true)}
+                        className="btn-primary text-xs mt-3"
+                      >
+                        + Post First Charge
+                      </button>
+                    ) : null
+                  }
+                />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-line text-[11px] font-semibold text-muted uppercase tracking-wider bg-canvas/50">
+                      <th className="py-3 px-3">Date</th>
+                      <th className="py-3 px-3">Reference</th>
+                      <th className="py-3 px-3">Description</th>
+                      <th className="py-3 px-3">Term</th>
+                      <th className="py-3 px-3">Method</th>
+                      <th className="py-3 px-3 text-right">Debit (+)</th>
+                      <th className="py-3 px-3 text-right">Credit (-)</th>
+                      <th className="py-3 px-3 text-right">Running Balance</th>
+                      <th className="py-3 px-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line/60">
+                    {ledgerEntries.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-canvas/60 transition-colors">
+                        <td className="py-3 px-3 whitespace-nowrap text-muted font-mono">
+                          {new Date(tx.transaction_date).toLocaleDateString('en-GB', {
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric'
+                          })}
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap font-mono font-semibold text-ink">
+                          {tx.reference || tx.id}
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-2">
+                            {tx.entry_type === 'debit' ? (
+                              <div className="w-5 h-5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                                <ArrowDownRight className="w-3.5 h-3.5" />
+                              </div>
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                                <ArrowUpRight className="w-3.5 h-3.5" />
+                              </div>
+                            )}
+                            <span className="font-semibold text-ink truncate max-w-[260px]">
+                              {tx.title}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-line text-muted">
+                            {tx.term}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap uppercase font-mono text-[11px] text-muted">
+                          {tx.payment_method || (tx.entry_type === 'debit' ? 'Invoice' : 'Direct')}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                          {tx.debit > 0 ? money(tx.debit) : '—'}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                          {tx.credit > 0 ? money(tx.credit) : '—'}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-ink whitespace-nowrap">
+                          {money(tx.running_balance)}
+                        </td>
+                        <td className="py-3 px-3 text-center whitespace-nowrap">
+                          <StatusPill
+                            status={tx.entry_type === 'credit' ? 'cleared' : (tx.status || 'unpaid')}
+                            size="sm"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-line bg-canvas/40 font-semibold text-xs text-ink">
+                      <td colSpan={5} className="py-3 px-3 text-right">Totals / Current Net Balance:</td>
+                      <td className="py-3 px-3 text-right font-mono text-rose-600 dark:text-rose-400">
+                        {money(ledgerSummary.total_billed || 0)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono text-emerald-600 dark:text-emerald-400">
+                        {money(ledgerSummary.total_paid || 0)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono font-bold text-ink">
+                        {money(ledgerSummary.balance_due || 0)}
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <StatusPill status={ledgerSummary.status || 'cleared'} size="sm" />
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
       )}
 
       {/* Tab 5: Health & Residence */}
@@ -508,6 +726,72 @@ export default function StudentProfile() {
               <option value="bank_transfer">Bank Transfer (EFT)</option>
               <option value="pos">POS / Swipe Card</option>
             </select>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Post Fee Charge / Debit Modal */}
+      <Modal
+        isOpen={chargeModalOpen}
+        onClose={() => setChargeModalOpen(false)}
+        title="Post Fee Charge / Debit"
+        subtitle={`Student: ${student.first_name || ''} ${student.last_name || ''} (${student.admission_number || student.id || ''})`}
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setChargeModalOpen(false)}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={chargeLoading}
+              onClick={handleAddCharge}
+              className="btn-primary"
+            >
+              {chargeLoading ? 'Posting…' : 'Post Charge to Ledger'}
+            </button>
+          </>
+        }
+      >
+        <form onSubmit={handleAddCharge} className="space-y-4 text-xs">
+          <div>
+            <label className="font-semibold text-ink block mb-1">Charge Title / Description *</label>
+            <input
+              type="text"
+              required
+              value={chargeTitle}
+              onChange={e => setChargeTitle(e.target.value)}
+              placeholder="e.g. Term 3 Tuition Fee, Science Lab Levy, Bus Pass"
+              className="glass-input w-full"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="font-semibold text-ink block mb-1">Amount ($ USD) *</label>
+              <input
+                type="number"
+                step="0.01"
+                required
+                value={chargeAmount}
+                onChange={e => setChargeAmount(e.target.value)}
+                placeholder="0.00"
+                className="glass-input w-full font-mono text-base"
+              />
+            </div>
+
+            <div>
+              <label className="font-semibold text-ink block mb-1">Due Date (Optional)</label>
+              <input
+                type="date"
+                value={chargeDueDate}
+                onChange={e => setChargeDueDate(e.target.value)}
+                className="glass-input w-full"
+              />
+            </div>
           </div>
         </form>
       </Modal>

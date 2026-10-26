@@ -134,6 +134,121 @@ router.post('/conversations/:id/messages', async (req, res) => {
   } catch (err) { console.error('Send conversation message error:', err); return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to send message.' } }); }
 });
 
+// PUT /conversations/:id/messages/:messageId (Edit Message with 10-minute / unread window)
+router.put('/conversations/:id/messages/:messageId', async (req, res) => {
+  try {
+    const schoolId = schoolFor(req);
+    const conversation = await participant(req.params.id, req.user.id, schoolId);
+    if (!conversation) return res.status(404).json({ error: { code: 'CONVERSATION_NOT_FOUND', message: 'Conversation not found.' } });
+
+    const message = await queryOne(
+      'SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL',
+      [req.params.messageId, req.params.id]
+    );
+    if (!message) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Message not found.' } });
+    if (message.sender_id !== req.user.id) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You can only edit your own messages.' } });
+    }
+
+    const { body } = req.body || {};
+    if (!body?.trim()) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Message content required.' } });
+
+    const ageMs = Date.now() - new Date(message.sent_at).getTime();
+    const tenMinutesMs = 10 * 60 * 1000;
+    const isWithinTenMinutes = ageMs <= tenMinutesMs;
+
+    const readRow = await queryOne(
+      `SELECT COUNT(*) as read_count 
+       FROM conversation_participants 
+       WHERE conversation_id = ? AND user_id != ? AND last_read_at >= ?`,
+      [req.params.id, req.user.id, message.sent_at]
+    );
+    const hasBeenRead = Number(readRow?.read_count || 0) > 0;
+
+    if (!isWithinTenMinutes && hasBeenRead) {
+      return res.status(403).json({
+        error: {
+          code: 'EDIT_WINDOW_EXPIRED',
+          message: 'This message cannot be edited because it has been read and more than 10 minutes have passed.'
+        }
+      });
+    }
+
+    await query('UPDATE messages SET body = ?, edited_at = NOW() WHERE id = ?', [body.trim(), req.params.messageId]);
+
+    const participantRows = await query('SELECT user_id FROM conversation_participants WHERE conversation_id = ?', [req.params.id]);
+    broadcastToUsers(participantRows.map(row => row.user_id), {
+      type: 'conversation.message.updated',
+      data: {
+        conversation_id: req.params.id,
+        message_id: req.params.messageId,
+        body: body.trim(),
+        edited_at: new Date().toISOString()
+      }
+    });
+
+    return res.json({ data: { id: req.params.messageId, body: body.trim(), edited: true } });
+  } catch (err) {
+    console.error('Edit message error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to edit message.' } });
+  }
+});
+
+// DELETE /conversations/:id/messages/:messageId (Unsend Message with 10-minute / unread window)
+router.delete('/conversations/:id/messages/:messageId', async (req, res) => {
+  try {
+    const schoolId = schoolFor(req);
+    const conversation = await participant(req.params.id, req.user.id, schoolId);
+    if (!conversation) return res.status(404).json({ error: { code: 'CONVERSATION_NOT_FOUND', message: 'Conversation not found.' } });
+
+    const message = await queryOne(
+      'SELECT * FROM messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL',
+      [req.params.messageId, req.params.id]
+    );
+    if (!message) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Message not found.' } });
+    if (message.sender_id !== req.user.id) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You can only unsend your own messages.' } });
+    }
+
+    const ageMs = Date.now() - new Date(message.sent_at).getTime();
+    const tenMinutesMs = 10 * 60 * 1000;
+    const isWithinTenMinutes = ageMs <= tenMinutesMs;
+
+    const readRow = await queryOne(
+      `SELECT COUNT(*) as read_count 
+       FROM conversation_participants 
+       WHERE conversation_id = ? AND user_id != ? AND last_read_at >= ?`,
+      [req.params.id, req.user.id, message.sent_at]
+    );
+    const hasBeenRead = Number(readRow?.read_count || 0) > 0;
+
+    if (!isWithinTenMinutes && hasBeenRead) {
+      return res.status(403).json({
+        error: {
+          code: 'UNSEND_WINDOW_EXPIRED',
+          message: 'This message cannot be unsent because it has already been read and more than 10 minutes have passed.'
+        }
+      });
+    }
+
+    await query('UPDATE messages SET deleted_at = NOW() WHERE id = ?', [req.params.messageId]);
+
+    const participantRows = await query('SELECT user_id FROM conversation_participants WHERE conversation_id = ?', [req.params.id]);
+    broadcastToUsers(participantRows.map(row => row.user_id), {
+      type: 'conversation.message.deleted',
+      data: {
+        conversation_id: req.params.id,
+        message_id: req.params.messageId
+      }
+    });
+
+    return res.json({ data: { id: req.params.messageId, unsend: true } });
+  } catch (err) {
+    console.error('Unsend message error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to unsend message.' } });
+  }
+});
+
 router.post('/conversations/:id/read', async (req, res) => {
   try {
     const schoolId = schoolFor(req);

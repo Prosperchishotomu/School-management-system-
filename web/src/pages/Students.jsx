@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useApi, invalidate } from '../data/apiHooks';
 import { api } from '../utils/api';
+import { money } from '../utils/format';
 import {
   PageHeader,
   KpiStrip,

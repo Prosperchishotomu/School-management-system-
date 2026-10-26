@@ -43,7 +43,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
 
         if (role === 'super_admin') {
           navigate('/admin/command-center', { replace: true });
-        } else if (['school_admin', 'head', 'deputy_head', 'admin', 'principal'].includes(role)) {
+        } else if (['school_admin', 'head', 'headmaster', 'deputy_head', 'admin', 'principal'].includes(role)) {
           navigate('/school-admin/dashboard', { replace: true });
         } else if (['teacher', 'hod'].includes(role)) {
           navigate('/teacher/dashboard', { replace: true });

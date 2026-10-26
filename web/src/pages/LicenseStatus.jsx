@@ -219,18 +219,29 @@ export default function LicenseStatus() {
               </div>
 
               <div className="p-4 rounded-xl bg-canvas border border-line text-xs text-muted space-y-1 leading-relaxed">
-                <span className="font-bold text-ink block">Automatic Grace Period Guarantee:</span>
-                SchoolBase provides an uninterrupted 14-day operational grace period upon license term expiry to ensure examinations and billing records remain fully accessible.
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-ink block">School Administrator Authority:</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-brand-500/15 text-brand-700 dark:text-brand-300 uppercase">
+                    School Admin Only
+                  </span>
+                </div>
+                SchoolBase gives school administrators designated authority to submit annual subscription renewal requests. An automated 14-day operational grace period guarantees uninterrupted school access during renewal processing.
               </div>
 
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full py-2.5 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-50"
-              >
-                <span>Submit Subscription Renewal Request</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {['school_admin', 'admin', 'principal', 'head', 'headmaster', 'super_admin'].includes(user?.role) ? (
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full py-2.5 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  <span>Submit Subscription Renewal Request</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs text-center font-medium">
+                  Notice: Only designated School Administrators are authorized to submit license renewals.
+                </div>
+              )}
             </form>
           </Card>
         </div>

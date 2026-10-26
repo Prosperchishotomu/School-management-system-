@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 /**
@@ -11,11 +11,22 @@ export default function PageHeader({
   subtitle = null,
   breadcrumbs = null,
   actions = null,
+  backTo = null,
+  backLabel = null,
   className = ''
 }) {
   return (
     <div className={`mb-6 pb-4 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 ${className}`}>
       <div>
+        {backTo && (
+          <Link
+            to={backTo}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 dark:text-brand-400 hover:text-brand-900 dark:hover:text-brand-200 mb-2 transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Drill Up ({backLabel || 'Dashboard'})</span>
+          </Link>
+        )}
         {breadcrumbs && breadcrumbs.length > 0 && (
           <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-xs text-muted mb-2">
             {breadcrumbs.map((bc, idx) => (

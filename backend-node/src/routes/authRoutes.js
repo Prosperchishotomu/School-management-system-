@@ -162,8 +162,11 @@ router.post('/login',
             school_id: user.school_id,
             school_name: user.school_name,
             username: user.username,
+            name: user.name || user.username,
             role: user.role,
             email: user.email,
+            phone: user.phone,
+            avatar_url: user.avatar_url,
             status: user.status
           }
         }
@@ -450,6 +453,122 @@ router.delete('/mfa/disable', authenticateToken, async (req, res) => {
     return res.json({ data: { message: 'MFA disabled successfully.' } });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to disable MFA.' } });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER PROFILE & AVATAR MANAGEMENT
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /user/profile (or /profile)
+router.get(['/user/profile', '/profile'], authenticateToken, async (req, res) => {
+  try {
+    const user = await queryOne(
+      `SELECT u.id, u.username, u.name, u.email, u.phone, u.role, u.school_id, u.avatar_url, u.status, u.created_at,
+              s.name as school_name
+       FROM users u
+       LEFT JOIN schools s ON u.school_id = s.id
+       WHERE u.id = ?`,
+      [req.user.id]
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'User profile not found.' } });
+    }
+
+    return res.json({
+      data: {
+        ...user,
+        name: user.name || user.username
+      }
+    });
+  } catch (err) {
+    console.error('Get profile error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to retrieve user profile.' } });
+  }
+});
+
+// PUT /user/profile
+router.put(['/user/profile', '/profile'], authenticateToken, async (req, res) => {
+  try {
+    const { name, email, phone, avatar_url, current_password, new_password } = req.body;
+    const userId = req.user.id;
+
+    // Optional password update
+    if (new_password) {
+      if (!current_password) {
+        return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Current password is required to change password.' } });
+      }
+      const dbUser = await queryOne('SELECT password_hash FROM users WHERE id = ?', [userId]);
+      if (!dbUser || !bcrypt.compareSync(current_password, dbUser.password_hash)) {
+        return res.status(400).json({ error: { code: 'INVALID_PASSWORD', message: 'Current password does not match.' } });
+      }
+      const newHash = bcrypt.hashSync(new_password, 10);
+      await query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, userId]);
+    }
+
+    // Update profile info
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) {
+      updates.push('name = ?');
+      params.push(typeof name === 'string' ? (name.trim() || null) : (name || null));
+    }
+    if (email !== undefined) {
+      updates.push('email = ?');
+      params.push(typeof email === 'string' ? (email.trim() || null) : (email || null));
+    }
+    if (phone !== undefined) {
+      updates.push('phone = ?');
+      params.push(typeof phone === 'string' ? (phone.trim() || null) : (phone || null));
+    }
+    if (avatar_url !== undefined) {
+      updates.push('avatar_url = ?');
+      params.push(avatar_url || null);
+    }
+
+    if (updates.length > 0) {
+      updates.push('updated_at = NOW()');
+      params.push(userId);
+      await query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+    }
+
+    const updated = await queryOne(
+      `SELECT u.id, u.username, u.name, u.email, u.phone, u.role, u.school_id, u.avatar_url, u.status, u.created_at,
+              s.name as school_name
+       FROM users u
+       LEFT JOIN schools s ON u.school_id = s.id
+       WHERE u.id = ?`,
+      [userId]
+    );
+
+    return res.json({
+      data: {
+        ...updated,
+        name: updated?.name || updated?.username
+      },
+      message: 'Profile updated successfully.'
+    });
+  } catch (err) {
+    console.error('Update profile error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update user profile.' } });
+  }
+});
+
+// POST /user/avatar
+router.post(['/user/avatar', '/profile/avatar'], authenticateToken, async (req, res) => {
+  try {
+    const { avatar_url } = req.body;
+    if (!avatar_url) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Avatar image data URL or link is required.' } });
+    }
+
+    await query('UPDATE users SET avatar_url = ?, updated_at = NOW() WHERE id = ?', [avatar_url, req.user.id]);
+    return res.json({ data: { avatar_url }, message: 'Profile picture updated successfully.' });
+  } catch (err) {
+    console.error('Upload avatar error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to upload profile picture.' } });
   }
 });
 

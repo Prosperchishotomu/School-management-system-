@@ -37,9 +37,10 @@ import {
   School,
   X
 } from 'lucide-react';
+import { getCurrentTerm } from '../../utils/dateTerms';
 
 export default function Sidebar({ isOpen, onClose }) {
-  const { user, activeSchoolId, changeActiveSchool, logout } = useAuth();
+  const { user, activeSchoolId, schoolName, changeActiveSchool, logout } = useAuth();
   const location = useLocation();
 
   const [schools, setSchools] = useState([]);
@@ -198,6 +199,9 @@ export default function Sidebar({ isOpen, onClose }) {
     }
   ];
 
+  const currentTerm = getCurrentTerm();
+  const displaySchool = schoolName || user?.school_name || '';
+
   return (
     <>
       {/* Mobile backdrop overlay */}
@@ -223,8 +227,8 @@ export default function Sidebar({ isOpen, onClose }) {
               <span className="font-display font-extrabold text-base tracking-tight text-white block leading-none">
                 School<span className="text-brand-500">Base</span>
               </span>
-              <span className="text-[10px] text-white/60 font-mono">
-                Term 1, 2026
+              <span className="text-[10px] text-brand-400 font-mono font-medium">
+                {currentTerm.label}
               </span>
             </div>
           </div>
@@ -238,21 +242,34 @@ export default function Sidebar({ isOpen, onClose }) {
           </button>
         </div>
 
-        {/* Super admin school switcher */}
-        {user?.role === 'super_admin' && schools.length > 0 && (
-          <div className="px-4 py-2 bg-black/20 border-b border-white/10">
-            <label className="text-[10px] text-white/60 font-medium block mb-1">ACTIVE SCHOOL</label>
+        {/* School context display: Super Admin Switcher or Active School Banner */}
+        {user?.role === 'super_admin' && schools.length > 0 ? (
+          <div className="px-4 py-2.5 bg-black/25 border-b border-white/10">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[10px] text-white/60 font-semibold tracking-wider uppercase">ACTIVE SCHOOL</label>
+              <span className="text-[9px] bg-brand-500/20 text-brand-300 font-bold px-1.5 py-0.2 rounded">SUPER ADMIN</span>
+            </div>
             <select
               value={activeSchoolId || ''}
               onChange={(e) => changeActiveSchool(e.target.value)}
-              className="w-full bg-brand-950/80 text-white text-xs rounded-lg px-2 py-1.5 border border-white/15 focus:outline-none focus:border-brand-500"
+              className="w-full bg-brand-950/80 text-white text-xs rounded-lg px-2.5 py-1.5 border border-white/20 focus:outline-none focus:border-brand-500"
             >
               {schools.map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
           </div>
-        )}
+        ) : displaySchool ? (
+          <div className="px-4 py-2.5 bg-black/25 border-b border-white/10 flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-brand-500/20 border border-brand-500/30 flex items-center justify-center shrink-0">
+              <School className="w-3.5 h-3.5 text-brand-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="text-[9px] uppercase tracking-wider text-white/50 font-semibold block leading-none mb-0.5">CURRENT INSTITUTION</span>
+              <span className="text-xs font-semibold text-white truncate block" title={displaySchool}>{displaySchool}</span>
+            </div>
+          </div>
+        ) : null}
 
         {/* Scrollable Navigation Area */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-white/10">
@@ -326,10 +343,15 @@ export default function Sidebar({ isOpen, onClose }) {
           )}
 
           <div className="flex items-center justify-between pt-1">
-            <div className="truncate pr-2">
+            <NavLink
+              to="/profile"
+              onClick={onClose}
+              title="Manage Profile"
+              className="truncate pr-2 hover:opacity-90 transition cursor-pointer flex-1"
+            >
               <div className="text-xs font-semibold text-white truncate">{user?.name || user?.username}</div>
-              <div className="text-[10px] text-white/50 capitalize font-mono">{(role || 'user').replace(/_/g, ' ')}</div>
-            </div>
+              <div className="text-[10px] text-white/50 capitalize font-mono">{(role || 'user').replace(/_/g, ' ')} • Edit Profile →</div>
+            </NavLink>
 
             <button
               onClick={logout}

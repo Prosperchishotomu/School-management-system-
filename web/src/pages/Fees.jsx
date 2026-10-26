@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams, Navigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useApi, invalidate } from '../data/apiHooks';
@@ -24,9 +24,12 @@ import {
   ShieldCheck, RefreshCw, Upload, Download, Landmark, Plus
 } from 'lucide-react';
 import ImportModal from '../components/ImportModal';
+import { getCurrentTerm } from '../utils/dateTerms';
 
 export default function Fees() {
   const { user, activeSchoolId } = useAuth();
+  const navigate = useNavigate();
+  const currentTerm = getCurrentTerm();
 
   // Parents must NEVER access the school-wide cashier treasury or debtor ledger
   if (user?.role === 'parent') {
@@ -93,10 +96,10 @@ export default function Fees() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [billForm, setBillForm] = useState({
     student_id: '',
-    title: 'Term 1 Tuition & Levies',
-    term: 'Term 1 2026',
+    title: `${currentTerm.name} Tuition & Levies`,
+    term: currentTerm.label,
     amount_due: '',
-    due_date: '2026-02-15'
+    due_date: ''
   });
   const [billingLoading, setBillingLoading] = useState(false);
 
@@ -594,6 +597,22 @@ export default function Fees() {
                 const bal = parseFloat(row.amount_due || 0) - parseFloat(row.amount_paid || 0);
                 return <StatusPill status={bal === 0 ? 'paid' : bal < row.amount_due ? 'partial' : 'unpaid'} />;
               }
+            },
+            {
+              key: 'actions',
+              label: 'Ledger',
+              align: 'right',
+              render: (_, row) => (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/students/${row.student_id}?tab=finance`)}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/40 dark:text-brand-300 dark:hover:bg-brand-900/60 rounded-lg transition cursor-pointer"
+                  title="View complete verified student ledger"
+                >
+                  <span>Ledger</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              )
             }
           ]}
           data={fees}
