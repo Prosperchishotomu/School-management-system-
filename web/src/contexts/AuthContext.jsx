@@ -113,11 +113,11 @@ export const AuthProvider = ({ children }) => {
           }
         }).catch(() => {
           if (parsedUser.role === 'super_admin') {
-            const savedSchool = store.getItem(STORAGE_SCHOOL_KEY) || 'HARAREPR';
+            const savedSchool = store.getItem(STORAGE_SCHOOL_KEY) || parsedUser.school_id || null;
             setActiveSchoolId(savedSchool);
-            store.setItem(STORAGE_SCHOOL_KEY, savedSchool);
+            if (savedSchool) store.setItem(STORAGE_SCHOOL_KEY, savedSchool);
           } else {
-            setActiveSchoolId(parsedUser.school_id);
+            setActiveSchoolId(parsedUser.school_id || null);
             if (parsedUser.school_id) store.setItem(STORAGE_SCHOOL_KEY, parsedUser.school_id);
           }
         });
@@ -172,11 +172,11 @@ export const AuthProvider = ({ children }) => {
 
       setUser(loggedUser);
       if (loggedUser.role === 'super_admin') {
-        const defaultSchool = store.getItem(STORAGE_SCHOOL_KEY) || 'HARAREPR';
+        const defaultSchool = store.getItem(STORAGE_SCHOOL_KEY) || loggedUser.school_id || null;
         setActiveSchoolId(defaultSchool);
-        store.setItem(STORAGE_SCHOOL_KEY, defaultSchool);
+        if (defaultSchool) store.setItem(STORAGE_SCHOOL_KEY, defaultSchool);
       } else {
-        setActiveSchoolId(loggedUser.school_id);
+        setActiveSchoolId(loggedUser.school_id || null);
         if (loggedUser.school_id) {
           store.setItem(STORAGE_SCHOOL_KEY, loggedUser.school_id);
         }
@@ -219,6 +219,16 @@ export const AuthProvider = ({ children }) => {
     });
   }, []);
 
+  const refreshSchools = useCallback(async () => {
+    try {
+      const res = await api.get('/schools', { silent: true });
+      const schoolList = res?.data || res || [];
+      if (Array.isArray(schoolList)) {
+        setSchools(schoolList);
+      }
+    } catch (_) {}
+  }, []);
+
   const activeSchool = schools.find(s => s.id === (activeSchoolId || user?.school_id)) || (user?.school_name ? { id: user.school_id, name: user.school_name } : null);
   const schoolName = activeSchool?.name || user?.school_name || '';
 
@@ -233,6 +243,7 @@ export const AuthProvider = ({ children }) => {
     logout,
     updateUser,
     changeActiveSchool,
+    refreshSchools,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

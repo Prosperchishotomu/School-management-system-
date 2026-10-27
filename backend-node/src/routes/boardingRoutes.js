@@ -3,6 +3,86 @@ const router = express.Router({ mergeParams: true });
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 
+const getSchoolId = (req) => req.headers['x-school-id'] || req.params.schoolId || req.user?.school_id;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOSTEL BLOCKS & ALLOCATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /hostels
+router.get('/hostels', authenticateToken, async (req, res) => {
+  try {
+    const schoolId = getSchoolId(req);
+    const hostels = await query('SELECT * FROM hostels WHERE school_id = ? ORDER BY name ASC', [schoolId]);
+    return res.json({ data: hostels || [] });
+  } catch (err) {
+    return res.json({ data: [] });
+  }
+});
+
+// POST /hostels
+router.post('/hostels', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const schoolId = getSchoolId(req);
+    const { name, type, capacity, max_occupants_per_room, warden_name, warden_phone } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Hostel name is required.' } });
+    }
+    const id = 'HST' + Date.now().toString(36).toUpperCase();
+    await query(
+      `INSERT INTO hostels (id, school_id, name, type, capacity, max_occupants_per_room, warden_name, warden_phone, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [id, schoolId, name.trim(), type || 'student_male', capacity ? parseInt(capacity) : null, max_occupants_per_room ? parseInt(max_occupants_per_room) : null, warden_name || null, warden_phone || null]
+    );
+    const created = await queryOne('SELECT * FROM hostels WHERE id = ?', [id]);
+    return res.status(201).json({ data: created });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create hostel.' } });
+  }
+});
+
+// GET /hostels/allocations
+router.get('/hostels/allocations', authenticateToken, async (req, res) => {
+  try {
+    const schoolId = getSchoolId(req);
+    const allocs = await query(
+      `SELECT ha.*, st.first_name, st.last_name, st.admission_number, c.name as class_name, h.name as hostel_name
+       FROM hostel_allocations ha
+       JOIN students st ON ha.student_id = st.id
+       LEFT JOIN classes c ON st.class_id = c.id
+       LEFT JOIN hostels h ON ha.hostel_id = h.id
+       WHERE ha.school_id = ?
+       ORDER BY ha.created_at DESC`,
+      [schoolId]
+    );
+    return res.json({ data: allocs || [] });
+  } catch (err) {
+    return res.json({ data: [] });
+  }
+});
+
+// POST /hostels/allocations
+router.post('/hostels/allocations', authenticateToken, requireRoles('school_admin', 'super_admin', 'boarding_master'), async (req, res) => {
+  try {
+    const schoolId = getSchoolId(req);
+    const { hostel_id, student_id, room_number, bed_number } = req.body;
+    if (!hostel_id || !student_id) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Hostel block and student are required.' } });
+    }
+    const id = 'HAL' + Date.now().toString(36).toUpperCase();
+    await query(
+      `INSERT INTO hostel_allocations (id, school_id, hostel_id, student_id, room_number, bed_number, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'allocated', NOW())`,
+      [id, schoolId, hostel_id, student_id, room_number || null, bed_number || null]
+    );
+    try { await query('UPDATE hostels SET current_occupancy = COALESCE(current_occupancy, 0) + 1 WHERE id = ?', [hostel_id]); } catch (_) {}
+    const created = await queryOne('SELECT * FROM hostel_allocations WHERE id = ?', [id]);
+    return res.status(201).json({ data: created });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to allocate bed space.' } });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HOUSES & HOUSE POINTS (Inter-House Sports / Competitions)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -10,7 +90,7 @@ const { authenticateToken, requireRoles } = require('../middleware/auth');
 // GET /houses
 router.get('/houses', authenticateToken, async (req, res) => {
   try {
-    const schoolId = req.params.schoolId || req.user.school_id;
+    const schoolId = getSchoolId(req);
     const houses = await query(
       `SELECT h.*, u.username as house_master_name,
               COALESCE(SUM(hp.points), 0) as total_points,
@@ -25,7 +105,7 @@ router.get('/houses', authenticateToken, async (req, res) => {
        ORDER BY total_points DESC`,
       [schoolId]
     );
-    return res.json({ data: houses });
+    return res.json({ data: houses || [] });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch houses.' } });
   }
@@ -34,7 +114,7 @@ router.get('/houses', authenticateToken, async (req, res) => {
 // POST /houses
 router.post('/houses', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    const schoolId = req.params.schoolId || req.user.school_id;
+    const schoolId = getSchoolId(req);
     const { name, color, house_master_employee_id } = req.body;
 
     if (!name) {
@@ -56,7 +136,7 @@ router.post('/houses', authenticateToken, requireRoles('school_admin', 'super_ad
 // POST /houses/points (Award or deduct points)
 router.post('/houses/points', authenticateToken, requireRoles('teacher', 'boarding_master', 'school_admin', 'super_admin'), async (req, res) => {
   try {
-    const schoolId = req.params.schoolId || req.user.school_id;
+    const schoolId = getSchoolId(req);
     const { house_id, student_id, points, reason, category } = req.body;
 
     if (!house_id || points === undefined || !reason) {

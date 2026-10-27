@@ -35,12 +35,14 @@ import {
   Layers,
   Sparkles,
   School,
+  Send,
   X
 } from 'lucide-react';
 import { getCurrentTerm } from '../../utils/dateTerms';
+import { isPathEnabled } from '../../utils/modules';
 
 export default function Sidebar({ isOpen, onClose }) {
-  const { user, activeSchoolId, schoolName, changeActiveSchool, logout } = useAuth();
+  const { user, activeSchoolId, activeSchool, schoolName, changeActiveSchool, logout } = useAuth();
   const location = useLocation();
 
   const [schools, setSchools] = useState([]);
@@ -184,7 +186,8 @@ export default function Sidebar({ isOpen, onClose }) {
     {
       label: 'COMMUNICATION',
       items: [
-        { path: '/notifications', label: 'Messages & Alerts', icon: MessageSquare, roles: ['school_admin', 'teacher', 'parent', 'student', 'bursar', 'boarding_master', 'nurse', 'super_admin'], badge: counts.unreadMessages > 0 ? counts.unreadMessages : null }
+        { path: '/notifications', label: 'Messages & Alerts', icon: MessageSquare, roles: ['school_admin', 'teacher', 'parent', 'student', 'bursar', 'accountant', 'boarding_master', 'nurse', 'super_admin', 'head', 'deputy_head'], badge: counts.unreadMessages > 0 ? counts.unreadMessages : null },
+        { path: '/messages', label: 'Direct Messages', icon: Send, roles: ['school_admin', 'teacher', 'parent', 'student', 'bursar', 'accountant', 'boarding_master', 'nurse', 'super_admin', 'head', 'deputy_head'] }
       ]
     },
     {
@@ -274,7 +277,11 @@ export default function Sidebar({ isOpen, onClose }) {
         {/* Scrollable Navigation Area */}
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin scrollbar-thumb-white/10">
           {navSections.map((sec) => {
-            const visibleItems = sec.items.filter(item => hasRoleAccess(item.roles));
+            const visibleItems = sec.items.filter(item => {
+              if (!hasRoleAccess(item.roles)) return false;
+              if (activeSchool && !isPathEnabled(activeSchool, item.path)) return false;
+              return true;
+            });
             if (visibleItems.length === 0) return null;
 
             return (

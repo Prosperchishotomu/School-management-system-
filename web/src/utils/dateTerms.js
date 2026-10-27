@@ -26,6 +26,21 @@ export function getCurrentTerm(dateInput = new Date()) {
   };
 }
 
+export function formatTermLabel(termInput) {
+  if (!termInput) return 'Term 1';
+  if (typeof termInput === 'string') {
+    return termInput
+      .replace(/_/g, ' ')
+      .replace(/\bterm\s*(\d)\b/i, 'Term $1')
+      .replace(/\b\w/g, c => c.toUpperCase());
+  }
+  if (typeof termInput === 'object') {
+    const raw = termInput.name || termInput.term_name || `Term ${termInput.number || termInput.term_number || 1}`;
+    return formatTermLabel(raw);
+  }
+  return String(termInput);
+}
+
 export function formatSchoolDate(dateInput = new Date()) {
   const d = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
   const validDate = isNaN(d.getTime()) ? new Date() : d;

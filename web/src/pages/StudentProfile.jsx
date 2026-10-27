@@ -28,15 +28,18 @@ import {
   ArrowUpRight, Plus, Receipt, CreditCard
 } from 'lucide-react';
 
+import { isSchoolBoarding } from '../utils/modules';
+
 export default function StudentProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeSchool } = useAuth();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const activeTab = searchParams.get('tab') || 'overview';
+  const hasBoarding = isSchoolBoarding(activeSchool);
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [payAmount, setPayAmount] = useState('');
@@ -159,7 +162,7 @@ export default function StudentProfile() {
     { id: 'academic', label: 'Academics & Reports', icon: BookOpen },
     { id: 'attendance', label: 'Attendance', icon: CalendarCheck },
     { id: 'finance', label: 'Finance & Ledger', icon: DollarSign },
-    { id: 'residence', label: 'Health & Residence', icon: Building2 },
+    { id: 'residence', label: hasBoarding ? 'Health & Residence' : 'Health & Medical', icon: hasBoarding ? Building2 : HeartPulse },
     { id: 'discipline', label: 'Discipline & Merits', icon: AlertTriangle }
   ];
 
@@ -226,8 +229,8 @@ export default function StudentProfile() {
               {money(feeBalance)}
             </div>
             <StatusPill
-              status={feeBalance === 0 ? 'paid' : 'partial'}
-              label={feeBalance === 0 ? 'Fully Cleared' : 'Payment Due'}
+              status={Number(ledgerSummary?.total_billed || feeSummary?.total_due || 0) === 0 ? 'neutral' : (feeBalance === 0 ? 'paid' : 'partial')}
+              label={Number(ledgerSummary?.total_billed || feeSummary?.total_due || 0) === 0 ? 'Unbilled' : (feeBalance === 0 ? 'Fully Cleared' : 'Payment Due')}
               size="sm"
               className="mt-1"
             />
@@ -417,16 +420,16 @@ export default function StudentProfile() {
             <StatCard
               title="Outstanding Balance Due"
               value={money(ledgerSummary.balance_due || 0)}
-              sub={ledgerSummary.balance_due > 0 ? "Immediate settlement required" : "Account fully cleared"}
+              sub={Number(ledgerSummary.total_billed || 0) === 0 ? "No invoices issued" : (ledgerSummary.balance_due > 0 ? "Immediate settlement required" : "Account fully cleared")}
               icon={DollarSign}
               color={ledgerSummary.balance_due > 0 ? "rose" : "brand"}
             />
             <StatCard
               title="Ledger Status"
-              value={(ledgerSummary.status || 'cleared').toUpperCase()}
+              value={(Number(ledgerSummary.total_billed || 0) === 0 ? 'No Invoices' : (ledgerSummary.status || 'cleared')).replace('_', ' ').toUpperCase()}
               sub={`${ledgerEntries.length} verified transactions`}
               icon={CreditCard}
-              color={ledgerSummary.status === 'cleared' ? 'emerald' : 'amber'}
+              color={Number(ledgerSummary.total_billed || 0) === 0 ? 'brand' : (ledgerSummary.status === 'cleared' ? 'emerald' : 'amber')}
             />
           </div>
 
@@ -575,7 +578,7 @@ export default function StudentProfile() {
                         {money(ledgerSummary.balance_due || 0)}
                       </td>
                       <td className="py-3 px-3 text-center">
-                        <StatusPill status={ledgerSummary.status || 'cleared'} size="sm" />
+                        <StatusPill status={Number(ledgerSummary.total_billed || 0) === 0 ? 'neutral' : (ledgerSummary.status || 'cleared')} label={Number(ledgerSummary.total_billed || 0) === 0 ? 'Unbilled' : undefined} size="sm" />
                       </td>
                     </tr>
                   </tfoot>
@@ -588,27 +591,31 @@ export default function StudentProfile() {
 
       {/* Tab 5: Health & Residence */}
       {activeTab === 'residence' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card title="Hostel Residence" subtitle="Boarding house placement and room allocation">
-            <div className="space-y-2 text-xs">
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Hostel Hall:</span>
-                <span className="font-semibold text-ink">Chitepo Boys Hall</span>
-              </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Room Number:</span>
-                <span className="font-semibold text-ink font-mono">Block B, Room 14</span>
-              </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Bed Number:</span>
-                <span className="font-semibold text-ink font-mono">Bed 02 (Lower bunk)</span>
-              </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>House Master:</span>
-                <span className="font-semibold text-ink">Mr. S. Mutasa</span>
-              </div>
-            </div>
-          </Card>
+        <div className={`grid grid-cols-1 ${hasBoarding ? 'md:grid-cols-2' : 'max-w-2xl'} gap-6`}>
+          {hasBoarding && (
+            <Card title="Hostel Residence" subtitle="Boarding house placement and room allocation">
+              {student.is_boarding ? (
+                <div className="space-y-2 text-xs">
+                  <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                    <span>Hostel Hall:</span>
+                    <span className="font-semibold text-ink">Hostel Dormitory</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                    <span>Residence Type:</span>
+                    <span className="font-semibold text-teal-dark bg-teal-primary/10 px-2 py-0.5 rounded">Full Boarder</span>
+                  </div>
+                  <div className="flex justify-between py-1.5 border-b border-line text-muted">
+                    <span>Room / Bed:</span>
+                    <span className="font-semibold text-ink font-mono">Assigned by Warden</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-4 text-center text-xs text-muted">
+                  This student is registered as a <strong className="text-ink">Day Scholar</strong> (non-resident).
+                </div>
+              )}
+            </Card>
+          )}
 
           <Card title="Medical Records" subtitle="Sanatorium visits and allergy alerts">
             <div className="space-y-2 text-xs">

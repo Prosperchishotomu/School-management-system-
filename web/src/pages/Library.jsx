@@ -296,13 +296,7 @@ export default function Library() {
               }
             }
           ]}
-          data={filteredCatalog.length > 0 ? filteredCatalog : [
-            { id: 1, name: "Step Ahead: O-Level Mathematics Book 4", resource_type: 'textbook', code: 'ISBN 978-0-7974-2191-4', shelf_location: 'Stack A, Shelf 2', status: 'available' },
-            { id: 2, name: 'ZIMSEC Past Exam Papers: Geography 2018-2024', resource_type: 'past_paper', code: 'ZIM-GEO-4022', shelf_location: 'Reserve Desk Bay 1', status: 'available' },
-            { id: 3, name: 'Focus on Heritage Studies: Form 3 & 4', resource_type: 'textbook', code: 'ISBN 978-1-77903-882-1', shelf_location: 'Stack B, Shelf 1', status: 'issued', current_holder_name: 'Farai Sibanda (Form 3)', due_date: '2026-04-02' },
-            { id: 4, name: 'Animal Farm by George Orwell', resource_type: 'fiction', code: 'FIC-ORW-01', shelf_location: 'Literature Bay 4', status: 'available' },
-            { id: 5, name: 'Physical Science for Secondary Schools Vol 2', resource_type: 'textbook', code: 'ISBN 978-0-582-08819-2', shelf_location: 'Stack C, Shelf 4', status: 'issued', current_holder_name: 'Ruvimbo Choto (Form 4)', due_date: '2026-03-14', is_overdue: true },
-          ]}
+          data={filteredCatalog}
           emptyTitle="No Library Items Found"
           emptyMessage="No resources match the selected catalog filter."
         />

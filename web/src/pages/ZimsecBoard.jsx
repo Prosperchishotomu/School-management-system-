@@ -21,33 +21,33 @@ export default function ZimsecBoard() {
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Batch Form
-  const [batchForm, setBatchForm] = useState({
-    session_year: 2026,
-    exam_series: 'November',
-    center_no: 'ZW0421',
-    board_id: 'ZIMSEC'
-  });
-
-  // Dry-run CSV results import state
-  const [csvContent, setCsvContent] = useState('');
-  const [dryRunResults, setDryRunResults] = useState(null);
-  const [importing, setImporting] = useState(false);
-
   // Data fetching
-  const { data: entriesData, loading: loadingEntries } = useApi(
-    `exam_entries_${activeSchoolId}`,
-    () => api.get(`/schools/${activeSchoolId}/exam-entries`).then(r => r.data || []),
-    { deps: [activeSchoolId] }
-  );
-
   const { data: schoolInfo } = useApi(
     `school_info_${activeSchoolId}`,
     () => api.get(`/schools/${activeSchoolId}`).then(r => r.data || {}),
     { deps: [activeSchoolId] }
   );
 
+  const { data: entriesData, loading: loadingEntries } = useApi(
+    `exam_entries_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/exam-entries`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
+
   const entries = Array.isArray(entriesData) ? entriesData : [];
+
+  // Batch Form
+  const [batchForm, setBatchForm] = useState({
+    session_year: new Date().getFullYear(),
+    exam_series: 'November',
+    center_no: schoolInfo?.center_no || '',
+    board_id: 'ZIMSEC O-Level'
+  });
+
+  // Dry-run CSV results import state
+  const [csvContent, setCsvContent] = useState('');
+  const [dryRunResults, setDryRunResults] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   const handleCreateBatch = async (e) => {
     e.preventDefault();
@@ -170,28 +170,28 @@ export default function ZimsecBoard() {
       <KpiStrip>
         <StatCard
           label="ZIMSEC Centre Number"
-          value={schoolInfo?.center_no || 'ZW-0421'}
+          value={schoolInfo?.center_no || 'Unassigned'}
           icon={Hash}
           color="brand"
-          subtext="Accredited Ordinary & Advanced Level"
+          subtext="Accredited Examination Centre"
         />
         <StatCard
           label="Registered Batches"
           value={entries.length}
           icon={FileSpreadsheet}
           color="info"
-          subtext={entries.length > 0 ? 'November examination series' : 'No candidates registered'}
+          subtext={entries.length > 0 ? `${entries.length} examination batches active` : 'No batches registered'}
         />
         <StatCard
-          label="SBA / CALA Modules"
-          value={entries.length > 0 ? `${entries.length} Enrolled` : '0 Candidates'}
+          label="SBA / CALA Candidates"
+          value={entries.reduce((acc, e) => acc + (e.candidate_count || 0), 0)}
           icon={Award}
           color="accent"
           subtext="Coursework components"
         />
         <StatCard
           label="SBA / CALA Moderation"
-          value={entries.length > 0 ? 'Under Review' : 'Pending Enrollment'}
+          value={entries.length > 0 ? 'In Review' : 'Pending Enrollment'}
           icon={CheckCircle2}
           color="violet"
           subtext="National examination desk"
@@ -248,12 +248,12 @@ export default function ZimsecBoard() {
                 {
                   key: 'center_no',
                   label: 'Centre No',
-                  render: v => <span className="font-mono text-xs font-bold text-ink">{v || 'ZW0421'}</span>
+                  render: v => <span className="font-mono text-xs font-bold text-ink">{v || schoolInfo?.center_no || '—'}</span>
                 },
                 {
                   key: 'candidate_count',
                   label: 'Enrolled Candidates',
-                  render: v => <span className="font-mono text-xs">{v || 128} registered</span>
+                  render: v => <span className="font-mono text-xs">{v || 0} registered</span>
                 },
                 {
                   key: 'status',
@@ -284,11 +284,9 @@ export default function ZimsecBoard() {
                   )
                 }
               ]}
-              data={entries.length > 0 ? entries : [
-                { id: 1, session_year: 2026, exam_series: 'November', center_no: 'ZW0421', board_id: 'ZIMSEC O-Level', candidate_count: 142, status: 'open' },
-                { id: 2, session_year: 2026, exam_series: 'November', center_no: 'ZW0421', board_id: 'ZIMSEC A-Level', candidate_count: 64, status: 'open' },
-                { id: 3, session_year: 2025, exam_series: 'November', center_no: 'ZW0421', board_id: 'ZIMSEC O-Level', candidate_count: 138, status: 'completed' },
-              ]}
+              data={entries}
+              emptyTitle="No Examination Batches Initialized"
+              emptyMessage="Click '+ Register New Series' above to initialize a ZIMSEC examination registration batch."
             />
           </div>
         )}
@@ -310,26 +308,35 @@ export default function ZimsecBoard() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl bg-canvas border border-line">
-                <div className="text-xs text-muted font-bold uppercase">Candidate Coverage</div>
-                <div className="text-2xl font-bold font-mono text-ink mt-1">100%</div>
-                <div className="text-[11px] text-brand-500 mt-1 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  All 142 candidates have 3 CALA tasks logged
+            {(() => {
+              const totalCandidates = entries.reduce((acc, e) => acc + (e.candidate_count || 0), 0);
+              const coveragePct = totalCandidates > 0 ? 100 : 0;
+              const samplePortfolios = totalCandidates > 0 ? Math.max(1, Math.ceil(totalCandidates * 0.1)) : 0;
+              return (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-xl bg-canvas border border-line">
+                    <div className="text-xs text-muted font-bold uppercase">Candidate Coverage</div>
+                    <div className="text-2xl font-bold font-mono text-ink mt-1">{coveragePct}%</div>
+                    <div className="text-[11px] text-muted mt-1 flex items-center gap-1">
+                      <CheckCircle2 className={`w-3.5 h-3.5 ${totalCandidates > 0 ? 'text-brand-500' : 'text-muted'}`} />
+                      {totalCandidates > 0 ? `${totalCandidates} candidates with CALA logged` : '0 candidates logged'}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-xl bg-canvas border border-line">
+                    <div className="text-xs text-muted font-bold uppercase">HOD Sign-Off</div>
+                    <div className={`text-2xl font-bold font-mono mt-1 ${totalCandidates > 0 ? 'text-brand-500' : 'text-muted'}`}>
+                      {totalCandidates > 0 ? 'Approved' : 'Pending'}
+                    </div>
+                    <div className="text-[11px] text-muted mt-1">{totalCandidates > 0 ? 'Department coursework vetted' : 'No dossiers submitted yet'}</div>
+                  </div>
+                  <div className="p-4 rounded-xl bg-canvas border border-line">
+                    <div className="text-xs text-muted font-bold uppercase">Sample Dossiers</div>
+                    <div className="text-2xl font-bold font-mono text-ink mt-1">{samplePortfolios} Portfolios</div>
+                    <div className="text-[11px] text-muted mt-1">{totalCandidates > 0 ? 'Prepared for provincial moderator' : 'Awaiting candidate entry'}</div>
+                  </div>
                 </div>
-              </div>
-              <div className="p-4 rounded-xl bg-canvas border border-line">
-                <div className="text-xs text-muted font-bold uppercase">HOD Sign-Off</div>
-                <div className="text-2xl font-bold font-mono text-brand-500 mt-1">Approved</div>
-                <div className="text-[11px] text-muted mt-1">All 7 academic departments vetted</div>
-              </div>
-              <div className="p-4 rounded-xl bg-canvas border border-line">
-                <div className="text-xs text-muted font-bold uppercase">Sample Dossiers</div>
-                <div className="text-2xl font-bold font-mono text-ink mt-1">15 Portfolios</div>
-                <div className="text-[11px] text-muted mt-1">Prepared for provincial moderator</div>
-              </div>
-            </div>
+              );
+            })()}
           </div>
         )}
 
@@ -346,17 +353,25 @@ export default function ZimsecBoard() {
                 <FileSpreadsheet className="w-6 h-6" />
               </div>
               <div>
-                <div className="font-bold text-base text-ink">Ready to Export November 2026 Register</div>
-                <div className="text-xs text-muted mt-1">Includes Center ZW0421, candidate national IDs, registered subject codes, and candidate index numbers.</div>
+                <div className="font-bold text-base text-ink">
+                  {entries.length > 0 ? `Ready to Export ${entries[0]?.exam_series || 'Exam'} Register` : 'No Active Examination Batches'}
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  {entries.length > 0
+                    ? `Includes Center ${schoolInfo?.center_no || batchForm.center_no || '—'}, candidate national IDs, registered subject codes.`
+                    : 'Initialize a registration batch in Step 1 to generate and download electronic candidate files.'}
+                </div>
               </div>
 
-              <button
-                onClick={() => handleExportCsv(entries[0] || batchForm)}
-                className="px-6 py-2.5 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition shadow-xs inline-flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                Download ZIMSEC Format CSV
-              </button>
+              {entries.length > 0 && (
+                <button
+                  onClick={() => handleExportCsv(entries[0] || batchForm)}
+                  className="px-6 py-2.5 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition shadow-xs inline-flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Download ZIMSEC Format CSV
+                </button>
+              )}
             </div>
           </div>
         )}

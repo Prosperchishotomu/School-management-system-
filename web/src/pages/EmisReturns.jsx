@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 export default function EmisReturns() {
-  const { activeSchoolId, user } = useAuth();
+  const { activeSchoolId, user, activeSchool, schoolName } = useAuth();
   const toast = useToast();
 
   const [activeTab, setActiveTab] = useState('enrolment'); // 'enrolment' | 'staffing' | 'facilities' | 'approvals'
@@ -25,9 +25,18 @@ export default function EmisReturns() {
     { deps: [activeSchoolId] }
   );
 
+  const currentSchoolName = schoolInfo?.name || activeSchool?.name || schoolName || 'Educational Institution';
+  const currentCenterNo = schoolInfo?.center_no || activeSchool?.center_no || '—';
+
   const { data: enrolmentData } = useApi(
     `enrolment_analytics_${activeSchoolId}`,
-    () => api.get(`/schools/${activeSchoolId}/analytics/enrolment`).then(r => r.data?.data || {}).catch(() => ({})),
+    () => api.get(`/schools/${activeSchoolId}/analytics/enrolment`).then(r => r.data?.data || r.data || []).catch(() => []),
+    { deps: [activeSchoolId] }
+  );
+
+  const { data: staffData } = useApi(
+    `staff_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/staff`).then(r => r.data?.staff || r.data || []).catch(() => []),
     { deps: [activeSchoolId] }
   );
 
@@ -38,18 +47,19 @@ export default function EmisReturns() {
   );
 
   const approvals = Array.isArray(approvalsData) ? approvalsData : [];
+  const staff = Array.isArray(staffData) ? staffData : [];
 
   // Ministry SHA-256 Snapshot Hash
   const emisSnapshotHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-  const enrolmentBreakdown = [
-    { grade: 'Form 1', male: 74, female: 68, total: 142, classes: 4 },
-    { grade: 'Form 2', male: 70, female: 72, total: 142, classes: 4 },
-    { grade: 'Form 3', male: 66, female: 64, total: 130, classes: 4 },
-    { grade: 'Form 4', male: 62, female: 66, total: 128, classes: 4 },
-    { grade: 'Lower 6', male: 34, female: 38, total: 72, classes: 3 },
-    { grade: 'Upper 6', male: 30, female: 34, total: 64, classes: 3 },
-  ];
+  const rawEnrolment = Array.isArray(enrolmentData) ? enrolmentData : [];
+  const enrolmentBreakdown = rawEnrolment.map(r => ({
+    grade: r.form || 'Class Roll',
+    male: Number(r.male_count || 0),
+    female: Number(r.female_count || 0),
+    total: Number(r.total_count || 0),
+    classes: Number(r.classes_count || 1)
+  }));
 
   const totalMale = enrolmentBreakdown.reduce((acc, r) => acc + r.male, 0);
   const totalFemale = enrolmentBreakdown.reduce((acc, r) => acc + r.female, 0);
@@ -58,8 +68,8 @@ export default function EmisReturns() {
   const handleExportEd461 = () => {
     const csvContent = [
       'MINISTRY OF PRIMARY AND SECONDARY EDUCATION - STATISTICAL RETURN ED461',
-      `School Name: ${schoolInfo?.name || 'Harare Academy & College'}`,
-      `Center Number: ${schoolInfo?.center_no || 'ZW-0421'}`,
+      `School Name: ${currentSchoolName}`,
+      `Center Number: ${currentCenterNo}`,
       `Term: Term 1 2026`,
       `Snapshot Hash: ${emisSnapshotHash}`,
       '',
@@ -72,7 +82,7 @@ export default function EmisReturns() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `EMIS_ED461_Return_${schoolInfo?.center_no || 'ZW0421'}_Term1_2026.csv`;
+    a.download = `EMIS_ED461_Return_${currentCenterNo !== '—' ? currentCenterNo : 'Ministry'}_Term1_2026.csv`;
     a.click();
     toast.success('Ministry ED461 statistical return exported.');
   };
@@ -127,8 +137,10 @@ export default function EmisReturns() {
 
         <div className="text-left md:text-right text-xs space-y-1">
           <div className="text-brand-100/70">Ministry Center Code</div>
-          <div className="font-mono text-base font-bold text-white">{schoolInfo?.center_no || 'ZW-0421'}</div>
-          <div className="text-[11px] text-brand-100/60">District: Harare Central • Region: Harare</div>
+          <div className="font-mono text-base font-bold text-white">{currentCenterNo}</div>
+          <div className="text-[11px] text-brand-100/60">
+            {schoolInfo?.district ? `District: ${schoolInfo.district} • Region: ${schoolInfo.province || schoolInfo.region || ''}` : (schoolInfo?.address || 'Official Institutional Census Records')}
+          </div>
         </div>
       </div>
 
@@ -150,17 +162,17 @@ export default function EmisReturns() {
         />
         <StatCard
           label="Teaching Staff Ratio"
-          value="1 : 18"
+          value={staff.length > 0 && totalPupils > 0 ? `1 : ${Math.round(totalPupils / staff.length)}` : '—'}
           icon={Building}
           color="violet"
-          subtext="Exceeds national benchmark (1:30)"
+          subtext={staff.length > 0 ? `${staff.length} educators on roll` : 'No staff registered'}
         />
         <StatCard
           label="Census Audit State"
-          value="Final Sealed"
+          value={totalPupils > 0 ? "Live Certified" : "Draft"}
           icon={CheckCircle2}
           color="accent"
-          subtext="Ready for provincial inspection"
+          subtext={totalPupils > 0 ? "Ready for inspection" : "Awaiting student enrollment"}
         />
       </KpiStrip>
 
@@ -182,41 +194,49 @@ export default function EmisReturns() {
           title="Schedule A: Pupil Enrolment Breakdown by Grade & Gender"
           subtitle="Ministry of Primary and Secondary Education official ED461 statistical matrix."
         >
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-line bg-canvas text-muted font-bold uppercase text-[11px]">
-                  <th className="p-3">Grade / Form Level</th>
-                  <th className="p-3">Male Pupils</th>
-                  <th className="p-3">Female Pupils</th>
-                  <th className="p-3">Total Pupils</th>
-                  <th className="p-3">Class Streams</th>
-                  <th className="p-3">Avg Class Size</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {enrolmentBreakdown.map(row => (
-                  <tr key={row.grade} className="hover:bg-canvas/50">
-                    <td className="p-3 font-bold text-ink">{row.grade}</td>
-                    <td className="p-3 font-mono">{row.male}</td>
-                    <td className="p-3 font-mono">{row.female}</td>
-                    <td className="p-3 font-mono font-bold text-ink">{row.total}</td>
-                    <td className="p-3 font-mono">{row.classes} streams</td>
-                    <td className="p-3 font-mono text-muted">{Math.round(row.total / row.classes)} pupils/class</td>
+          {enrolmentBreakdown.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-line bg-canvas text-muted font-bold uppercase text-[11px]">
+                    <th className="p-3">Grade / Form Level</th>
+                    <th className="p-3">Male Pupils</th>
+                    <th className="p-3">Female Pupils</th>
+                    <th className="p-3">Total Pupils</th>
+                    <th className="p-3">Class Streams</th>
+                    <th className="p-3">Avg Class Size</th>
                   </tr>
-                ))}
-                {/* Total Row */}
-                <tr className="bg-canvas/80 font-bold border-t-2 border-line text-ink">
-                  <td className="p-3 uppercase">Total School Roll</td>
-                  <td className="p-3 font-mono">{totalMale}</td>
-                  <td className="p-3 font-mono">{totalFemale}</td>
-                  <td className="p-3 font-mono text-sm text-brand-700 font-extrabold">{totalPupils}</td>
-                  <td className="p-3 font-mono">22 streams</td>
-                  <td className="p-3 font-mono text-muted">31 avg</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {enrolmentBreakdown.map(row => (
+                    <tr key={row.grade} className="hover:bg-canvas/50">
+                      <td className="p-3 font-bold text-ink">{row.grade}</td>
+                      <td className="p-3 font-mono">{row.male}</td>
+                      <td className="p-3 font-mono">{row.female}</td>
+                      <td className="p-3 font-mono font-bold text-ink">{row.total}</td>
+                      <td className="p-3 font-mono">{row.classes} streams</td>
+                      <td className="p-3 font-mono text-muted">{Math.round(row.total / (row.classes || 1))} pupils/class</td>
+                    </tr>
+                  ))}
+                  {/* Total Row */}
+                  <tr className="bg-canvas/80 font-bold border-t-2 border-line text-ink">
+                    <td className="p-3 uppercase">Total School Roll</td>
+                    <td className="p-3 font-mono">{totalMale}</td>
+                    <td className="p-3 font-mono">{totalFemale}</td>
+                    <td className="p-3 font-mono text-sm text-brand-700 font-extrabold">{totalPupils}</td>
+                    <td className="p-3 font-mono">{enrolmentBreakdown.reduce((acc, r) => acc + r.classes, 0)} streams</td>
+                    <td className="p-3 font-mono text-muted">{enrolmentBreakdown.length > 0 ? Math.round(totalPupils / enrolmentBreakdown.length) : 0} avg</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState
+              title="No Enrolment Records"
+              description="No active students have been enrolled in classes yet. Add learners to generate the ED461 statutory schedule."
+              compact={true}
+            />
+          )}
         </Card>
       )}
 
@@ -229,18 +249,22 @@ export default function EmisReturns() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="p-4 rounded-xl bg-canvas border border-line">
               <div className="text-xs text-muted font-bold uppercase">Trained Graduate Teachers</div>
-              <div className="text-2xl font-bold font-mono text-ink mt-1">28</div>
+              <div className="text-2xl font-bold font-mono text-ink mt-1">
+                {staff.filter(s => (s.qualification || '').toLowerCase().includes('bed') || (s.qualification || '').toLowerCase().includes('dip') || (s.qualification || '').toLowerCase().includes('degree')).length}
+              </div>
               <div className="text-[11px] text-brand-500 mt-1">Bachelor of Education / Dip. Ed</div>
             </div>
             <div className="p-4 rounded-xl bg-canvas border border-line">
               <div className="text-xs text-muted font-bold uppercase">Postgraduate / Masters</div>
-              <div className="text-2xl font-bold font-mono text-brand-500 mt-1">8</div>
+              <div className="text-2xl font-bold font-mono text-brand-500 mt-1">
+                {staff.filter(s => (s.qualification || '').toLowerCase().includes('master') || (s.qualification || '').toLowerCase().includes('m.ed') || (s.qualification || '').toLowerCase().includes('msc')).length}
+              </div>
               <div className="text-[11px] text-muted mt-1">M.Ed & Specialist Disciplines</div>
             </div>
             <div className="p-4 rounded-xl bg-canvas border border-line">
-              <div className="text-xs text-muted font-bold uppercase">Unqualified / Relief Staff</div>
-              <div className="text-2xl font-bold font-mono text-ink mt-1">0</div>
-              <div className="text-[11px] text-brand-500 mt-1">100% Certified Compliance</div>
+              <div className="text-xs text-muted font-bold uppercase">Total Staff Establishment</div>
+              <div className="text-2xl font-bold font-mono text-ink mt-1">{staff.length}</div>
+              <div className="text-[11px] text-brand-500 mt-1">Registered School Staff</div>
             </div>
           </div>
         </Card>
@@ -252,27 +276,8 @@ export default function EmisReturns() {
           title="Schedule C: Physical Infrastructure & Sanitation Audit"
           subtitle="Classrooms, science laboratories, ablution facilities, and clean water sources."
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-canvas border border-line">
-              <div className="text-xs text-muted font-bold uppercase">Permanent Classrooms</div>
-              <div className="text-xl font-bold font-mono text-ink mt-1">24 Rooms</div>
-              <div className="text-[10px] text-brand-500 mt-1">Adequate ventilation & lighting</div>
-            </div>
-            <div className="p-4 rounded-xl bg-canvas border border-line">
-              <div className="text-xs text-muted font-bold uppercase">Science Laboratories</div>
-              <div className="text-xl font-bold font-mono text-ink mt-1">3 Labs</div>
-              <div className="text-[10px] text-muted mt-1">Physics, Chemistry, Biology</div>
-            </div>
-            <div className="p-4 rounded-xl bg-canvas border border-line">
-              <div className="text-xs text-muted font-bold uppercase">Flush Toilets (Pupil Ratio)</div>
-              <div className="text-xl font-bold font-mono text-ink mt-1">1 : 22</div>
-              <div className="text-[10px] text-brand-500 mt-1">Meets MoPSE health norm</div>
-            </div>
-            <div className="p-4 rounded-xl bg-canvas border border-line">
-              <div className="text-xs text-muted font-bold uppercase">Potable Water Supply</div>
-              <div className="text-xl font-bold font-mono text-brand-500 mt-1">Borehole + Solar</div>
-              <div className="text-[10px] text-muted mt-1">10,000L storage capacity</div>
-            </div>
+          <div className="p-6 text-center text-xs text-muted">
+            Infrastructure and sanitation capacity metrics are tracked via the Asset & Facilities register.
           </div>
         </Card>
       )}
@@ -303,10 +308,14 @@ export default function EmisReturns() {
                 render: v => <StatusPill status={v || 'pending'} />
               }
             ]}
-            data={approvals.length > 0 ? approvals : [
-              { id: 1, request_type: 'Term 1 Exam Mark Modification', requester_name: 'Dr. T. Moyo (Sciences)', reason: 'Correction of practical score transcription error', status: 'pending' },
-              { id: 2, request_type: 'Special Needs Bursary Concession', requester_name: 'Bursar Desk', reason: 'Government BEAM funding reconciliation', status: 'approved' },
-            ]}
+            data={approvals}
+            emptyState={
+              <EmptyState
+                title="No Pending Approvals"
+                description="Statutory change requests and approvals will appear here when submitted."
+                compact={true}
+              />
+            }
           />
         </Card>
       )}

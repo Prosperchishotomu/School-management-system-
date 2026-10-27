@@ -5,7 +5,7 @@ const { authenticateToken } = require('../middleware/auth');
 
 const STAFF_ROLES = new Set([
   'super_admin', 'school_admin', 'head', 'head_teacher', 'deputy_head', 'hod',
-  'teacher', 'bursar', 'librarian', 'nurse', 'counsellor', 'guidance_counsellor',
+  'teacher', 'bursar', 'accountant', 'librarian', 'nurse', 'counsellor', 'guidance_counsellor',
   'boarding_master', 'boarding_mistress'
 ]);
 const ADMIN_ROLES = new Set(['super_admin', 'school_admin', 'head', 'head_teacher']);
@@ -37,9 +37,10 @@ async function getSchoolId(req) {
 
 function canTargetRole(senderRole, targetRole) {
   if (!targetRole) return false;
-  if (targetRole === 'all') return ADMIN_ROLES.has(senderRole);
-  if (ADMIN_ROLES.has(senderRole)) return ['teacher', 'parent', 'student', 'school_admin'].includes(targetRole);
-  if (senderRole === 'teacher' || senderRole === 'hod') return ['teacher', 'parent'].includes(targetRole);
+  if (targetRole === 'all') return ADMIN_ROLES.has(senderRole) || senderRole === 'bursar' || senderRole === 'accountant';
+  if (ADMIN_ROLES.has(senderRole)) return ['teacher', 'parent', 'student', 'school_admin', 'staff', 'all'].includes(targetRole);
+  if (senderRole === 'bursar' || senderRole === 'accountant') return ['parent', 'student', 'teacher', 'staff', 'all'].includes(targetRole);
+  if (senderRole === 'teacher' || senderRole === 'hod') return ['teacher', 'parent', 'student'].includes(targetRole);
   return false;
 }
 
@@ -93,18 +94,25 @@ router.get('/', authenticateToken, async (req, res) => {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const perPage = Math.min(100, Math.max(1, Number.parseInt(req.query.per_page || req.query.limit, 10) || 50));
     const offset = (page - 1) * perPage;
+    const isStaff = STAFF_ROLES.has(req.user.role);
     const notifications = await query(
       `SELECT n.*, COALESCE(n.sender_name, u.username, 'System Administrator') AS resolved_sender_name,
               u.role AS sender_role
        FROM notifications n
        LEFT JOIN users u ON n.sender_id = u.id
        WHERE n.school_id = ?
-         AND (n.user_id = ? OR n.target_role = ?
+         AND (n.user_id = ? OR n.target_role = ? OR (? = 1 AND n.target_role = 'staff')
            OR (n.user_id IS NULL AND (n.target_role IS NULL OR n.target_role = 'all')))
        ORDER BY n.created_at DESC LIMIT ${perPage} OFFSET ${offset}`,
-      [schoolId, req.user.id, req.user.role]
+      [schoolId, req.user.id, req.user.role, isStaff ? 1 : 0]
     );
-    const totalRow = await queryOne(`SELECT COUNT(*) AS total FROM notifications n WHERE n.school_id = ? AND (n.user_id = ? OR n.target_role = ? OR (n.user_id IS NULL AND (n.target_role IS NULL OR n.target_role = 'all')))` , [schoolId, req.user.id, req.user.role]);
+    const totalRow = await queryOne(
+      `SELECT COUNT(*) AS total FROM notifications n
+       WHERE n.school_id = ?
+         AND (n.user_id = ? OR n.target_role = ? OR (? = 1 AND n.target_role = 'staff')
+           OR (n.user_id IS NULL AND (n.target_role IS NULL OR n.target_role = 'all')))` ,
+      [schoolId, req.user.id, req.user.role, isStaff ? 1 : 0]
+    );
     return res.json({ data: notifications, meta: { page, per_page: perPage, total: Number(totalRow?.total || 0), request_id: req.requestId } });
   } catch (err) {
     console.error('Get notifications error:', err);

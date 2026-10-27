@@ -11,6 +11,7 @@ import {
   FileText, CheckCircle2, Clock, AlertTriangle, Plus, Send,
   Eye, BookOpen, UserCheck, MessageSquare, Printer, Check, X
 } from 'lucide-react';
+import { STANDARD_SUBJECTS } from '../data/standardSubjects';
 
 export default function SchemesOfWork() {
   const { user, activeSchoolId } = useAuth();
@@ -237,7 +238,7 @@ export default function SchemesOfWork() {
                 label: 'Learning Objectives',
                 render: v => (
                   <p className="text-xs text-muted max-w-xs truncate" title={v}>
-                    {v || 'Pupils should be able to expand binomial expressions and solve linear equations.'}
+                    {v || 'No learning objectives specified.'}
                   </p>
                 )
               },
@@ -275,12 +276,14 @@ export default function SchemesOfWork() {
                 )
               }
             ]}
-            data={schemes.length > 0 ? schemes : [
-              { id: 1, week_number: 1, subject: 'Mathematics', class_level: 'Form 1', topic: 'Number Bases & Decimal Notation', objectives: 'Convert between base 10 and binary representations.', status: 'approved' },
-              { id: 2, week_number: 2, subject: 'Mathematics', class_level: 'Form 1', topic: 'Directed Numbers & Absolute Values', objectives: 'Add, subtract, and multiply directed integers on number lines.', status: 'approved' },
-              { id: 3, week_number: 3, subject: 'Mathematics', class_level: 'Form 1', topic: 'Algebraic Expressions', objectives: 'Simplification of like and unlike terms.', status: 'submitted' },
-              { id: 4, week_number: 4, subject: 'Mathematics', class_level: 'Form 1', topic: 'Linear Equations in One Variable', objectives: 'Solve single variable equations with fractional coefficients.', status: 'draft' },
-            ]}
+            data={schemes}
+            emptyState={
+              <EmptyState
+                title="No Schemes of Work"
+                description="Click '+ New Scheme of Work' to establish curriculum topics and pedagogical plans."
+                compact={true}
+              />
+            }
           />
         </Card>
       )}
@@ -299,22 +302,26 @@ export default function SchemesOfWork() {
                 sortable: true,
                 render: (v, row) => (
                   <div>
-                    <div className="font-bold text-ink">{v || 'Factorisation of Quadratic Trinomials'}</div>
-                    <div className="text-[11px] text-muted">{row.subject || 'Mathematics'} • {row.duration || '45 mins'}</div>
+                    <div className="font-bold text-ink">{v || 'Untitled Lesson'}</div>
+                    <div className="text-[11px] text-muted">{row.subject || 'Subject'} • {row.duration || '45 mins'}</div>
                   </div>
                 )
               },
-              { key: 'date', label: 'Date', render: v => v ? new Date(v).toLocaleDateString() : '24 Mar 2026' },
+              { key: 'date', label: 'Date', render: v => v ? new Date(v).toLocaleDateString() : '—' },
               {
                 key: 'status',
                 label: 'Status',
                 render: v => <StatusPill status={v || 'approved'} />
               }
             ]}
-            data={lessonPlans.length > 0 ? lessonPlans : [
-              { id: 1, title: 'Introduction to Directed Numbers', subject: 'Mathematics', duration: '45 mins', date: '2026-01-20', status: 'approved' },
-              { id: 2, title: 'Simplifying Algebraic Brackets', subject: 'Mathematics', duration: '45 mins', date: '2026-01-27', status: 'approved' },
-            ]}
+            data={lessonPlans}
+            emptyState={
+              <EmptyState
+                title="No Lesson Plans"
+                description="Daily lesson plans recorded by subject teachers will appear here."
+                compact={true}
+              />
+            }
           />
         </Card>
       )}
@@ -341,14 +348,14 @@ export default function SchemesOfWork() {
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-muted mb-1.5">Specific Learning Objectives</h4>
               <p className="text-xs text-ink leading-relaxed p-3 rounded-xl bg-canvas border border-line">
-                {selectedScheme.objectives || 'Learners will demonstrate mastery of linear algebraic solutions and coordinate graphs.'}
+                {selectedScheme.objectives || 'None specified.'}
               </p>
             </div>
 
             <div>
               <h4 className="text-xs font-bold uppercase tracking-wider text-muted mb-1.5">Resources & Teaching Aids</h4>
               <p className="text-xs text-ink leading-relaxed p-3 rounded-xl bg-canvas border border-line">
-                {selectedScheme.resources || 'Chalkboard, geometric sets, ministry approved textbooks, past examination papers.'}
+                {selectedScheme.resources || 'None specified.'}
               </p>
             </div>
 
@@ -402,29 +409,21 @@ export default function SchemesOfWork() {
         <form onSubmit={handleCreateScheme} className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">Subject</label>
-              {availableSubjects.length > 0 ? (
-                <select
-                  value={form.subject}
-                  onChange={e => {
-                    const sel = availableSubjects.find(s => s.name === e.target.value || s.id === e.target.value);
-                    setForm({ ...form, subject: e.target.value, subject_id: sel?.id || e.target.value });
-                  }}
-                  className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
-                >
-                  {availableSubjects.map(s => (
-                    <option key={s.id || s.name} value={s.name || s.id}>{s.name || s.code}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  required
-                  value={form.subject}
-                  onChange={e => setForm({ ...form, subject: e.target.value, subject_id: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-                />
-              )}
+              <label className="block text-xs font-bold text-ink mb-1">Subject *</label>
+              <select
+                required
+                value={form.subject}
+                onChange={e => {
+                  const sel = (availableSubjects.length > 0 ? availableSubjects : STANDARD_SUBJECTS).find(s => s.name === e.target.value || s.id === e.target.value);
+                  setForm({ ...form, subject: e.target.value, subject_id: sel?.id || e.target.value });
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                <option value="">Select Curriculum Subject...</option>
+                {(availableSubjects.length > 0 ? availableSubjects : STANDARD_SUBJECTS).map(s => (
+                  <option key={s.id || s.name} value={s.name || s.id}>{s.name} {s.code ? `(${s.code})` : ''}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Class Level</label>

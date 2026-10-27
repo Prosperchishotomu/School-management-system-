@@ -53,6 +53,8 @@ import BoardingExeat from './pages/BoardingExeat';
 import EmisReturns from './pages/EmisReturns';
 import UserProfile from './pages/UserProfile';
 
+import { isPathEnabled } from './utils/modules';
+
 // Clean role helper to determine home landing path
 export function getHomeRoute(user) {
   if (!user) return '/login';
@@ -70,7 +72,8 @@ export function getHomeRoute(user) {
 
 // Protected Route wrapper component — removes restricted pages silently instead of showing 403
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, activeSchool } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -85,6 +88,14 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // School module & boarding restriction enforcement:
+  // If active school has this module disabled (or if school is day-only and page is boarding),
+  // silently bounce back to dashboard/home
+  if (activeSchool && !isPathEnabled(activeSchool, location.pathname)) {
+    const destination = getHomeRoute(user);
+    return <Navigate to={destination} replace />;
   }
 
   const userRole = (user.role || '').toLowerCase().trim();
@@ -503,15 +514,21 @@ function AppRoutes() {
         }
       />
 
-      {/* Notifications and unified chats */}
+      {/* Notifications and direct messages */}
       <Route
         path="/messages"
-        element={<Navigate to="/notifications?tab=chats" replace />}
+        element={
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'student', 'bursar', 'accountant', 'head', 'deputy_head', 'boarding_master', 'nurse', 'super_admin']}>
+            <LayoutShell>
+              <Messages />
+            </LayoutShell>
+          </ProtectedRoute>
+        }
       />
       <Route
         path="/notifications"
         element={
-          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'super_admin']}>
+          <ProtectedRoute allowedRoles={['school_admin', 'teacher', 'parent', 'student', 'bursar', 'accountant', 'head', 'deputy_head', 'boarding_master', 'nurse', 'super_admin']}>
             <LayoutShell>
               <Notifications />
             </LayoutShell>

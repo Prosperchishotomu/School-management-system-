@@ -26,7 +26,7 @@ export default function UserManagement() {
   const toast = useToast();
 
   const isSuperAdmin = user?.role === 'super_admin';
-  const [selectedSchoolId, setSelectedSchoolId] = useState(activeSchoolId || user?.school_id || 'HARAREPR');
+  const [selectedSchoolId, setSelectedSchoolId] = useState(activeSchoolId || user?.school_id || '');
 
   useEffect(() => {
     if (!isSuperAdmin && user?.school_id) {
@@ -456,8 +456,12 @@ export default function UserManagement() {
                 <option value="principal">Principal / Headmaster</option>
                 <option value="deputy_head">Deputy Head</option>
                 <option value="teacher">Teacher</option>
-                <option value="bursar">Bursar / Cashier</option>
-                <option value="parent">Parent / Guardian</option>
+                <option value="bursar">Cashier</option>
+                <option value="accountant">Accountant</option>
+                <option value="boarding_master">Boarding Master / Matron</option>
+                <option value="nurse">School Nurse</option>
+                <option value="librarian">Librarian</option>
+                <option value="parent">Guardian</option>
                 <option value="student">Student</option>
                 {isSuperAdmin && (
                   <option value="super_admin">Super Administrator (Platform)</option>
@@ -602,7 +606,12 @@ export default function UserManagement() {
                 <option value="deputy_head">Deputy Head</option>
                 <option value="teacher">Teacher</option>
                 <option value="bursar">Bursar / Cashier</option>
+                <option value="accountant">Accountant</option>
+                <option value="boarding_master">Boarding Master / Matron</option>
+                <option value="nurse">School Nurse</option>
+                <option value="librarian">Librarian</option>
                 <option value="parent">Parent / Guardian</option>
+                <option value="student">Student</option>
                 {isSuperAdmin && (
                   <option value="super_admin">Super Administrator (Platform)</option>
                 )}

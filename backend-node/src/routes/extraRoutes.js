@@ -37,7 +37,7 @@ async function ensureSchoolsSchema() {
 ensureSchoolsSchema();
 
 // Ensure staff_subjects table exists (teacher ↔ subject many-to-many)
-async function ensureStaffSubjectsTable() {
+async function ensureStaffSubjectsTable(retries = 3) {
   try {
     await query(`
       CREATE TABLE IF NOT EXISTS staff_subjects (
@@ -50,9 +50,37 @@ async function ensureStaffSubjectsTable() {
         FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE
       )
     `);
-  } catch(e) { console.error('staff_subjects migration error:', e.message); }
+  } catch(e) {
+    if (retries > 0 && e.code === 'ETIMEDOUT') {
+      setTimeout(() => ensureStaffSubjectsTable(retries - 1), 3000);
+    } else {
+      console.warn('staff_subjects table initialized or pending db connect.');
+    }
+  }
 }
-ensureStaffSubjectsTable();
+setTimeout(() => ensureStaffSubjectsTable(), 1500);
+
+// GET /schools/:schoolId/alerts (Unified alerts endpoint for Bursar & Staff)
+router.get('/schools/:schoolId/alerts', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const isStaff = ['bursar', 'accountant', 'school_admin', 'super_admin', 'teacher', 'head', 'deputy_head'].includes(req.user.role);
+    const notifications = await query(
+      `SELECT n.*, COALESCE(n.sender_name, u.username, 'System Administrator') AS resolved_sender_name,
+              u.role AS sender_role
+       FROM notifications n
+       LEFT JOIN users u ON n.sender_id = u.id
+       WHERE n.school_id = ?
+         AND (n.user_id = ? OR n.target_role = ? OR (? = 1 AND n.target_role = 'staff')
+           OR (n.user_id IS NULL AND (n.target_role IS NULL OR n.target_role = 'all')))
+       ORDER BY n.created_at DESC LIMIT 50`,
+      [schoolId, req.user.id, req.user.role, isStaff ? 1 : 0]
+    );
+    return res.json({ data: notifications });
+  } catch (err) {
+    return res.json({ data: [] });
+  }
+});
 
 const getTermFromDate = (dateVal = new Date()) => {
   const d = new Date(dateVal);
@@ -168,36 +196,49 @@ router.get('/schools/:schoolId/guardians', authenticateToken, async (req, res) =
 // POST /schools/:schoolId/teaching-assignments
 // DELETE /schools/:schoolId/teaching-assignments/:id
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/schools/:schoolId/teaching-assignments', authenticateToken, async (req, res) => {
+router.get(['/schools/:schoolId/teaching-assignments', '/schools/:schoolId/staff/:staffId/teaching-assignments'], authenticateToken, async (req, res) => {
   try {
-    const { schoolId } = req.params;
-    const { teacher_id } = req.query;
+    const { schoolId, staffId } = req.params;
+    const teacher_id = req.query.teacher_id || staffId;
     let sql = `
-      SELECT ta.*, u.username as teacher_name, c.name as class_name, sub.name as subject_name
+      SELECT ta.*, 
+             COALESCE(u.username, CONCAT(e.first_name, ' ', e.last_name), s.name) as teacher_name, 
+             c.name as class_name, 
+             sub.name as subject_name,
+             sub.code as subject_code
       FROM teaching_assignments ta
       LEFT JOIN users u ON ta.teacher_id = u.id
+      LEFT JOIN employees e ON (ta.teacher_id = e.id OR ta.teacher_id = e.user_id)
+      LEFT JOIN staff s ON (ta.teacher_id = s.id OR ta.teacher_id = s.user_id)
       JOIN classes c ON ta.class_id = c.id
       JOIN subjects sub ON ta.subject_id = sub.id
       WHERE ta.school_id = ?
     `;
     const params = [schoolId];
     if (teacher_id) {
-      sql += ' AND ta.teacher_id = ?';
-      params.push(teacher_id);
+      sql += ` AND (
+        ta.teacher_id = ? 
+        OR ta.teacher_id IN (SELECT user_id FROM staff WHERE id = ? AND user_id IS NOT NULL)
+        OR ta.teacher_id IN (SELECT id FROM staff WHERE user_id = ?)
+        OR ta.teacher_id IN (SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL)
+        OR ta.teacher_id IN (SELECT id FROM employees WHERE user_id = ?)
+      )`;
+      params.push(teacher_id, teacher_id, teacher_id, teacher_id, teacher_id);
     }
     sql += ' ORDER BY c.name ASC, sub.name ASC';
     const assignments = await query(sql, params);
     return res.json({ data: assignments });
   } catch (err) {
+    console.error('Teaching assignments error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch teaching assignments.' } });
   }
 });
 
-router.post('/schools/:schoolId/teaching-assignments', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
+router.post(['/schools/:schoolId/teaching-assignments', '/schools/:schoolId/staff/:staffId/teaching-assignments'], authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
-    const { schoolId } = req.params;
-    const { staff_id, teacher_id, class_id, subject_id } = req.body;
-    const tId = teacher_id || staff_id;
+    const { schoolId, staffId } = req.params;
+    const { teacher_id, class_id, subject_id } = req.body;
+    const tId = teacher_id || staffId || req.body.staff_id;
     if (!tId || !class_id || !subject_id) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Teacher, class, and subject are required.' } });
     }
@@ -208,9 +249,15 @@ router.post('/schools/:schoolId/teaching-assignments', authenticateToken, requir
       [id, schoolId, tId, class_id, subject_id]
     );
     const created = await queryOne(
-      `SELECT ta.*, u.username as teacher_name, c.name as class_name, sub.name as subject_name
+      `SELECT ta.*, 
+              COALESCE(u.username, CONCAT(e.first_name, ' ', e.last_name), s.name) as teacher_name, 
+              c.name as class_name, 
+              sub.name as subject_name,
+              sub.code as subject_code
        FROM teaching_assignments ta
        LEFT JOIN users u ON ta.teacher_id = u.id
+       LEFT JOIN employees e ON (ta.teacher_id = e.id OR ta.teacher_id = e.user_id)
+       LEFT JOIN staff s ON (ta.teacher_id = s.id OR ta.teacher_id = s.user_id)
        JOIN classes c ON ta.class_id = c.id
        JOIN subjects sub ON ta.subject_id = sub.id
        WHERE ta.id = ?`,
@@ -218,6 +265,7 @@ router.post('/schools/:schoolId/teaching-assignments', authenticateToken, requir
     );
     return res.status(201).json({ data: created });
   } catch (err) {
+    console.error('Create teaching assignment error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to create teaching assignment.' } });
   }
 });
@@ -696,7 +744,7 @@ router.get('/analytics/predictive', authenticateToken, async (req, res) => {
         `SELECT st.id, st.first_name, st.last_name, st.admission_number, c.name as class_name,
                 COUNT(CASE WHEN a.status = 'absent' THEN 1 END) as absences,
                 COUNT(a.id) as total_records,
-                ROUND(COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 1) as attendance_pct
+                ROUND(COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 1) as attendance_pct
          FROM students st
          LEFT JOIN classes c ON st.class_id = c.id
          LEFT JOIN attendance a ON st.id = a.student_id
@@ -829,7 +877,7 @@ router.get('/schools/:schoolId/attendance/weekly-reports', authenticateToken, as
     const classes = await query(
       `SELECT c.id, c.name,
               COUNT(DISTINCT st.id) as student_count,
-              COUNT(CASE WHEN a.status = 'present' THEN 1 END) as present,
+              COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) as present,
               COUNT(CASE WHEN a.status = 'absent' THEN 1 END) as absent,
               COUNT(CASE WHEN a.status = 'late' THEN 1 END) as late,
               COUNT(CASE WHEN a.status = 'excused' THEN 1 END) as excused,
@@ -1107,9 +1155,9 @@ router.post('/schools/:schoolId/leave-requests', authenticateToken, async (req, 
     ];
 
     await query(
-      `INSERT INTO leave_requests (id, school_id, staff_id, student_id, request_type, start_date, end_date, reason, attachment_url, audio_url, chat_thread, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [id, schoolId, finalStaffId, finalStudentId, finalType, start_date, end_date, reason || null, attachment_url || null, audio_url || null, JSON.stringify(initialThread)]
+      `INSERT INTO leave_requests (id, school_id, user_id, staff_id, student_id, request_type, start_date, end_date, reason, attachment_url, audio_url, chat_thread, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+      [id, schoolId, userId, finalStaffId, finalStudentId, finalType, start_date, end_date, reason || null, attachment_url || null, audio_url || null, JSON.stringify(initialThread)]
     );
 
     const created = await queryOne(
@@ -1441,7 +1489,8 @@ router.get('/schools/:schoolId/asset-categories', authenticateToken, async (req,
 
 // GET /hostels and GET /hostels/allocations (Global alias)
 router.get(['/hostels', '/schools/:schoolId/hostels'], authenticateToken, async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.json({ data: [] });
   try {
     const hostels = await query('SELECT * FROM hostels WHERE school_id = ? ORDER BY name ASC', [schoolId]);
     return res.json({ data: hostels });
@@ -1452,7 +1501,8 @@ router.get(['/hostels', '/schools/:schoolId/hostels'], authenticateToken, async 
 
 // POST /hostels (Create Hostel Block)
 router.post(['/hostels', '/schools/:schoolId/hostels'], authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.status(400).json({ error: { code: 'SCHOOL_REQUIRED', message: 'School ID required.' } });
   try {
     const { name, type, capacity, warden_name, warden_phone, warden_email, max_occupants_per_room } = req.body;
     if (!name) {
@@ -1479,7 +1529,8 @@ router.post(['/hostels', '/schools/:schoolId/hostels'], authenticateToken, requi
 
 // GET /hostels/allocations
 router.get(['/hostels/allocations', '/schools/:schoolId/hostels/allocations'], authenticateToken, async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.json({ data: [] });
   try {
     const allocations = await query(
       `SELECT ha.*, h.name as hostel_name, h.warden_name, h.warden_phone, h.warden_email,
@@ -1501,7 +1552,8 @@ router.get(['/hostels/allocations', '/schools/:schoolId/hostels/allocations'], a
 
 // POST /hostels/allocate (Allocate Room/Bed with Double-Booking & Max Capacity Guards)
 router.post(['/hostels/allocate', '/schools/:schoolId/hostels/allocate'], authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.status(400).json({ error: { code: 'SCHOOL_REQUIRED', message: 'School ID required.' } });
   try {
     const { hostel_id, occupant_id, occupant_type, room_number, bed_number, term } = req.body;
     if (!hostel_id || !occupant_id || !room_number || !bed_number) {
@@ -1596,7 +1648,8 @@ router.post(['/hostels/allocations/:id/check-out', '/schools/:schoolId/hostels/a
 // RESIDENCE APPLICATIONS (Student / Parent Portal Application)
 // GET /hostels/applications
 router.get(['/hostels/applications', '/schools/:schoolId/hostels/applications'], authenticateToken, async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.json({ data: [] });
   try {
     const apps = await query(
       `SELECT hap.*, st.first_name, st.last_name, st.admission_number, st.gender, c.name as class_name, c.grade_level, h.name as preferred_hostel_name
@@ -1616,7 +1669,8 @@ router.get(['/hostels/applications', '/schools/:schoolId/hostels/applications'],
 
 // POST /hostels/applications (Parent Portal / Student Residence Application)
 router.post(['/hostels/applications', '/schools/:schoolId/hostels/applications'], authenticateToken, async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.status(400).json({ error: { code: 'SCHOOL_REQUIRED', message: 'School ID required.' } });
   try {
     const { student_id, hostel_id, notes } = req.body;
     if (!student_id) {
@@ -1640,7 +1694,8 @@ router.post(['/hostels/applications', '/schools/:schoolId/hostels/applications']
 
 // POST /hostels/smart-allocate (Auto allocation based on occupancy & student level/gender)
 router.post(['/hostels/smart-allocate', '/schools/:schoolId/hostels/smart-allocate'], authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
-  const schoolId = req.params.schoolId || req.user.school_id || 'HARAREPR';
+  const schoolId = req.params.schoolId || req.user.school_id;
+  if (!schoolId) return res.status(400).json({ error: { code: 'SCHOOL_REQUIRED', message: 'School ID required.' } });
   try {
     const { student_id } = req.body;
     const student = await queryOne(
@@ -2103,20 +2158,73 @@ async function provisionSchoolDefaults(schoolId, schoolType, headTitle, adminUse
       }
     }
 
-    // 3. Provision default classes matching school type if none exist
+    // 3. Provision classes (either custom chosen by super admin, or defaults matching school type)
     const existingClasses = await query('SELECT id FROM classes WHERE school_id = ?', [schoolId]);
     if (!existingClasses || existingClasses.length === 0) {
       const isPrimary = String(schoolType || '').toLowerCase() === 'primary';
-      const defaultClassNames = isPrimary
-        ? ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7']
-        : ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6'];
+      let classNamesToSeed = [];
+      if (Array.isArray(customClasses) && customClasses.length > 0) {
+        classNamesToSeed = customClasses.map(c => typeof c === 'string' ? c : (c.name || '')).filter(Boolean);
+      }
+      if (classNamesToSeed.length === 0) {
+        classNamesToSeed = isPrimary
+          ? ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7']
+          : ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6'];
+      }
 
-      for (const cName of defaultClassNames) {
+      for (const cName of classNamesToSeed) {
         const cId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
         await query(
           `INSERT INTO classes (id, school_id, name, grade_level, level, status)
            VALUES (?, ?, ?, ?, ?, 'active')`,
           [cId, schoolId, cName, cName, isPrimary ? 'Primary' : 'Secondary']
+        );
+      }
+    }
+
+    // 3b. Provision subjects (either custom chosen by super admin, or standard defaults)
+    const existingSubjects = await query('SELECT id FROM subjects WHERE school_id = ?', [schoolId]);
+    if (!existingSubjects || existingSubjects.length === 0) {
+      let subjectsToSeed = [];
+      if (Array.isArray(customSubjects) && customSubjects.length > 0) {
+        subjectsToSeed = customSubjects;
+      } else {
+        const isPrimary = String(schoolType || '').toLowerCase() === 'primary';
+        subjectsToSeed = isPrimary
+          ? [
+              { name: 'English Language', code: 'ENG-PRI', category: 'Languages & Literature', level: 'primary' },
+              { name: 'Mathematics', code: 'MATH-PRI', category: 'Mathematics', level: 'primary' },
+              { name: 'Indigenous Languages (Shona/Ndebele)', code: 'IND-PRI', category: 'African Languages', level: 'primary' },
+              { name: 'Agriculture, Science & Technology', code: 'AST-PRI', category: 'Natural Sciences', level: 'primary' },
+              { name: 'Social Sciences', code: 'SOC-PRI', category: 'Humanities & Social Sciences', level: 'primary' },
+              { name: 'Visual & Performing Arts', code: 'VPA-PRI', category: 'Creative & Performing Arts', level: 'primary' },
+              { name: 'Physical Education', code: 'PE-PRI', category: 'Sports & Physical Education', level: 'primary' }
+            ]
+          : [
+              { name: 'English Language', code: 'ENG', category: 'Languages & Literature', level: 'all' },
+              { name: 'Mathematics', code: 'MATH', category: 'Mathematics', level: 'all' },
+              { name: 'Combined Science', code: 'CSCI', category: 'Natural Sciences', level: 'secondary' },
+              { name: 'Heritage Studies', code: 'HER', category: 'Humanities & Social Sciences', level: 'all' },
+              { name: 'Geography', code: 'GEO', category: 'Humanities & Social Sciences', level: 'all' },
+              { name: 'History', code: 'HIST', category: 'Humanities & Social Sciences', level: 'all' },
+              { name: 'Commerce', code: 'COMM', category: 'Commercials', level: 'secondary' },
+              { name: 'Principles of Accounting', code: 'ACC', category: 'Commercials', level: 'all' },
+              { name: 'Computer Science / ICT', code: 'ICT', category: 'Technical & ICT', level: 'all' },
+              { name: 'Agriculture', code: 'AGR', category: 'Agriculture & Environmental', level: 'all' }
+            ];
+      }
+
+      for (const subj of subjectsToSeed) {
+        const sName = typeof subj === 'string' ? subj : subj.name;
+        if (!sName) continue;
+        const sId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+        const sCode = typeof subj === 'object' && subj.code ? String(subj.code).toUpperCase() : sName.substring(0, 4).toUpperCase();
+        const sCat = typeof subj === 'object' && (subj.category || subj.department) ? (subj.category || subj.department) : 'General';
+        const sLevel = typeof subj === 'object' && subj.level ? subj.level : 'all';
+        await query(
+          `INSERT INTO subjects (id, school_id, name, code, category, level, is_active)
+           VALUES (?, ?, ?, ?, ?, ?, 1)`,
+          [sId, schoolId, sName, sCode, sCat, sLevel]
         );
       }
     }
@@ -2179,10 +2287,18 @@ async function provisionSchoolDefaults(schoolId, schoolType, headTitle, adminUse
 // SCHOOLS — Create/Edit (CommandCenter)
 // POST /schools
 // PUT /schools/:id
+// PATCH /schools/:id
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/schools', authenticateToken, requireRoles('super_admin'), async (req, res) => {
   try {
-    const { id, code, name, school_type, head_title, is_boarding, boarding_type, tuition_fee_benchmark, admin_username, admin_email, admin_password } = req.body;
+    const { 
+      id, code, name, school_type, head_title, 
+      is_boarding, boarding_type, tuition_fee_benchmark, 
+      enabled_modules, classes, subjects,
+      currency, bank_name, account_number,
+      admin_username, admin_email, admin_password 
+    } = req.body;
+
     if (!name || !name.trim()) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'School name is required.' } });
     }
@@ -2193,22 +2309,55 @@ router.post('/schools', authenticateToken, requireRoles('super_admin'), async (r
     const schoolIdUpper = rawId.toUpperCase();
     const exists = await queryOne('SELECT id FROM schools WHERE id = ?', [schoolIdUpper]);
     if (exists) return res.status(409).json({ error: { code: 'DUPLICATE', message: 'A school with this ID or Code already exists.' } });
-    const isBoardingVal = is_boarding !== undefined ? (is_boarding ? 1 : 0) : (school_type?.includes('boarding') ? 1 : 1);
+
+    // Precise boarding determination: Day schools must NEVER have boarding
+    const isDayOnly = boarding_type === 'day' || is_boarding === false || is_boarding === 0 || is_boarding === '0';
+    const isBoardingVal = isDayOnly ? 0 : 1;
+    const resolvedBoardingType = isDayOnly ? 'day' : (boarding_type || 'boarding');
     const resolvedType = school_type || 'secondary';
+
+    // Module resolution
+    let resolvedModules = enabled_modules;
+    if (typeof resolvedModules === 'string') {
+      try { resolvedModules = JSON.parse(resolvedModules); } catch (_) { resolvedModules = []; }
+    }
+    if (!Array.isArray(resolvedModules) || resolvedModules.length === 0) {
+      resolvedModules = [
+        'exams', 'fees', 'expenses', 'enquiries', 'timetable', 
+        'schemes', 'academics_setup', 'health', 'discipline', 
+        'leave', 'library', 'assets', 'tasks', 'emis', 'reporting', 'communication'
+      ];
+      if (isBoardingVal === 1) resolvedModules.push('boarding');
+    } else {
+      if (isBoardingVal === 0) {
+        resolvedModules = resolvedModules.filter(m => m !== 'boarding');
+      }
+    }
+    const modulesJson = JSON.stringify(resolvedModules);
+
     try {
       await query(
-        `INSERT INTO schools (id, code, name, school_type, head_title, status, is_boarding, boarding_type, tuition_fee_benchmark) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
-        [schoolIdUpper, code || schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, boarding_type || 'boarding', tuition_fee_benchmark || null]
+        `INSERT INTO schools (id, code, name, school_type, head_title, status, is_boarding, boarding_type, tuition_fee_benchmark, enabled_modules, currency, bank_name, account_number) 
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
+        [schoolIdUpper, code || schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, resolvedBoardingType, tuition_fee_benchmark || null, modulesJson, currency || 'USD', bank_name || null, account_number || null]
       );
     } catch (_) {
-      // Fallback if code or tuition_fee_benchmark columns don't exist yet
-      await query(
-        `INSERT INTO schools (id, name, school_type, head_title, status, is_boarding, boarding_type) VALUES (?, ?, ?, ?, 'active', ?, ?)`,
-        [schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, boarding_type || 'boarding']
-      );
+      try {
+        await query(
+          `INSERT INTO schools (id, code, name, school_type, head_title, status, is_boarding, boarding_type, tuition_fee_benchmark, enabled_modules) 
+           VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`,
+          [schoolIdUpper, code || schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, resolvedBoardingType, tuition_fee_benchmark || null, modulesJson]
+        );
+      } catch (__) {
+        await query(
+          `INSERT INTO schools (id, name, school_type, head_title, status, is_boarding, boarding_type) 
+           VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+          [schoolIdUpper, name.trim(), resolvedType, head_title || 'Headmaster', isBoardingVal, resolvedBoardingType]
+        );
+      }
     }
 
-    // Automatically provision grading, terms, classes, license, and admin account
+    // Automatically provision grading, terms, classes, subjects, license, and admin account
     const provResult = await provisionSchoolDefaults(
       schoolIdUpper,
       resolvedType,
@@ -2216,9 +2365,12 @@ router.post('/schools', authenticateToken, requireRoles('super_admin'), async (r
       admin_username,
       admin_email,
       admin_password,
-      req.user?.id
+      req.user?.id,
+      classes,
+      subjects
     );
 
+    broadcastInvalidation(schoolIdUpper, ['schools', 'settings'], 'school_created');
     const created = await queryOne('SELECT * FROM schools WHERE id = ?', [schoolIdUpper]);
     return res.status(201).json({
       data: created,
@@ -2230,27 +2382,145 @@ router.post('/schools', authenticateToken, requireRoles('super_admin'), async (r
   }
 });
 
-router.put('/schools/:id', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+const handleUpdateSchool = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, school_type, head_title, status, is_boarding, boarding_type } = req.body;
-    await query(
-      `UPDATE schools SET
-         name          = COALESCE(?, name),
-         school_type   = COALESCE(?, school_type),
-         head_title    = COALESCE(?, head_title),
-         status        = COALESCE(?, status),
-         is_boarding   = COALESCE(?, is_boarding),
-         boarding_type = COALESCE(?, boarding_type)
-       WHERE id = ?`,
-      [name, school_type, head_title, status, is_boarding !== undefined ? (is_boarding ? 1 : 0) : null, boarding_type, id]
-    );
+    const { 
+      name, code, school_type, head_title, status, 
+      is_boarding, boarding_type, tuition_fee_benchmark,
+      enabled_modules, classes, subjects,
+      currency, bank_name, account_number
+    } = req.body;
+
+    const existing = await queryOne('SELECT * FROM schools WHERE id = ?', [id]);
+    if (!existing) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'School not found.' } });
+    }
+
+    let nextIsBoarding = existing.is_boarding;
+    if (is_boarding !== undefined) {
+      nextIsBoarding = (is_boarding === 1 || is_boarding === true || is_boarding === '1') ? 1 : 0;
+    }
+    let nextBoardingType = boarding_type !== undefined ? boarding_type : existing.boarding_type;
+    if (boarding_type === 'day' || nextIsBoarding === 0) {
+      nextIsBoarding = 0;
+      nextBoardingType = 'day';
+    }
+
+    let nextModulesJson = existing.enabled_modules;
+    if (enabled_modules !== undefined) {
+      let mods = Array.isArray(enabled_modules) ? enabled_modules : [];
+      if (typeof enabled_modules === 'string') {
+        try { mods = JSON.parse(enabled_modules); } catch (_) { mods = []; }
+      }
+      if (nextIsBoarding === 0) {
+        mods = mods.filter(m => m !== 'boarding');
+      }
+      nextModulesJson = JSON.stringify(mods);
+    } else if (nextIsBoarding === 0 && nextModulesJson) {
+      try {
+        let parsed = JSON.parse(nextModulesJson);
+        if (Array.isArray(parsed)) {
+          nextModulesJson = JSON.stringify(parsed.filter(m => m !== 'boarding'));
+        }
+      } catch (_) {}
+    }
+
+    try {
+      await query(
+        `UPDATE schools SET
+           name                  = COALESCE(?, name),
+           code                  = COALESCE(?, code),
+           school_type           = COALESCE(?, school_type),
+           head_title            = COALESCE(?, head_title),
+           status                = COALESCE(?, status),
+           is_boarding           = ?,
+           boarding_type         = ?,
+           tuition_fee_benchmark = COALESCE(?, tuition_fee_benchmark),
+           enabled_modules       = ?,
+           currency              = COALESCE(?, currency),
+           bank_name             = COALESCE(?, bank_name),
+           account_number        = COALESCE(?, account_number)
+         WHERE id = ?`,
+        [
+          name !== undefined ? name.trim() : null,
+          code !== undefined ? code.trim() : null,
+          school_type || null,
+          head_title || null,
+          status || null,
+          nextIsBoarding,
+          nextBoardingType,
+          tuition_fee_benchmark !== undefined ? tuition_fee_benchmark : null,
+          nextModulesJson,
+          currency || null,
+          bank_name || null,
+          account_number || null,
+          id
+        ]
+      );
+    } catch (_) {
+      // Fallback update in case some column is missing
+      await query(
+        `UPDATE schools SET
+           name          = COALESCE(?, name),
+           school_type   = COALESCE(?, school_type),
+           head_title    = COALESCE(?, head_title),
+           status        = COALESCE(?, status),
+           is_boarding   = ?,
+           boarding_type = ?
+         WHERE id = ?`,
+        [name !== undefined ? name.trim() : null, school_type || null, head_title || null, status || null, nextIsBoarding, nextBoardingType, id]
+      );
+    }
+
+    // If classes were provided, add any that don't exist yet
+    if (Array.isArray(classes) && classes.length > 0) {
+      const isPrimary = String(school_type || existing.school_type || '').toLowerCase() === 'primary';
+      for (const c of classes) {
+        const cName = typeof c === 'string' ? c : c.name;
+        if (!cName) continue;
+        const dup = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [id, cName.trim()]);
+        if (!dup) {
+          const cId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+          await query(
+            `INSERT INTO classes (id, school_id, name, grade_level, level, status) VALUES (?, ?, ?, ?, ?, 'active')`,
+            [cId, id, cName.trim(), cName.trim(), isPrimary ? 'Primary' : 'Secondary']
+          );
+        }
+      }
+    }
+
+    // If subjects were provided, add any that don't exist yet
+    if (Array.isArray(subjects) && subjects.length > 0) {
+      for (const s of subjects) {
+        const sName = typeof s === 'string' ? s : s.name;
+        if (!sName) continue;
+        const dup = await queryOne('SELECT id FROM subjects WHERE school_id = ? AND LOWER(name) = LOWER(?)', [id, sName.trim()]);
+        if (!dup) {
+          const sId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+          const sCode = typeof s === 'object' && s.code ? String(s.code).toUpperCase() : sName.substring(0, 4).toUpperCase();
+          const sCat = typeof s === 'object' && (s.category || s.department) ? (s.category || s.department) : 'General';
+          const sLevel = typeof s === 'object' && s.level ? s.level : 'all';
+          await query(
+            `INSERT INTO subjects (id, school_id, name, code, category, level, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)`,
+            [sId, id, sName.trim(), sCode, sCat, sLevel]
+          );
+        }
+      }
+    }
+
+    broadcastInvalidation(id, ['schools', 'settings'], 'school_updated');
     const updated = await queryOne('SELECT * FROM schools WHERE id = ?', [id]);
     return res.json({ data: updated });
   } catch (err) {
+    console.error('Update school error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update school.' } });
   }
-});
+};
+
+router.put('/schools/:id', authenticateToken, requireRoles('super_admin'), handleUpdateSchool);
+router.patch('/schools/:id', authenticateToken, requireRoles('super_admin'), handleUpdateSchool);
+router.patch('/schools/:id/config', authenticateToken, requireRoles('super_admin'), handleUpdateSchool);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPER ADMIN — PLATFORM STATS
@@ -3060,18 +3330,26 @@ router.post('/schools/:schoolId/communication/test', authenticateToken, requireR
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TERMS
-// GET  /schools/:schoolId/terms
-// POST /schools/:schoolId/terms
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/schools/:schoolId/terms', authenticateToken, async (req, res) => {
   try {
     const { schoolId } = req.params;
     let terms = [];
     try {
       terms = await query(
-        `SELECT t.id, t.school_id, t.session_id, t.name, t.name as term_name, t.start_date, t.end_date,
+        `SELECT t.id, t.school_id, t.session_id,
+                CASE 
+                  WHEN LOWER(t.name) LIKE '%1%' THEN 'Term 1'
+                  WHEN LOWER(t.name) LIKE '%2%' THEN 'Term 2'
+                  WHEN LOWER(t.name) LIKE '%3%' THEN 'Term 3'
+                  ELSE REPLACE(t.name, '_', ' ')
+                END as name,
+                CASE 
+                  WHEN LOWER(t.name) LIKE '%1%' THEN 'Term 1'
+                  WHEN LOWER(t.name) LIKE '%2%' THEN 'Term 2'
+                  WHEN LOWER(t.name) LIKE '%3%' THEN 'Term 3'
+                  ELSE REPLACE(t.name, '_', ' ')
+                END as term_name,
+                t.start_date, t.end_date,
                 COALESCE(s.year, YEAR(t.start_date), YEAR(CURRENT_DATE)) as year,
                 CASE 
                   WHEN LOWER(t.name) LIKE '%1%' THEN 1
@@ -3085,7 +3363,7 @@ router.get('/schools/:schoolId/terms', authenticateToken, async (req, res) => {
                 CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 'active' ELSE 'inactive' END as status
          FROM terms t
          LEFT JOIN academic_sessions s ON t.session_id = s.id
-         WHERE t.school_id = ? OR t.school_id IS NULL
+         WHERE t.school_id = ?
          ORDER BY t.start_date ASC`,
         [schoolId]
       );

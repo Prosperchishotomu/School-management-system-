@@ -43,16 +43,7 @@ export default function AuditLog() {
 
   const rawLogs = Array.isArray(logsData) ? logsData : [];
 
-  // Realistic fallback demo logs if server activity is fresh
-  const sampleLogs = [
-    { id: 1, action: 'PAYMENT_RECORDED', entity: 'payment', actor_name: 'Cashier Desk (Mr. G. Dube)', actor_role: 'bursar', ip_address: '192.168.1.42', created_at: '2026-03-24T09:12:00', old_value: { status: 'unpaid', balance: 450.00 }, new_value: { status: 'paid', balance: 0.00, receipt_number: 'RCP-2026-0412' } },
-    { id: 2, action: 'MARK_MODIFIED', entity: 'grade', actor_name: 'Dr. T. Moyo', actor_role: 'teacher', ip_address: '192.168.1.18', created_at: '2026-03-24T08:45:00', old_value: { student: 'Farai Sibanda', mark: 58, grade: 'C' }, new_value: { student: 'Farai Sibanda', mark: 72, grade: 'B', reason: 'CALA Component 2 remark' } },
-    { id: 3, action: 'EXEAT_GATE_CHECKOUT', entity: 'exeat', actor_name: 'Gate Security (Sgt. Ndlovu)', actor_role: 'warden', ip_address: '192.168.1.99', created_at: '2026-03-23T14:30:00', old_value: { status: 'approved', gate_status: 'in_campus' }, new_value: { status: 'checked_out', gate_status: 'out_of_school', exit_time: '14:30' } },
-    { id: 4, action: 'STUDENT_ENROLLED', entity: 'student', actor_name: 'School Administrator', actor_role: 'school_admin', ip_address: '192.168.1.10', created_at: '2026-03-22T11:20:00', old_value: null, new_value: { student_name: 'Kudzai Ndlovu', admission_number: 'ADM-2026-089', class: 'Grade 6 Blue' } },
-    { id: 5, action: 'USER_PASSWORD_RESET', entity: 'user', actor_name: 'Headmaster Office', actor_role: 'school_admin', ip_address: '192.168.1.12', created_at: '2026-03-21T16:05:00', old_value: { user: 'rchoto', status: 'active' }, new_value: { user: 'rchoto', status: 'active', action: 'temporary_password_issued' } },
-  ];
-
-  const logs = (rawLogs.length > 0 ? rawLogs : sampleLogs).filter(l => {
+  const logs = rawLogs.filter(l => {
     const matchesEntity = !entityFilter || l.entity === entityFilter || l.entity_type === entityFilter;
     const matchesSearch = !searchQuery ||
       l.action?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -185,7 +176,7 @@ export default function AuditLog() {
             {
               key: 'ip_address',
               label: 'IP Origin',
-              render: v => <span className="font-mono text-xs text-muted">{v || '192.168.1.1'}</span>
+              render: v => <span className="font-mono text-xs text-muted">{v || '—'}</span>
             },
             {
               key: 'actions',
@@ -230,7 +221,7 @@ export default function AuditLog() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted">IP Address:</span>
-                <span className="font-mono text-ink">{selectedLog.ip_address || '127.0.0.1'}</span>
+                <span className="font-mono text-ink">{selectedLog.ip_address || '—'}</span>
               </div>
             </div>
 

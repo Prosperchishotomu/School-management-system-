@@ -22,8 +22,8 @@ export default function AcademicsSetup() {
   const [deletingId, setDeletingId] = useState(null);
 
   // Form states
-  const [sessionForm, setSessionForm] = useState({ name: '2026/2027', start_date: '2026-01-10', end_date: '2026-12-05', is_current: true });
-  const [termForm, setTermForm] = useState({ name: 'Term 1 2026', term_number: 1, start_date: '2026-01-13', end_date: '2026-04-10', is_active: true });
+  const [sessionForm, setSessionForm] = useState({ name: '', start_date: '', end_date: '', is_current: true });
+  const [termForm, setTermForm] = useState({ name: '', term_number: 1, start_date: '', end_date: '', is_active: true });
   const [deptForm, setDeptForm] = useState({ name: '', code: '', hod_name: '' });
 
   // Interactive Grading Scale Boundaries State (ZIMSEC & National standard with live preview)
@@ -40,28 +40,28 @@ export default function AcademicsSetup() {
   // Fetching data
   const { data: termsData } = useApi(
     `terms_${activeSchoolId}`,
-    () => api.get(`/schools/${activeSchoolId}/terms`).then(r => r.data || []),
+    () => api.get(`/schools/${activeSchoolId}/terms`).then(r => r.data?.data || r.data || []),
     { deps: [activeSchoolId] }
   );
 
   const { data: sessionsData } = useApi(
     `sessions_${activeSchoolId}`,
-    () => api.get(`/schools/${activeSchoolId}/sessions`).then(r => r.data || []),
+    () => api.get(`/schools/${activeSchoolId}/sessions`).then(r => r.data?.data || r.data || []),
     { deps: [activeSchoolId] }
   );
 
   const { data: deptsData } = useApi(
     `depts_${activeSchoolId}`,
-    () => api.get(`/schools/${activeSchoolId}/departments`).then(r => r.data || []),
+    () => api.get(`/schools/${activeSchoolId}/departments`).then(r => r.data?.data || r.data || []),
     { deps: [activeSchoolId] }
   );
 
-  const terms = termsData || [];
-  const sessions = sessionsData || [];
-  const departments = deptsData || [];
+  const terms = Array.isArray(termsData) ? termsData : [];
+  const sessions = Array.isArray(sessionsData) ? sessionsData : [];
+  const departments = Array.isArray(deptsData) ? deptsData : [];
 
-  const activeTerm = terms.find(t => t.is_active || t.status === 'active') || terms[0];
-  const activeSession = sessions.find(s => s.is_current) || sessions[0];
+  const activeTerm = terms.find(t => t.is_active || t.status === 'active') || null;
+  const activeSession = sessions.find(s => s.is_current) || null;
 
   // Live preview lookup for testScore
   const matchedGrade = gradingScale.find(g => testScore >= g.minScore && testScore <= g.maxScore) || gradingScale[gradingScale.length - 1];
@@ -139,7 +139,7 @@ export default function AcademicsSetup() {
               </span>
             </div>
             <div className="text-lg font-bold font-display mt-0.5">
-              {activeTerm?.name || 'Term 1 2026'} • Academic Year {activeSession?.name || '2026'}
+              {activeTerm ? `${activeTerm.name}${activeSession ? ` • Academic Year ${activeSession.name}` : ''}` : 'No Active Academic Term Configured'}
             </div>
           </div>
         </div>
@@ -147,11 +147,11 @@ export default function AcademicsSetup() {
         <div className="flex items-center gap-6 text-xs text-brand-100">
           <div>
             <span className="text-brand-100/60 block text-[10px] uppercase">Start Date</span>
-            <span className="font-mono font-semibold">{activeTerm?.start_date ? new Date(activeTerm.start_date).toLocaleDateString() : '13 Jan 2026'}</span>
+            <span className="font-mono font-semibold">{activeTerm?.start_date ? new Date(activeTerm.start_date).toLocaleDateString() : '—'}</span>
           </div>
           <div>
             <span className="text-brand-100/60 block text-[10px] uppercase">End Date</span>
-            <span className="font-mono font-semibold">{activeTerm?.end_date ? new Date(activeTerm.end_date).toLocaleDateString() : '10 Apr 2026'}</span>
+            <span className="font-mono font-semibold">{activeTerm?.end_date ? new Date(activeTerm.end_date).toLocaleDateString() : '—'}</span>
           </div>
           <div>
             <span className="text-brand-100/60 block text-[10px] uppercase">Curriculum</span>
@@ -164,17 +164,17 @@ export default function AcademicsSetup() {
       <KpiStrip>
         <StatCard
           label="Current Term"
-          value={activeTerm?.term_number ? `Term ${activeTerm.term_number}` : 'Term 1'}
+          value={activeTerm?.term_number ? `Term ${activeTerm.term_number}` : (activeTerm?.name || 'None')}
           icon={Calendar}
           color="brand"
-          subtext={activeTerm?.name || 'Active term'}
+          subtext={activeTerm ? (activeTerm.name || 'Active term') : 'Click Add Term to configure'}
         />
         <StatCard
           label="Academic Sessions"
           value={sessions.length}
           icon={Clock}
           color="info"
-          subtext={`Current: ${activeSession?.name || 'Academic Year'}`}
+          subtext={activeSession?.name ? `Current: ${activeSession.name}` : 'No active session'}
         />
         <StatCard
           label="Faculty Departments"
@@ -216,40 +216,56 @@ export default function AcademicsSetup() {
                 key: 'name',
                 label: 'Term Name',
                 sortable: true,
-                render: (v, row) => (
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-ink">{v}</span>
-                    {row.is_active && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 text-brand-700 border border-brand-100">
-                        ACTIVE NOW
-                      </span>
-                    )}
-                  </div>
-                )
+                render: (v, row) => {
+                  const cleanName = (v || '').toLowerCase().includes('1') ? 'Term 1'
+                    : (v || '').toLowerCase().includes('2') ? 'Term 2'
+                    : (v || '').toLowerCase().includes('3') ? 'Term 3'
+                    : (v || `Term ${row.term_number || 1}`).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                  return (
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-ink">{cleanName}</span>
+                      {row.is_active && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 border border-brand-200">
+                          CURRENT TERM
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
               },
-              { key: 'term_number', label: 'Term Number', render: v => `Term ${v}` },
+              {
+                key: 'term_number',
+                label: 'Term Schedule',
+                render: (v, row) => {
+                  const num = v || (row.name?.includes('1') ? 1 : row.name?.includes('2') ? 2 : 3);
+                  return <span className="font-semibold text-ink">Term {num}</span>;
+                }
+              },
               { key: 'start_date', label: 'Commences', render: v => v ? new Date(v).toLocaleDateString() : 'N/A' },
               { key: 'end_date', label: 'Concludes', render: v => v ? new Date(v).toLocaleDateString() : 'N/A' },
               {
-                key: 'actions',
-                label: '',
-                render: (_, row) => (
-                  !row.is_active && (
-                    <button
-                      onClick={() => handleSetActiveTerm(row.id)}
-                      className="px-3 py-1 rounded-lg border border-line text-xs font-semibold text-brand-700 hover:bg-canvas transition"
-                    >
-                      Set Active
-                    </button>
-                  )
-                )
+                key: 'status',
+                label: 'Status',
+                render: (_, row) => {
+                  const now = new Date();
+                  const start = row.start_date ? new Date(row.start_date) : null;
+                  const end = row.end_date ? new Date(row.end_date) : null;
+                  const isCurrent = (start && end && now >= start && now <= end) || row.is_active;
+                  const isConcluded = end && now > end;
+
+                  if (isCurrent) {
+                    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300 border border-emerald-200">Active</span>;
+                  }
+                  if (isConcluded) {
+                    return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">Concluded</span>;
+                  }
+                  return <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">Upcoming</span>;
+                }
               }
             ]}
-            data={terms.length > 0 ? terms : [
-              { id: 1, name: 'Term 1 2026', term_number: 1, start_date: '2026-01-13', end_date: '2026-04-10', is_active: true },
-              { id: 2, name: 'Term 2 2026', term_number: 2, start_date: '2026-05-05', end_date: '2026-08-07', is_active: false },
-              { id: 3, name: 'Term 3 2026', term_number: 3, start_date: '2026-09-08', end_date: '2026-12-04', is_active: false },
-            ]}
+            data={terms}
+            emptyTitle="No Academic Terms Configured"
+            emptyMessage="Configure your school terms (e.g. Term 1, Term 2, Term 3) by clicking 'Add Term' above."
           />
         </Card>
       )}
@@ -280,10 +296,9 @@ export default function AcademicsSetup() {
               { key: 'start_date', label: 'Start Date', render: v => v ? new Date(v).toLocaleDateString() : 'N/A' },
               { key: 'end_date', label: 'End Date', render: v => v ? new Date(v).toLocaleDateString() : 'N/A' },
             ]}
-            data={sessions.length > 0 ? sessions : [
-              { id: 1, name: '2026 Academic Year', start_date: '2026-01-10', end_date: '2026-12-05', is_current: true },
-              { id: 2, name: '2025 Academic Year', start_date: '2025-01-14', end_date: '2025-12-04', is_current: false }
-            ]}
+            data={sessions}
+            emptyTitle="No Academic Sessions Configured"
+            emptyMessage="Create your school academic year session (e.g. 2026 Academic Year) by clicking 'Add Session' above."
           />
         </Card>
       )}
@@ -300,14 +315,9 @@ export default function AcademicsSetup() {
               { key: 'code', label: 'Code', render: v => <span className="font-mono text-xs text-muted">{v || 'N/A'}</span> },
               { key: 'hod_name', label: 'Head of Department (HOD)', render: v => v || 'Unassigned' }
             ]}
-            data={departments.length > 0 ? departments : [
-              { id: 1, name: 'Sciences & Mathematics', code: 'SCI-MATH', hod_name: 'Dr. T. Moyo' },
-              { id: 2, name: 'Humanities & Social Sciences', code: 'HUM-SOC', hod_name: 'Mrs. R. Choto' },
-              { id: 3, name: 'Languages & Literature', code: 'LANG-LIT', hod_name: 'Mr. P. Sibanda' },
-              { id: 4, name: 'Commercials & Business Studies', code: 'COMM-BUS', hod_name: 'Ms. F. Ndlovu' },
-              { id: 5, name: 'Practical & Technical Arts', code: 'PRAC-TECH', hod_name: 'Mr. K. Musarurwa' },
-              { id: 6, name: 'Physical Education & Sports', code: 'PE-SPORT', hod_name: 'Coach G. Dube' }
-            ]}
+            data={departments}
+            emptyTitle="No Faculty Departments Configured"
+            emptyMessage="Add subject faculty departments (e.g. Sciences, Humanities, Languages) by clicking 'Add Department' above."
           />
         </Card>
       )}

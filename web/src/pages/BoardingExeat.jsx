@@ -22,14 +22,14 @@ import {
 export default function BoardingExeat() {
   const { user, activeSchoolId } = useAuth();
   const toast = useToast();
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
 
   const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [form, setForm] = useState({
     student_id: '',
     exeat_type: 'weekend',
     departure_date: new Date().toISOString().slice(0, 10),
-    expected_return: '2026-03-01 17:00',
+    expected_return: '',
     destination: '',
     reason: ''
   });
@@ -40,6 +40,24 @@ export default function BoardingExeat() {
     `boarding_exeats_${schoolId}`,
     () => api.get(`/schools/${schoolId}/exeats`)
   );
+
+  // Fetch real hostel and resident boarder capacity
+  const { data: hostelsData } = useApi(
+    `hostels_${schoolId}`,
+    () => api.get('/hostels').then(r => r.data || []).catch(() => [])
+  );
+  const { data: allocationsData } = useApi(
+    `hostels_alloc_${schoolId}`,
+    () => api.get('/hostels/allocations').then(r => r.data || []).catch(() => [])
+  );
+
+  const hostels = Array.isArray(hostelsData) ? hostelsData : [];
+  const allocations = Array.isArray(allocationsData) ? allocationsData : [];
+  const totalBeds = hostels.reduce((acc, h) => acc + (parseInt(h.capacity) || 0), 0);
+  const totalBoarders = allocations.length > 0 
+    ? allocations.length 
+    : hostels.reduce((acc, h) => acc + (parseInt(h.current_occupancy) || 0), 0);
+  const occRate = totalBeds > 0 ? Math.round((totalBoarders / totalBeds) * 100) : 0;
 
   const exeats = useMemo(() => {
     if (!exeatsData) return [];
@@ -134,8 +152,8 @@ export default function BoardingExeat() {
       <KpiStrip>
         <StatCard
           title="Boarders In Residence"
-          value="235"
-          sublabel="Dormitory occupancy 84%"
+          value={String(totalBoarders)}
+          sublabel={totalBeds > 0 ? `Dormitory occupancy ${occRate}% (${totalBeds} beds total)` : "No residential dormitories configured"}
           icon={Building2}
           iconColor="brand"
         />

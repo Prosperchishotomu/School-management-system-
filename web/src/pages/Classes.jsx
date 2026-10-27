@@ -12,6 +12,7 @@ import {
   AlertTriangle, CheckCircle2, ArrowRight, ShieldAlert, Sparkles, Filter, Upload
 } from 'lucide-react';
 import ImportModal from '../components/ImportModal';
+import { STANDARD_SUBJECTS, STANDARD_DEPARTMENTS } from '../data/standardSubjects';
 
 export default function Classes() {
   const { activeSchoolId, user } = useAuth();
@@ -27,8 +28,11 @@ export default function Classes() {
   const [deleteType, setDeleteType] = useState(null);
 
   // Forms
-  const [classForm, setClassForm] = useState({ name: '', grade_level: 'Form 1', stream: 'North', capacity: 40, form_master_id: '' });
+  const [classForm, setClassForm] = useState({ name: '', grade_level: 'Form 1', stream: '', capacity: '', form_master_id: '' });
+  const [showEditClassModal, setShowEditClassModal] = useState(false);
+  const [editClassForm, setEditClassForm] = useState({ id: '', name: '', grade_level: 'Form 1', stream: '', capacity: '', form_master_id: '' });
   const [subjectForm, setSubjectForm] = useState({ name: '', code: '', level: 'all', department: 'General' });
+  const [customSubject, setCustomSubject] = useState(false);
   const [assignForm, setAssignForm] = useState({ class_id: '', subject_id: '', teacher_id: '' });
   const [submitting, setSubmitting] = useState(false);
 
@@ -122,7 +126,7 @@ export default function Classes() {
   }, [classes]);
 
   const totalCapacity = useMemo(() => {
-    return classes.reduce((acc, c) => acc + (c.capacity || 40), 0);
+    return classes.reduce((acc, c) => acc + (c.capacity ? parseInt(c.capacity) : 0), 0);
   }, [classes]);
 
   const avgUtilization = totalCapacity > 0 ? Math.round((totalStudents / totalCapacity) * 100) : 0;
@@ -135,10 +139,25 @@ export default function Classes() {
       await api.post(`/schools/${activeSchoolId}/classes`, classForm);
       toast.success(`Class ${classForm.name} created successfully.`);
       setShowClassModal(false);
-      setClassForm({ name: '', grade_level: 'Form 1', stream: 'North', capacity: 40, form_master_id: '' });
+      setClassForm({ name: '', grade_level: 'Form 1', stream: '', capacity: '', form_master_id: '' });
       invalidate(`classes_${activeSchoolId}`);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to create class.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUpdateClass = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.patch(`/schools/${activeSchoolId}/classes/${editClassForm.id}`, editClassForm);
+      toast.success(`Class ${editClassForm.name} limit and details updated.`);
+      setShowEditClassModal(false);
+      invalidate([`classes_${activeSchoolId}`, `class_students_${editClassForm.id}`]);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to update class limit.');
     } finally {
       setSubmitting(false);
     }
@@ -240,7 +259,7 @@ export default function Classes() {
     <div className="space-y-6">
       <PageHeader
         title="Classes & Academic Streams"
-        subtitle={`Academic directory for ${schoolInfo?.name || 'Harare Academy'}. Manage classes, teacher allocations, and student roll.`}
+        subtitle={`Academic directory for ${schoolInfo?.name || 'your institution'}. Manage classes, teacher allocations, and student roll.`}
         backTo="/dashboard"
         backLabel="Dashboard"
         actions={
@@ -352,11 +371,11 @@ export default function Classes() {
             ) : (
               <div className="space-y-2 max-h-[720px] overflow-y-auto pr-1">
                 {classes.map(cls => {
-                  const isSelected = activeClass?.id === cls.id;
-                  const capacity = cls.capacity || 40;
+                  const capacity = cls.capacity ? parseInt(cls.capacity) : null;
                   const count = cls.student_count || 0;
-                  const pct = Math.min(100, Math.round((count / capacity) * 100));
+                  const pct = capacity ? Math.min(100, Math.round((count / capacity) * 100)) : null;
                   const formMaster = staff.find(s => s.id === cls.form_master_id || s.user_id === cls.form_master_id);
+                  const isSelected = selectedClassId === cls.id;
 
                   return (
                     <div
@@ -387,22 +406,28 @@ export default function Classes() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className="text-xs font-mono font-bold text-ink">{count} / {capacity}</span>
-                          <span className="text-[10px] text-muted block">enrolled</span>
+                          <span className="text-xs font-mono font-bold text-ink">
+                            {count} {capacity ? `/ ${capacity}` : 'learners'}
+                          </span>
+                          <span className="text-[10px] text-muted block">
+                            {capacity ? `${pct}% capacity` : 'enrolled'}
+                          </span>
                         </div>
                       </div>
 
-                      {/* Capacity progress bar */}
-                      <div className="mt-3">
-                        <div className="w-full h-1.5 bg-canvas rounded-full overflow-hidden border border-line/50">
-                          <div
-                            className={`h-full rounded-full transition-all ${
-                              pct >= 95 ? 'bg-danger' : pct >= 80 ? 'bg-accent' : 'bg-brand-500'
-                            }`}
-                            style={{ width: `${pct}%` }}
-                          />
+                      {/* Capacity progress bar if configured */}
+                      {capacity ? (
+                        <div className="mt-3">
+                          <div className="w-full h-1.5 bg-canvas rounded-full overflow-hidden border border-line/50">
+                            <div
+                              className={`h-full rounded-full transition-all ${
+                                pct >= 95 ? 'bg-danger' : pct >= 80 ? 'bg-accent' : 'bg-brand-500'
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
                         </div>
-                      </div>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -416,15 +441,33 @@ export default function Classes() {
               <>
                 <Card
                   title={`${activeClass.name} — Class Detail`}
-                  subtitle={`Form Master: ${staff.find(s => s.id === activeClass.form_master_id)?.name || 'Unassigned'} • Capacity: ${activeClass.student_count || 0}/${activeClass.capacity || 40}`}
+                  subtitle={`Form Master: ${staff.find(s => s.id === activeClass.form_master_id)?.name || 'Unassigned'} • Capacity: ${activeClass.student_count || 0}${activeClass.capacity ? ` / ${activeClass.capacity} Desks` : ' (Open Capacity)'}`}
                   actions={
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setEditClassForm({
+                            id: activeClass.id,
+                            name: activeClass.name || '',
+                            grade_level: activeClass.grade_level || activeClass.level || 'Form 1',
+                            stream: activeClass.stream || '',
+                            capacity: activeClass.capacity !== null && activeClass.capacity !== undefined ? activeClass.capacity : '',
+                            form_master_id: activeClass.form_master_id || ''
+                          });
+                          setShowEditClassModal(true);
+                        }}
+                        className="px-3 py-1.5 rounded-lg border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                        title="Edit Class Limit & Settings"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-brand-700 dark:text-brand-400" />
+                        <span>Edit Class Limit</span>
+                      </button>
                       <button
                         onClick={() => {
                           setAssignForm(prev => ({ ...prev, class_id: activeClass.id }));
                           setShowAssignModal(true);
                         }}
-                        className="px-3 py-1.5 rounded-lg border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition"
+                        className="px-3 py-1.5 rounded-lg border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition cursor-pointer"
                       >
                         Assign Subject
                       </button>
@@ -433,7 +476,7 @@ export default function Classes() {
                           setDeletingId(activeClass.id);
                           setDeleteType('class');
                         }}
-                        className="p-1.5 rounded-lg text-danger hover:bg-danger/10 transition"
+                        className="p-1.5 rounded-lg text-danger hover:bg-danger/10 transition cursor-pointer"
                         title="Delete Class"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -449,7 +492,7 @@ export default function Classes() {
                     <div className="p-3 rounded-xl bg-canvas border border-line">
                       <div className="text-[11px] text-muted font-medium">Free Desks</div>
                       <div className="text-lg font-bold font-mono text-brand-500 mt-0.5">
-                        {Math.max(0, (activeClass.capacity || 40) - classStudents.length)}
+                        {activeClass.capacity ? Math.max(0, activeClass.capacity - classStudents.length) : 'Open'}
                       </div>
                     </div>
                     <div className="p-3 rounded-xl bg-canvas border border-line">
@@ -710,7 +753,7 @@ export default function Classes() {
                 {classes
                   .filter(c => String(c.id) !== String(promoFromClass))
                   .map(c => (
-                    <option key={c.id} value={c.id}>{c.name} (Capacity: {c.capacity || 40})</option>
+                    <option key={c.id} value={c.id}>{c.name} {c.capacity ? `(Capacity: ${c.capacity})` : ''}</option>
                   ))}
               </select>
             </div>
@@ -814,27 +857,31 @@ export default function Classes() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">Stream / Section</label>
+              <label className="block text-xs font-bold text-ink mb-1">
+                Stream / Section <span className="text-[10px] text-muted font-normal">(Optional)</span>
+              </label>
               <input
                 type="text"
-                placeholder="North, South, A, etc."
+                placeholder="e.g. East, Blue, or leave blank"
                 value={classForm.stream}
                 onChange={e => setClassForm({ ...classForm, stream: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">Desk Capacity</label>
+              <label className="block text-xs font-bold text-ink mb-1">
+                Desk Capacity <span className="text-[10px] text-muted font-normal">(Configurable Limit)</span>
+              </label>
               <input
                 type="number"
-                min="10"
-                max="80"
+                min="1"
+                placeholder="e.g. 35, 45, 60..."
                 value={classForm.capacity}
-                onChange={e => setClassForm({ ...classForm, capacity: parseInt(e.target.value) || 40 })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+                onChange={e => setClassForm({ ...classForm, capacity: e.target.value === '' ? '' : parseInt(e.target.value) })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-mono font-bold"
               />
             </div>
 
@@ -872,6 +919,88 @@ export default function Classes() {
         </form>
       </Modal>
 
+      {/* MODAL: Edit Class Limit & Details */}
+      <Modal
+        isOpen={showEditClassModal}
+        onClose={() => setShowEditClassModal(false)}
+        title={`Edit Class Limit: ${editClassForm.name}`}
+        description="Change class desk capacity (maximum enrollment limit), stream label, and assigned Form Master."
+      >
+        <form onSubmit={handleUpdateClass} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Class Display Name *</label>
+            <input
+              type="text"
+              required
+              value={editClassForm.name}
+              onChange={e => setEditClassForm({ ...editClassForm, name: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-semibold"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">
+                Class Limit / Max Enrollment <span className="text-[10px] text-muted font-normal">(Configurable)</span>
+              </label>
+              <input
+                type="number"
+                min="1"
+                placeholder="e.g. 35, 45, 60..."
+                value={editClassForm.capacity}
+                onChange={e => setEditClassForm({ ...editClassForm, capacity: e.target.value === '' ? '' : parseInt(e.target.value) })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-mono font-bold"
+              />
+              <span className="text-[10px] text-muted mt-1 block">Maximum student intake allowed for this class</span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink mb-1">
+                Stream / Section <span className="text-[10px] text-muted font-normal">(Optional)</span>
+              </label>
+              <input
+                type="text"
+                placeholder="Leave blank if school has no streams"
+                value={editClassForm.stream}
+                onChange={e => setEditClassForm({ ...editClassForm, stream: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Form Master / Class Teacher</label>
+            <select
+              value={editClassForm.form_master_id}
+              onChange={e => setEditClassForm({ ...editClassForm, form_master_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+            >
+              <option value="">Unassigned</option>
+              {staff.map(s => (
+                <option key={s.id} value={s.id}>{s.name} ({s.role_title || 'Teacher'})</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowEditClassModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50 cursor-pointer"
+            >
+              {submitting ? 'Saving...' : 'Update Class Limit'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       {/* MODAL: Create Subject */}
       <Modal
         isOpen={showSubjectModal}
@@ -881,38 +1010,81 @@ export default function Classes() {
       >
         <form onSubmit={handleCreateSubject} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-ink mb-1">Subject Title *</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Mathematics or Heritage Studies"
-              value={subjectForm.name}
-              onChange={e => setSubjectForm({ ...subjectForm, name: e.target.value })}
-              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-            />
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-ink">Curriculum Subject *</label>
+              <button
+                type="button"
+                onClick={() => setCustomSubject(prev => !prev)}
+                className="text-[11px] text-brand-600 dark:text-brand-400 hover:underline cursor-pointer"
+              >
+                {customSubject ? '← Choose standard subject' : '+ Type custom subject'}
+              </button>
+            </div>
+            {customSubject ? (
+              <input
+                type="text"
+                required
+                placeholder="Enter subject title (e.g. Robotics, Mandarin, Development Studies)"
+                value={subjectForm.name}
+                onChange={e => setSubjectForm({ ...subjectForm, name: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-semibold"
+              />
+            ) : (
+              <select
+                value={subjectForm.name}
+                onChange={e => {
+                  const selected = STANDARD_SUBJECTS.find(s => s.name === e.target.value);
+                  if (selected) {
+                    setSubjectForm({
+                      ...subjectForm,
+                      name: selected.name,
+                      department: selected.department,
+                      level: selected.level
+                    });
+                  } else {
+                    setSubjectForm({ ...subjectForm, name: e.target.value });
+                  }
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-semibold"
+              >
+                <option value="">-- Choose Standard Subject --</option>
+                {STANDARD_SUBJECTS.map(s => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} — {s.department}
+                  </option>
+                ))}
+              </select>
+            )}
+            <span className="text-[10px] text-muted mt-1 block">
+              Choose an accredited curriculum subject or type a custom discipline for your institution.
+            </span>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">Subject Code</label>
+              <label className="block text-xs font-bold text-ink mb-1">
+                Subject / Syllabus Code <span className="text-[10px] text-muted font-normal">(Configurable)</span>
+              </label>
               <input
                 type="text"
-                placeholder="e.g. 4004 (ZIMSEC)"
+                placeholder="e.g. 4004, 0580, MATH-1, or leave blank"
                 value={subjectForm.code}
                 onChange={e => setSubjectForm({ ...subjectForm, code: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-mono font-bold focus:ring-2 focus:ring-brand-500"
               />
             </div>
 
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Department</label>
-              <input
-                type="text"
-                placeholder="Sciences, Humanities, etc."
+              <select
                 value={subjectForm.department}
                 onChange={e => setSubjectForm({ ...subjectForm, department: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-              />
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                {STANDARD_DEPARTMENTS.map(dept => (
+                  <option key={dept} value={dept}>{dept}</option>
+                ))}
+              </select>
             </div>
           </div>
 

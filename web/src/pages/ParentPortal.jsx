@@ -24,8 +24,10 @@ const SUBJECT_BAR_COLORS = [
   '#4f46e5'  // Deep Indigo
 ];
 
+import { isSchoolBoarding } from '../utils/modules';
+
 const ParentPortal = () => {
-  const { activeSchoolId } = useAuth();
+  const { activeSchoolId, activeSchool } = useAuth();
   const toast = useToast();
 
   const [children, setChildren] = useState([]);
@@ -361,15 +363,24 @@ const ParentPortal = () => {
                 <div className="pt-2">
                   <span className="text-[10px] font-bold text-muted uppercase tracking-wider block mb-2">Payment Status</span>
                   <div className="flex justify-between items-center">
-                    <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider border ${
-                      childProfile.feeSummary?.status === 'cleared' || childProfile.feeSummary?.status === 'paid'
-                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:text-emerald-300' :
-                      childProfile.feeSummary?.status === 'partial'
-                        ? 'bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300' :
-                        'bg-rose-500/15 border-rose-500/30 text-rose-700 dark:text-rose-300'
-                    }`}>
-                      {childProfile.feeSummary?.status === 'cleared' ? 'CLEARED' : (childProfile.feeSummary?.status || 'UNPAID')}
-                    </span>
+                    {(() => {
+                      const billed = parseFloat(childProfile.feeSummary?.total_due || childProfile.feeSummary?.amount_due || 0);
+                      const status = childProfile.feeSummary?.status;
+                      const isUnbilled = billed === 0;
+                      const label = isUnbilled ? 'NO INVOICES' : (status === 'cleared' || status === 'paid' ? 'CLEARED' : (status === 'partial' ? 'PARTIAL' : 'UNPAID'));
+                      const colorClass = isUnbilled
+                        ? 'bg-canvas border-line text-muted'
+                        : (status === 'cleared' || status === 'paid'
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+                          : (status === 'partial'
+                            ? 'bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300'
+                            : 'bg-rose-500/15 border-rose-500/30 text-rose-700 dark:text-rose-300'));
+                      return (
+                        <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider border ${colorClass}`}>
+                          {label}
+                        </span>
+                      );
+                    })()}
                     
                     <button
                       onClick={() => setShowPaymentModal(true)}
@@ -442,41 +453,43 @@ const ParentPortal = () => {
                 </div>
               </div>
 
-              {/* Residence Accommodation Application */}
-              <div className="glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
-                <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
-                  <span className="text-base">🛏️</span>
-                  <h3 className="text-sm font-sans font-bold text-ink">Boarding Residence Application</h3>
-                </div>
-
-                <form onSubmit={handleApplyResidence} className="space-y-3">
-                  <p className="text-[11px] text-ink/60 font-sans">
-                    Apply for boarding house / hostel residence accommodation for {childProfile?.student?.first_name || 'your child'}.
-                  </p>
-                  <div>
-                    <label className="block text-[9px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Special Requirements / Notes</label>
-                    <textarea
-                      rows={2}
-                      placeholder="e.g. Dietary preferences, medical notes, or room preference..."
-                      className="w-full glass-input rounded-xl text-xs"
-                      value={residenceNotes}
-                      onChange={e => setResidenceNotes(e.target.value)}
-                    />
+              {/* Residence Accommodation Application — strictly for boarding/dual schools */}
+              {isSchoolBoarding(activeSchool) && (
+                <div className="glass-panel p-6 rounded-2xl border border-line-border/30 space-y-4">
+                  <div className="flex items-center space-x-2 text-teal-primary border-b border-line-border/20 pb-3">
+                    <span className="text-base">🛏️</span>
+                    <h3 className="text-sm font-sans font-bold text-ink">Boarding Residence Application</h3>
                   </div>
-                  {residenceSuccess && (
-                    <p className="text-xs font-semibold text-teal-dark bg-sage/20 p-2 rounded-lg border border-teal-primary/20">
-                      {residenceSuccess}
+
+                  <form onSubmit={handleApplyResidence} className="space-y-3">
+                    <p className="text-[11px] text-ink/60 font-sans">
+                      Apply for boarding house / hostel residence accommodation for {childProfile?.student?.first_name || 'your child'}.
                     </p>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={applyingResidence}
-                    className="w-full py-2 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-bold shadow transition-colors cursor-pointer flex items-center justify-center space-x-2"
-                  >
-                    {applyingResidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Submit Residence Application</span>}
-                  </button>
-                </form>
-              </div>
+                    <div>
+                      <label className="block text-[9px] font-sans font-bold text-ink/50 uppercase tracking-wider mb-1">Special Requirements / Notes</label>
+                      <textarea
+                        rows={2}
+                        placeholder="e.g. Dietary preferences, medical notes, or room preference..."
+                        className="w-full glass-input rounded-xl text-xs"
+                        value={residenceNotes}
+                        onChange={e => setResidenceNotes(e.target.value)}
+                      />
+                    </div>
+                    {residenceSuccess && (
+                      <p className="text-xs font-semibold text-teal-dark bg-sage/20 p-2 rounded-lg border border-teal-primary/20">
+                        {residenceSuccess}
+                      </p>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={applyingResidence}
+                      className="w-full py-2 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-bold shadow transition-colors cursor-pointer flex items-center justify-center space-x-2"
+                    >
+                      {applyingResidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Submit Residence Application</span>}
+                    </button>
+                  </form>
+                </div>
+              )}
 
             </div>
             <div className="lg:col-span-2 glass-panel p-6 rounded-2xl border border-line space-y-4 shadow-sm">

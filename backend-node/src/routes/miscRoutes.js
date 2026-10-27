@@ -367,7 +367,7 @@ router.get('/schools/:schoolId/dashboard/extended', authenticateToken, async (re
     try {
       const resAtt = await query(
         `SELECT
-           COUNT(CASE WHEN status = 'present' THEN 1 END) as present_count,
+           COUNT(CASE WHEN status IN ('present', 'late') THEN 1 END) as present_count,
            COUNT(*) as total_records
          FROM attendance WHERE school_id = ? AND date = ?`,
         [schoolId, today]
@@ -409,9 +409,9 @@ router.get('/schools/:schoolId/dashboard/extended', authenticateToken, async (re
       classesAttendance = await query(
         `SELECT c.id, c.name, COALESCE(c.grade_level, 'Primary') as grade_level,
                 IF(COUNT(a.id) > 0, 'submitted', 'pending') as status,
-                COALESCE(COUNT(CASE WHEN a.status = 'present' THEN 1 END), 0) as present,
+                COALESCE(COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END), 0) as present,
                 COALESCE(COUNT(CASE WHEN a.status = 'absent' THEN 1 END), 0) as absent,
-                COALESCE(ROUND(COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 0), 0) as pct
+                COALESCE(ROUND(COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 0), 0) as pct
          FROM classes c
          LEFT JOIN students st ON c.id = st.class_id AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
          LEFT JOIN attendance a ON st.id = a.student_id AND a.date = ?

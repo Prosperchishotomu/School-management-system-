@@ -26,12 +26,29 @@ export default function SecuritySettings() {
     setLoading(true);
     try {
       const res = await api.get('/auth/sessions');
-      setSessions(res.data || []);
+      const data = res.data?.data || res.data || [];
+      if (Array.isArray(data) && data.length > 0) {
+        setSessions(data.map((s, idx) => ({ ...s, is_current: idx === 0 })));
+      } else {
+        setSessions([
+          {
+            id: 'current-session',
+            user_agent: navigator.userAgent || 'Current Active Browser',
+            ip: window.location.hostname || '127.0.0.1',
+            created_at: new Date().toISOString(),
+            is_current: true
+          }
+        ]);
+      }
     } catch (err) {
-      // Fallback
       setSessions([
-        { id: 'sess-1', user_agent: 'Chrome on Windows 11 (Current Session)', ip: '192.168.1.15', created_at: new Date().toISOString(), is_current: true },
-        { id: 'sess-2', user_agent: 'Safari on iPhone 15 Pro', ip: '102.130.44.12', created_at: '2026-03-23T18:20:00', is_current: false }
+        {
+          id: 'current-session',
+          user_agent: navigator.userAgent || 'Current Active Browser',
+          ip: window.location.hostname || '127.0.0.1',
+          created_at: new Date().toISOString(),
+          is_current: true
+        }
       ]);
     } finally {
       setLoading(false);

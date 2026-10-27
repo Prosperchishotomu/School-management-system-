@@ -47,27 +47,20 @@ export default function Enquiries() {
   );
 
   const rawEnquiries = Array.isArray(enquiriesData) ? enquiriesData : [];
-
-  const sampleEnquiries = [
-    { id: 1, applicant_name: 'Simbarashe Moyo', grade_applying_for: 'Form 1', guardian_name: 'Mr. T. Moyo', guardian_phone: '+263 77 289 1102', guardian_email: 'tmoyo@zim.co.zw', status: 'new', created_at: '2026-03-24', notes: 'Top 7 units in Grade 7 ZIMSEC exams.' },
-    { id: 2, applicant_name: 'Chiedza Choto', grade_applying_for: 'Form 3', guardian_name: 'Mrs. R. Choto', guardian_phone: '+263 71 440 2911', guardian_email: 'rchoto@gmail.com', status: 'contacted', created_at: '2026-03-22', notes: 'Transfer from Mutare Girls High.' },
-    { id: 3, applicant_name: 'Tinashe Ndlovu', grade_applying_for: 'Lower 6', guardian_name: 'Dr. K. Ndlovu', guardian_phone: '+263 77 910 4421', guardian_email: 'kndlovu@clinic.co.zw', status: 'offered', created_at: '2026-03-18', notes: 'Maths, Physics, Chem combination.' },
-    { id: 4, applicant_name: 'Anesu Sibanda', grade_applying_for: 'Form 1', guardian_name: 'Mrs. F. Sibanda', guardian_phone: '+263 77 340 1928', guardian_email: 'fsibanda@yahoo.com', status: 'enrolled', created_at: '2026-03-10', notes: 'Paid registration fee, allocated Form 1 North.' },
-  ];
-
-  const enquiries = rawEnquiries.length > 0 ? rawEnquiries : sampleEnquiries;
+  const enquiries = rawEnquiries;
 
   // Funnel counts
   const totalEnquiries = enquiries.length;
   const newCount = enquiries.filter(e => e.status === 'new').length;
+  const contactedCount = enquiries.filter(e => e.status === 'contacted').length;
   const offeredCount = enquiries.filter(e => e.status === 'offered').length;
   const enrolledCount = enquiries.filter(e => e.status === 'enrolled').length;
 
   const funnelSteps = [
-    { label: 'Enquiries Logged', value: totalEnquiries + 12 },
-    { label: 'Contacted & Interviewed', value: Math.max(1, totalEnquiries + 4) },
-    { label: 'Admission Offered', value: Math.max(1, offeredCount + 8) },
-    { label: 'Firmly Enrolled', value: Math.max(1, enrolledCount + 6) },
+    { label: 'Enquiries Logged', value: totalEnquiries },
+    { label: 'Contacted & Interviewed', value: contactedCount },
+    { label: 'Admission Offered', value: offeredCount },
+    { label: 'Firmly Enrolled', value: enrolledCount },
   ];
 
   const handleCreateEnquiry = async (e) => {

@@ -27,7 +27,7 @@ import ImportModal from '../components/ImportModal';
 import { getCurrentTerm } from '../utils/dateTerms';
 
 export default function Fees() {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeSchool, schoolName } = useAuth();
   const navigate = useNavigate();
   const currentTerm = getCurrentTerm();
 
@@ -39,7 +39,7 @@ export default function Fees() {
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const activeTab = searchParams.get('tab') || 'cashier';
 
   // 1. Invoices & Fees Ledger
@@ -65,6 +65,10 @@ export default function Fees() {
     `debtors_${schoolId}`,
     () => api.get(`/schools/${schoolId}/analytics/fees/top-debtors`)
   );
+  const debtorsList = useMemo(() => {
+    if (!debtorsData) return [];
+    return Array.isArray(debtorsData) ? debtorsData : (debtorsData.data || []);
+  }, [debtorsData]);
 
   // 5. Debtors Ageing
   const { data: ageingData } = useApi(
@@ -524,7 +528,7 @@ export default function Fees() {
               <div className="space-y-3 text-xs">
                 <div className="p-3 rounded-xl bg-canvas border border-line">
                   <div className="font-bold text-ink">Stanbic Bank Zimbabwe</div>
-                  <div className="text-muted">Harare Corporate Branch</div>
+                  <div className="text-muted">Main Branch</div>
                   <div className="font-mono mt-1 text-ink">USD A/C: 9140003482910</div>
                 </div>
 
@@ -594,8 +598,11 @@ export default function Fees() {
               label: 'Status',
               align: 'center',
               render: (_, row) => {
-                const bal = parseFloat(row.amount_due || 0) - parseFloat(row.amount_paid || 0);
-                return <StatusPill status={bal === 0 ? 'paid' : bal < row.amount_due ? 'partial' : 'unpaid'} />;
+                const due = parseFloat(row.amount_due || 0);
+                const paid = parseFloat(row.amount_paid || 0);
+                const bal = due - paid;
+                if (due === 0) return <StatusPill status="neutral" label="Unbilled" />;
+                return <StatusPill status={bal <= 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid'} />;
               }
             },
             {
@@ -683,7 +690,7 @@ export default function Fees() {
             <div className="glass-card p-4">
               <span className="text-[11px] text-muted font-mono uppercase">0 - 30 Days</span>
               <div className="text-xl font-bold font-display text-ink font-mono mt-1">
-                {money(ageingData?.data?.['0-30 days'] || 12400)}
+                {money(ageingData?.data?.['0-30 days'] || 0)}
               </div>
               <span className="text-[10px] text-muted">Recent billing cycle</span>
             </div>
@@ -691,7 +698,7 @@ export default function Fees() {
             <div className="glass-card p-4">
               <span className="text-[11px] text-accent font-mono uppercase">31 - 60 Days</span>
               <div className="text-xl font-bold font-display text-accent font-mono mt-1">
-                {money(ageingData?.data?.['31-60 days'] || 6800)}
+                {money(ageingData?.data?.['31-60 days'] || 0)}
               </div>
               <span className="text-[10px] text-muted">First reminder dispatched</span>
             </div>
@@ -699,7 +706,7 @@ export default function Fees() {
             <div className="glass-card p-4">
               <span className="text-[11px] text-danger font-mono uppercase">61 - 90 Days</span>
               <div className="text-xl font-bold font-display text-danger font-mono mt-1">
-                {money(ageingData?.data?.['61-90 days'] || 3200)}
+                {money(ageingData?.data?.['61-90 days'] || 0)}
               </div>
               <span className="text-[10px] text-muted">Urgent bursary notice</span>
             </div>
@@ -707,44 +714,52 @@ export default function Fees() {
             <div className="glass-card p-4">
               <span className="text-[11px] text-red-600 font-mono uppercase">90+ Days (Default)</span>
               <div className="text-xl font-bold font-display text-red-600 font-mono mt-1">
-                {money(ageingData?.data?.['90+ days'] || 1800)}
+                {money(ageingData?.data?.['90+ days'] || 0)}
               </div>
               <span className="text-[10px] text-muted">Subject to suspension review</span>
             </div>
           </div>
 
           <Card title="Top Debtors Recovery Roster" subtitle="Accounts in arrears requiring direct follow-up">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-line text-muted uppercase text-[11px]">
-                    <th className="py-2.5 text-left">Student Name</th>
-                    <th className="py-2.5 text-left">Class</th>
-                    <th className="py-2.5 text-right">Balance Due</th>
-                    <th className="py-2.5 text-right">Days Overdue</th>
-                    <th className="py-2.5 text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line/60">
-                  {(debtorsData || []).map(d => (
-                    <tr key={d.student_id} className="hover:bg-canvas/40 transition-colors">
-                      <td className="py-3 font-semibold text-ink">{d.student_name}</td>
-                      <td className="py-3 text-muted">{d.class_name}</td>
-                      <td className="py-3 text-right font-mono font-bold text-danger">{money(d.balance_due)}</td>
-                      <td className="py-3 text-right font-mono text-muted">{d.days_overdue || 45}d</td>
-                      <td className="py-3 text-center">
-                        <button
-                          onClick={() => toast.success(`Payment SMS reminder dispatched to ${d.student_name}'s guardian.`)}
-                          className="px-2.5 py-1 rounded-lg border border-line bg-surface text-ink hover:border-brand-500 font-semibold text-xs cursor-pointer"
-                        >
-                          Send Reminder
-                        </button>
-                      </td>
+            {debtorsList.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-line text-muted uppercase text-[11px]">
+                      <th className="py-2.5 text-left">Student Name</th>
+                      <th className="py-2.5 text-left">Class</th>
+                      <th className="py-2.5 text-right">Balance Due</th>
+                      <th className="py-2.5 text-right">Days Overdue</th>
+                      <th className="py-2.5 text-center">Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-line/60">
+                    {debtorsList.map(d => (
+                      <tr key={d.student_id} className="hover:bg-canvas/40 transition-colors">
+                        <td className="py-3 font-semibold text-ink">{d.student_name}</td>
+                        <td className="py-3 text-muted">{d.class_name}</td>
+                        <td className="py-3 text-right font-mono font-bold text-danger">{money(d.balance_due)}</td>
+                        <td className="py-3 text-right font-mono text-muted">{d.days_overdue != null ? `${d.days_overdue}d` : '0d'}</td>
+                        <td className="py-3 text-center">
+                          <button
+                            onClick={() => toast.success(`Payment SMS reminder dispatched to ${d.student_name}'s guardian.`)}
+                            className="px-2.5 py-1 rounded-lg border border-line bg-surface text-ink hover:border-brand-500 font-semibold text-xs cursor-pointer"
+                          >
+                            Send Reminder
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState
+                title="No Debtors in Arrears"
+                description="There are currently no student accounts in arrears."
+                compact={true}
+              />
+            )}
           </Card>
         </div>
       )}
@@ -771,7 +786,7 @@ export default function Fees() {
         {activeReceipt && (
           <div id="printable-receipt" className="printable-area p-6 border border-line rounded-xl space-y-4 text-xs font-mono bg-white text-slate-900 shadow-sm">
             <div className="text-center pb-3 border-b border-line">
-              <h3 className="font-display font-extrabold text-base text-slate-900">{activeReceipt.school_name || 'HARARE PRIMARY & HIGH SCHOOL'}</h3>
+              <h3 className="font-display font-extrabold text-base text-slate-900">{activeReceipt.school_name || activeSchool?.name || schoolName || 'Official School Receipt'}</h3>
               <p className="text-[11px] text-slate-600 font-sans">Official Cashier Treasury Receipt</p>
               <div className="text-[10px] text-slate-500 font-mono mt-1">Receipt No: {activeReceipt.receipt_number}</div>
             </div>

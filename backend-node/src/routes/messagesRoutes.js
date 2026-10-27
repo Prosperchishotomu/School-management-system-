@@ -7,7 +7,7 @@ const { enqueueMessageDeliveries } = require('../services/delivery');
 const { broadcastToUsers } = require('../services/realtime');
 
 const ADMIN_ROLES = new Set(['super_admin', 'school_admin', 'head', 'head_teacher']);
-const STAFF_ROLES = new Set(['super_admin', 'school_admin', 'head', 'head_teacher', 'deputy_head', 'hod', 'teacher', 'bursar', 'librarian', 'nurse', 'counsellor', 'guidance_counsellor', 'boarding_master', 'boarding_mistress']);
+const STAFF_ROLES = new Set(['super_admin', 'school_admin', 'head', 'head_teacher', 'deputy_head', 'hod', 'teacher', 'bursar', 'accountant', 'librarian', 'nurse', 'counsellor', 'guidance_counsellor', 'boarding_master', 'boarding_mistress']);
 const PARENT_ROLES = new Set(['parent', 'guardian']);
 
 function id(prefix) { return `${prefix}${crypto.randomBytes(8).toString('hex')}`; }
@@ -17,6 +17,7 @@ function schoolFor(req) {
 }
 function canMessage(sender, recipient) {
   if (sender === 'super_admin' || ADMIN_ROLES.has(sender)) return true;
+  if (sender === 'bursar' || sender === 'accountant') return true;
   if (PARENT_ROLES.has(sender)) return STAFF_ROLES.has(recipient);
   if (sender === 'teacher' || sender === 'hod') return STAFF_ROLES.has(recipient) || PARENT_ROLES.has(recipient);
   return STAFF_ROLES.has(recipient) || PARENT_ROLES.has(recipient);

@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../utils/api';
 import { subscribeWsStatus } from '../../data/apiHooks';
-import CommandPalette from '../ui/CommandPalette';
 import Avatar from '../ui/Avatar';
 import {
   Search,
@@ -16,7 +15,16 @@ import {
   WifiOff,
   ChevronDown,
   LogOut,
-  School
+  School,
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Users,
+  GraduationCap,
+  CalendarCheck,
+  Award,
+  Layers,
+  X
 } from 'lucide-react';
 import { getCurrentTerm } from '../../utils/dateTerms';
 
@@ -49,6 +57,7 @@ const PAGE_META = {
 export default function TopBar({ onMenuClick }) {
   const { user, activeSchoolId, schoolName, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [isDark, setIsDark] = useState(() => {
     try {
@@ -58,12 +67,81 @@ export default function TopBar({ onMenuClick }) {
     }
   });
 
-  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchRef = useRef(null);
+  const searchInputRef = useRef(null);
+
   const [notifications, setNotifications] = useState([]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
   const notifRef = useRef(null);
 
   const [wsStatus, setWsStatus] = useState('connected');
+
+  // Outside click for in-place search dropdown
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setIsSearchOpen(false);
+      }
+    };
+    if (isSearchOpen) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [isSearchOpen]);
+
+  // Global search keyboard shortcuts: Ctrl+K / Cmd+K to focus in-place search
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        setIsSearchOpen(true);
+      }
+      if (e.key === 'Escape') {
+        setIsSearchOpen(false);
+        searchInputRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Filtered in-place destinations
+  const filteredSearchItems = useMemo(() => {
+    const allDestinations = [
+      { title: 'Dashboard', path: '/dashboard', category: 'Navigation', icon: Award, desc: 'Operational overview & pulse' },
+      { title: 'Student Directory', path: '/students', category: 'Academics', icon: GraduationCap, desc: 'Learner roster & admission numbers' },
+      { title: 'Staff Roster', path: '/staff', category: 'Human Resources', icon: Users, desc: 'Academic faculty & teachers' },
+      { title: 'Classes & Subjects', path: '/classes', category: 'Academics', icon: Layers, desc: 'Grade streams, capacities & syllabus' },
+      { title: 'Attendance Register', path: '/attendance', category: 'Academics', icon: CheckCircle, desc: 'Daily class rolls & alerts' },
+      { title: 'Gradebook', path: '/grades', category: 'Academics', icon: BookOpen, desc: 'Continuous assessment & tests' },
+      { title: 'Results & Broadsheets', path: '/results', category: 'Academics', icon: Award, desc: 'Terminal examination transcripts' },
+      { title: 'Master Timetable', path: '/timetable', category: 'Academics', icon: CalendarCheck, desc: 'Weekly period allocations & room slots' },
+      { title: 'Schemes of Work', path: '/schemes', category: 'Academics', icon: BookOpen, desc: 'Weekly curriculum coverage & HOD review' },
+      { title: 'Examinations', path: '/exams', category: 'Academics', icon: BookOpen, desc: 'National ZIMSEC exam sessions & entries' },
+      { title: 'Fees & Invoicing', path: '/fees', category: 'Finance', icon: School, desc: 'Multi-currency invoicing & cashier receipts' },
+      { title: 'Operating Expenses', path: '/expenses', category: 'Finance', icon: School, desc: 'School expense tracking & vouchers' },
+      { title: 'Hostels & Residences', path: '/hostels', category: 'Operations', icon: School, desc: 'Boarding room allocations & beds' },
+      { title: 'Exeat Gate Board', path: '/boarding/exeats', category: 'Operations', icon: CheckCircle, desc: 'Student gate passes & checkout' },
+      { title: 'Health Records', path: '/health-records', category: 'Support', icon: CheckCircle, desc: 'Clinic visits & medical conditions' },
+      { title: 'Conduct & Support', path: '/discipline', category: 'Support', icon: CheckCircle, desc: 'Disciplinary incidents & interventions' },
+      { title: 'Staff Leave', path: '/leave-requests', category: 'Human Resources', icon: Users, desc: 'Staff leave applications & notices' },
+      { title: 'Library Catalog', path: '/library', category: 'Operations', icon: BookOpen, desc: 'Book inventory & textbook loans' },
+      { title: 'Asset Registry', path: '/assets', category: 'Operations', icon: Layers, desc: 'Equipment & facility inventory' },
+      { title: 'EMIS Statutory Returns', path: '/reports/emis', category: 'Statutory', icon: School, desc: 'Ministry returns & census ED461' },
+      { title: 'Communication Hub', path: '/notifications', category: 'Communication', icon: Bell, desc: 'Messages & announcements' },
+      { title: 'My Profile & Account', path: '/profile', category: 'Account', icon: Users, desc: 'Credentials & preferences' }
+    ];
+
+    if (!searchQuery.trim()) return allDestinations.slice(0, 7);
+    const q = searchQuery.toLowerCase().trim();
+    return allDestinations.filter(item =>
+      item.title.toLowerCase().includes(q) ||
+      item.desc.toLowerCase().includes(q) ||
+      item.category.toLowerCase().includes(q) ||
+      item.path.toLowerCase().includes(q)
+    );
+  }, [searchQuery]);
 
   // WebSocket status subscription
   useEffect(() => {
@@ -150,8 +228,8 @@ export default function TopBar({ onMenuClick }) {
   return (
     <>
       <header className="sticky top-0 z-30 h-16 bg-surface/90 backdrop-blur-md border-b border-line px-4 md:px-8 flex items-center justify-between gap-4 select-none">
-        {/* Left: Mobile hamburger + Page Context */}
-        <div className="flex items-center gap-3 min-w-0">
+        {/* Left: Mobile hamburger + Dedicated Back Button + Page Context */}
+        <div className="flex items-center gap-2.5 min-w-0">
           <button
             type="button"
             onClick={onMenuClick}
@@ -159,6 +237,24 @@ export default function TopBar({ onMenuClick }) {
             className="lg:hidden p-2 text-muted hover:text-ink rounded-lg hover:bg-canvas cursor-pointer shrink-0"
           >
             <Menu className="w-5 h-5" />
+          </button>
+
+          {/* Dedicated Back Navigation Button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (window.history.length > 1) {
+                navigate(-1);
+              } else {
+                navigate('/dashboard');
+              }
+            }}
+            aria-label="Go back to previous page"
+            title="Go back to previous page"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-line bg-surface hover:bg-canvas text-ink text-xs font-semibold transition-colors cursor-pointer shrink-0 shadow-2xs"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 text-muted" />
+            <span className="hidden sm:inline">Back</span>
           </button>
 
           <div className="truncate">
@@ -194,7 +290,7 @@ export default function TopBar({ onMenuClick }) {
           </div>
         </div>
 
-        {/* Right: Search, Notifications, Theme, User */}
+        {/* Right: In-Place Search, Notifications, Theme, User */}
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {displaySchool && (
             <div className="hidden lg:flex items-center gap-1.5 px-3 py-1 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-700 dark:text-brand-300 text-xs font-semibold">
@@ -202,18 +298,87 @@ export default function TopBar({ onMenuClick }) {
               <span className="truncate max-w-[220px]">{displaySchool}</span>
             </div>
           )}
-          {/* Global search trigger */}
-          <button
-            type="button"
-            onClick={() => setIsCommandOpen(true)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-line bg-canvas/60 hover:bg-canvas text-muted hover:text-ink text-xs transition-colors cursor-pointer"
-          >
-            <Search className="w-3.5 h-3.5 text-muted shrink-0" />
-            <span className="hidden md:inline">Search (Ctrl+K)</span>
-            <kbd className="hidden md:inline-block font-mono text-[10px] bg-line/80 px-1 py-0.2 rounded text-muted">
-              ⌘K
-            </kbd>
-          </button>
+
+          {/* In-Place Search Bar (stays in position, never opens a separate modal form) */}
+          <div ref={searchRef} className="relative">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-line bg-canvas/60 focus-within:bg-surface focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20 text-xs transition-all w-36 sm:w-56 md:w-64">
+              <Search className="w-3.5 h-3.5 text-muted shrink-0" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={e => {
+                  setSearchQuery(e.target.value);
+                  setIsSearchOpen(true);
+                }}
+                onFocus={() => setIsSearchOpen(true)}
+                placeholder="Search in place..."
+                className="w-full bg-transparent text-ink placeholder:text-muted focus:outline-hidden text-xs font-medium"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setIsSearchOpen(false);
+                  }}
+                  className="text-muted hover:text-ink text-xs font-bold shrink-0"
+                >
+                  ✕
+                </button>
+              ) : (
+                <kbd className="hidden md:inline-block font-mono text-[9px] bg-line/80 px-1 py-0.5 rounded text-muted shrink-0">
+                  ⌘K
+                </kbd>
+              )}
+            </div>
+
+            {/* In-Place Dropdown - Opens directly anchored underneath the search input! */}
+            {isSearchOpen && (
+              <div className="absolute right-0 mt-2 w-72 sm:w-80 md:w-96 rounded-2xl bg-surface border border-line shadow-2xl p-2 z-50 animate-slideUp max-h-96 overflow-y-auto">
+                <div className="px-3 py-1.5 text-[10px] font-mono font-bold uppercase tracking-wider text-muted border-b border-line mb-1 flex items-center justify-between">
+                  <span>Quick Navigation</span>
+                  <span>{filteredSearchItems.length} destinations</span>
+                </div>
+                {filteredSearchItems.length === 0 ? (
+                  <div className="p-4 text-center text-xs text-muted">
+                    No matching destinations found for "{searchQuery}".
+                  </div>
+                ) : (
+                  filteredSearchItems.map(item => {
+                    const IconComp = item.icon || School;
+                    return (
+                      <button
+                        key={item.path}
+                        type="button"
+                        onClick={() => {
+                          navigate(item.path);
+                          setIsSearchOpen(false);
+                          setSearchQuery('');
+                        }}
+                        className="w-full text-left flex items-center gap-3 p-2.5 rounded-xl hover:bg-canvas transition-colors cursor-pointer group"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-brand-500/10 text-brand-700 dark:text-brand-300 flex items-center justify-center shrink-0 group-hover:bg-brand-500 group-hover:text-white transition-colors">
+                          <IconComp className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-xs text-ink truncate group-hover:text-brand-700 dark:group-hover:text-brand-300">
+                            {item.title}
+                          </div>
+                          <div className="text-[10px] text-muted truncate">
+                            {item.desc}
+                          </div>
+                        </div>
+                        <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-canvas border border-line text-muted">
+                          {item.category}
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Theme toggle */}
           <button
@@ -317,9 +482,6 @@ export default function TopBar({ onMenuClick }) {
           </div>
         </div>
       </header>
-
-      {/* Command Palette Modal */}
-      <CommandPalette isOpen={isCommandOpen} onClose={() => setIsCommandOpen(false)} />
     </>
   );
 }

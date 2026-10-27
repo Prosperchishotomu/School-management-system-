@@ -9,22 +9,23 @@ import {
 } from '../components/ui';
 import {
   Clock, Calendar, Filter, Printer, Plus, Trash2, Edit3,
-  AlertTriangle, Users, BookOpen, Layers, CheckCircle2, ShieldAlert
+  AlertTriangle, Users, BookOpen, Layers, CheckCircle2, ShieldAlert,
+  RotateCcw, Sliders
 } from 'lucide-react';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 const DEFAULT_PERIODS = [
-  { id: '1', name: 'Period 1', time: '08:00 - 08:45' },
-  { id: '2', name: 'Period 2', time: '08:45 - 09:30' },
-  { id: '3', name: 'Period 3', time: '09:30 - 10:15' },
+  { id: '1', name: 'Period 1', time: '08:00 - 08:45', isBreak: false },
+  { id: '2', name: 'Period 2', time: '08:45 - 09:30', isBreak: false },
+  { id: '3', name: 'Period 3', time: '09:30 - 10:15', isBreak: false },
   { id: 'break', name: 'Morning Tea', time: '10:15 - 10:45', isBreak: true },
-  { id: '4', name: 'Period 4', time: '10:45 - 11:30' },
-  { id: '5', name: 'Period 5', time: '11:30 - 12:15' },
+  { id: '4', name: 'Period 4', time: '10:45 - 11:30', isBreak: false },
+  { id: '5', name: 'Period 5', time: '11:30 - 12:15', isBreak: false },
   { id: 'lunch', name: 'Lunch Break', time: '12:15 - 13:15', isBreak: true },
-  { id: '6', name: 'Period 6', time: '13:15 - 14:00' },
-  { id: '7', name: 'Period 7', time: '14:00 - 14:45' },
-  { id: '8', name: 'Period 8', time: '14:45 - 15:30' },
+  { id: '6', name: 'Period 6', time: '13:15 - 14:00', isBreak: false },
+  { id: '7', name: 'Period 7', time: '14:00 - 14:45', isBreak: false },
+  { id: '8', name: 'Period 8', time: '14:45 - 15:30', isBreak: false },
 ];
 
 // Department colour mapping
@@ -49,12 +50,85 @@ const getSubjectColor = (subjectName = '') => {
 };
 
 export default function Timetable() {
-  const { activeSchoolId, user } = useAuth();
+  const { activeSchoolId, user, activeSchool, schoolName } = useAuth();
   const toast = useToast();
 
   const [viewMode, setViewMode] = useState('class'); // 'class' | 'teacher'
   const [selectedClassId, setSelectedClassId] = useState('');
   const [selectedTeacherName, setSelectedTeacherName] = useState('');
+
+  // Dynamic Periods State (persisted per school, fully editable/extensible)
+  const [periods, setPeriods] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`sb_periods_${activeSchoolId}`);
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return DEFAULT_PERIODS;
+  });
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`sb_periods_${activeSchoolId}`);
+      if (saved) {
+        setPeriods(JSON.parse(saved));
+        return;
+      }
+    } catch (_) {}
+    setPeriods(DEFAULT_PERIODS);
+  }, [activeSchoolId]);
+
+  // Modal state for configuring periods & times
+  const [showPeriodsModal, setShowPeriodsModal] = useState(false);
+  const [editingPeriods, setEditingPeriods] = useState([]);
+
+  const handleOpenPeriodsModal = () => {
+    setEditingPeriods(periods.map(p => ({ ...p })));
+    setShowPeriodsModal(true);
+  };
+
+  const handleSavePeriods = () => {
+    if (!editingPeriods || editingPeriods.length === 0) {
+      toast.error('You must keep at least one time slot.');
+      return;
+    }
+    const sanitized = editingPeriods.map((p, idx) => ({
+      id: p.id || `p_${idx + 1}`,
+      name: p.name?.trim() || `Period ${idx + 1}`,
+      time: p.time?.trim() || '08:00 - 08:45',
+      isBreak: Boolean(p.isBreak)
+    }));
+    setPeriods(sanitized);
+    try {
+      localStorage.setItem(`sb_periods_${activeSchoolId}`, JSON.stringify(sanitized));
+    } catch (_) {}
+    toast.success('Timetable periods & custom time slots saved.');
+    setShowPeriodsModal(false);
+  };
+
+  const handleAddPeriod = () => {
+    const nextIdx = editingPeriods.length + 1;
+    setEditingPeriods([
+      ...editingPeriods,
+      {
+        id: `custom_${Date.now().toString(36)}`,
+        name: `Period ${nextIdx}`,
+        time: '15:30 - 16:15',
+        isBreak: false
+      }
+    ]);
+  };
+
+  const handleRemovePeriod = (index) => {
+    if (editingPeriods.length <= 1) {
+      toast.error('You must have at least one time slot.');
+      return;
+    }
+    setEditingPeriods(editingPeriods.filter((_, i) => i !== index));
+  };
+
+  const handleResetPeriods = () => {
+    setEditingPeriods(DEFAULT_PERIODS.map(p => ({ ...p })));
+  };
 
   // Slot modal state
   const [showModal, setShowModal] = useState(false);
@@ -69,7 +143,7 @@ export default function Timetable() {
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
 
-  // Live "Now" indicator state
+  // Live "Now" indicator state dynamically evaluated against configured periods
   const [currentDayIndex, setCurrentDayIndex] = useState(null);
   const [currentPeriodId, setCurrentPeriodId] = useState(null);
 
@@ -81,18 +155,25 @@ export default function Timetable() {
     }
     const hour = now.getHours();
     const min = now.getMinutes();
-    const timeVal = hour * 60 + min;
-    if (timeVal >= 480 && timeVal < 525) setCurrentPeriodId('1');
-    else if (timeVal >= 525 && timeVal < 570) setCurrentPeriodId('2');
-    else if (timeVal >= 570 && timeVal < 615) setCurrentPeriodId('3');
-    else if (timeVal >= 615 && timeVal < 645) setCurrentPeriodId('break');
-    else if (timeVal >= 645 && timeVal < 690) setCurrentPeriodId('4');
-    else if (timeVal >= 690 && timeVal < 735) setCurrentPeriodId('5');
-    else if (timeVal >= 735 && timeVal < 795) setCurrentPeriodId('lunch');
-    else if (timeVal >= 795 && timeVal < 840) setCurrentPeriodId('6');
-    else if (timeVal >= 840 && timeVal < 885) setCurrentPeriodId('7');
-    else if (timeVal >= 885 && timeVal < 930) setCurrentPeriodId('8');
-  }, []);
+    const currentMins = hour * 60 + min;
+
+    const activeSlot = periods.find(p => {
+      if (!p.time) return false;
+      const parts = p.time.split('-');
+      if (parts.length < 2) return false;
+      const toMins = (str) => {
+        const [h, m] = str.trim().split(':').map(Number);
+        return (h || 0) * 60 + (m || 0);
+      };
+      const start = toMins(parts[0]);
+      const end = toMins(parts[1]);
+      return currentMins >= start && currentMins < end;
+    });
+
+    if (activeSlot) {
+      setCurrentPeriodId(activeSlot.id);
+    }
+  }, [periods]);
 
   // Fetch classes, subjects, staff
   const { data: classesData } = useApi(
@@ -204,30 +285,39 @@ export default function Timetable() {
       <div className="print:hidden">
         <PageHeader
           title="Master Academic Timetable"
-          subtitle="Weekly 8-period schedule with subject clustering, clash verification, and live period tracker."
+          subtitle="Weekly schedule with customizable period times, subject clustering, clash verification & live tracker."
           actions={
             <div className="flex items-center gap-2">
               <button
+                onClick={handleOpenPeriodsModal}
+                className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                title="Add, edit or remove timetable periods & custom times"
+              >
+                <Clock className="w-4 h-4 text-brand-700 dark:text-brand-400" />
+                <span>Configure Time Slots ({periods.length})</span>
+              </button>
+              <button
                 onClick={() => window.print()}
-                className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs"
+                className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <Printer className="w-4 h-4 text-muted" />
                 Print Schedule
               </button>
-              {['school_admin', 'super_admin'].includes(user?.role) && (
+              {['school_admin', 'super_admin', 'principal', 'headmaster', 'deputy_head'].includes(user?.role) && (
                 <button
                   onClick={() => {
+                    const firstNonBreak = periods.find(p => !p.isBreak)?.name || 'Period 1';
                     setSlotForm({
                       id: '',
                       day: 'Monday',
-                      period: 'Period 1',
+                      period: firstNonBreak,
                       subject: subjects[0]?.name || 'Mathematics',
                       teacher: staff[0]?.name || '',
                       room: 'Room 10'
                     });
                     setShowModal(true);
                   }}
-                  className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+                  className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   Add Lesson Slot
@@ -328,7 +418,7 @@ export default function Timetable() {
 
       {/* PRINT HEADER ONLY VISIBLE ON A4 PRINT */}
       <div className="hidden print:block mb-6 border-b border-black pb-4 text-center">
-        <h1 className="text-2xl font-bold uppercase tracking-wider font-display">Harare Academy & College</h1>
+        <h1 className="text-2xl font-bold uppercase tracking-wider font-display">{activeSchool?.name || schoolName || 'School Timetable'}</h1>
         <h2 className="text-base font-semibold mt-1">Official Academic Master Timetable — {viewMode === 'class' ? activeClassName : selectedTeacherName}</h2>
         <p className="text-xs text-gray-600 mt-1">Term 1 2026 Academic Session • Generated on {new Date().toLocaleDateString()}</p>
       </div>
@@ -364,7 +454,7 @@ export default function Timetable() {
               </tr>
             </thead>
             <tbody className="divide-y divide-line text-xs">
-              {DEFAULT_PERIODS.map(period => {
+              {periods.map(period => {
                 const isBreak = period.isBreak;
                 const isCurrentPeriod = currentPeriodId === period.id;
 
@@ -508,14 +598,14 @@ export default function Timetable() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">Period *</label>
+              <label className="block text-xs font-bold text-ink mb-1">Period / Time Slot *</label>
               <select
                 value={slotForm.period}
                 onChange={e => setSlotForm({ ...slotForm, period: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
               >
-                {DEFAULT_PERIODS.filter(p => !p.isBreak).map(p => (
-                  <option key={p.name} value={p.name}>{p.name} ({p.time})</option>
+                {periods.filter(p => !p.isBreak).map(p => (
+                  <option key={p.id} value={p.name}>{p.name} ({p.time})</option>
                 ))}
               </select>
             </div>
@@ -592,6 +682,124 @@ export default function Timetable() {
         confirmText="Remove Slot"
         danger
       />
+
+      {/* MANAGE TIME SLOTS MODAL */}
+      <Modal
+        isOpen={showPeriodsModal}
+        onClose={() => setShowPeriodsModal(false)}
+        title="Configure Timetable Time Slots"
+        description="Add, edit, or remove period slots and custom times (e.g. 07:30 - 08:15). Changes update your master timetable and period schedules."
+      >
+        <div className="space-y-4">
+          <div className="max-h-[380px] overflow-y-auto space-y-2.5 pr-1">
+            {editingPeriods.map((slot, idx) => (
+              <div
+                key={slot.id || idx}
+                className="p-3 rounded-xl border border-line bg-canvas flex flex-col sm:flex-row sm:items-center gap-3"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-brand-500/10 text-brand-700 font-mono font-bold text-xs flex items-center justify-center shrink-0">
+                    {idx + 1}
+                  </span>
+                  <div className="w-36">
+                    <label className="block text-[10px] font-bold text-muted uppercase">Slot Label</label>
+                    <input
+                      type="text"
+                      value={slot.name}
+                      onChange={e => {
+                        const updated = [...editingPeriods];
+                        updated[idx].name = e.target.value;
+                        setEditingPeriods(updated);
+                      }}
+                      placeholder="e.g. Period 1"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-surface text-xs font-semibold text-ink focus:ring-2 focus:ring-brand-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold text-muted uppercase">Time Range (HH:MM - HH:MM)</label>
+                  <input
+                    type="text"
+                    value={slot.time}
+                    onChange={e => {
+                      const updated = [...editingPeriods];
+                      updated[idx].time = e.target.value;
+                      setEditingPeriods(updated);
+                    }}
+                    placeholder="e.g. 08:00 - 08:45"
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-line bg-surface text-xs font-mono font-semibold text-ink focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between sm:justify-start gap-3 pt-1 sm:pt-4">
+                  <label className="flex items-center gap-1.5 text-xs text-ink cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(slot.isBreak)}
+                      onChange={e => {
+                        const updated = [...editingPeriods];
+                        updated[idx].isBreak = e.target.checked;
+                        setEditingPeriods(updated);
+                      }}
+                      className="rounded border-line text-brand-700 focus:ring-brand-500"
+                    />
+                    <span className="text-[11px] font-medium text-muted">Break</span>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePeriod(idx)}
+                    disabled={editingPeriods.length <= 1}
+                    className="p-1.5 rounded-lg text-danger hover:bg-danger/10 disabled:opacity-30 cursor-pointer"
+                    title="Remove Slot"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <button
+              type="button"
+              onClick={handleAddPeriod}
+              className="btn-secondary text-xs flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4 text-brand-700" />
+              <span>Add Another Time Slot</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleResetPeriods}
+              className="text-xs text-muted hover:text-ink flex items-center gap-1 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Standard Times</span>
+            </button>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowPeriodsModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSavePeriods}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs cursor-pointer flex items-center gap-1.5"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Save Time Slots</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

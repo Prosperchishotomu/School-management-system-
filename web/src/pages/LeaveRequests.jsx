@@ -176,8 +176,8 @@ export default function LeaveRequests() {
                 <div className="flex items-center gap-2.5">
                   <Avatar name={row.student_name || 'Pupil'} size="sm" />
                   <div>
-                    <div className="font-bold text-ink">{row.student_name || 'Farai Sibanda'}</div>
-                    <div className="text-[11px] text-muted">{row.class_name || 'Form 3 North'}</div>
+                    <div className="font-bold text-ink">{row.student_name || 'Student'}</div>
+                    <div className="text-[11px] text-muted">{row.class_name || '—'}</div>
                   </div>
                 </div>
               )
@@ -233,11 +233,7 @@ export default function LeaveRequests() {
               )
             }
           ]}
-          data={requests.length > 0 ? requests : [
-            { id: 1, student_name: 'Farai Sibanda', class_name: 'Form 3 North', request_type: 'medical', start_date: '2026-03-26', end_date: '2026-03-28', reason: 'High fever, doctor advised 3 days bed rest.', has_doctor_note: true, status: 'pending' },
-            { id: 2, student_name: 'Ruvimbo Choto', class_name: 'Form 4 East', request_type: 'compassionate', start_date: '2026-03-20', end_date: '2026-03-22', reason: 'Family funeral in Mutare.', has_doctor_note: false, status: 'approved' },
-            { id: 3, student_name: 'Tendai Moyo', class_name: 'Form 2 West', request_type: 'medical', start_date: '2026-03-12', end_date: '2026-03-13', reason: 'Dental surgery appointment.', has_doctor_note: true, status: 'approved' },
-          ]}
+          data={requests}
           emptyTitle="No Leave Requests Found"
           emptyMessage="No student absence applications match the selected status."
         />

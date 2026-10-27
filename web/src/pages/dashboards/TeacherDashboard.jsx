@@ -21,7 +21,7 @@ import { getCurrentTerm } from '../../utils/dateTerms';
 export default function TeacherDashboard() {
   const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const currentTerm = getCurrentTerm();
 
   // 1. Fetch Teacher Role Dashboard Summary
@@ -67,31 +67,11 @@ export default function TeacherDashboard() {
 
   // Base raw timetable (from backend summary or dynamically seeded from teacher's actual subject allocations)
   const rawTimetable = useMemo(() => {
-    if (summary?.role_specific?.timetable_today && Array.isArray(summary.role_specific.timetable_today) && summary.role_specific.timetable_today.length > 0) {
+    if (summary?.role_specific?.timetable_today && Array.isArray(summary.role_specific.timetable_today)) {
       return summary.role_specific.timetable_today;
     }
-
-    const defaultAssignments = [
-      { subject: assignedSubjectsList[0] || 'Mathematics', class: teachingAssignments[0]?.class_name || 'Form 3 Gamma' },
-      { subject: assignedSubjectsList[0] || 'Mathematics', class: teachingAssignments[1]?.class_name || 'Form 4 Delta' },
-      { subject: assignedSubjectsList[1] || assignedSubjectsList[0] || 'Mathematics', class: teachingAssignments[2]?.class_name || 'Lower 6 Sciences' },
-      { subject: assignedSubjectsList[1] || 'Combined Science', class: teachingAssignments[3]?.class_name || 'Form 2 Beta' }
-    ];
-
-    const standardPeriodTimes = [
-      '08:00 - 08:45',
-      '08:50 - 09:35',
-      '09:40 - 10:25',
-      '10:45 - 11:30'
-    ];
-
-    return defaultAssignments.map((item, idx) => ({
-      period: String(idx + 1),
-      time: standardPeriodTimes[idx] || '08:00 - 08:45',
-      subject: item.subject,
-      class: item.class
-    }));
-  }, [summary, assignedSubjectsList, teachingAssignments]);
+    return [];
+  }, [summary]);
 
   // Timetable with real live period statuses (never hardcoded)
   const dynamicTimetable = useMemo(() => {
@@ -188,24 +168,23 @@ export default function TeacherDashboard() {
                 Subject Teacher Allocations
               </span>
               <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/10 text-blue-700 dark:text-blue-300 font-bold border border-blue-500/20">
-                {assignedSubjectsList.length || 1} Subject{assignedSubjectsList.length !== 1 ? 's' : ''}
+                {assignedSubjectsList.length} Subject{assignedSubjectsList.length !== 1 ? 's' : ''}
               </span>
             </div>
             <p className="text-xs text-muted mt-1 leading-relaxed">
-              Teaching {assignedSubjectsList.join(', ') || 'Mathematics & Sciences'} across {teachingAssignments.length || 4} secondary / high school streams.
+              {assignedSubjectsList.length > 0
+                ? `Teaching ${assignedSubjectsList.join(', ')} across ${teachingAssignments.length} class stream${teachingAssignments.length !== 1 ? 's' : ''}.`
+                : 'No subject teaching allocations assigned yet.'}
             </p>
-            <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-              {(teachingAssignments.length > 0 ? teachingAssignments : [
-                { class_name: 'Form 3 Gamma', subject_name: 'Mathematics' },
-                { class_name: 'Form 4 Delta', subject_name: 'Mathematics' },
-                { class_name: 'Lower 6 Sciences', subject_name: 'Mathematics' },
-                { class_name: 'Form 2 Beta', subject_name: 'Combined Science' }
-              ]).slice(0, 4).map((ta, i) => (
-                <span key={i} className="px-2 py-1 rounded-lg bg-canvas text-[11px] font-semibold text-ink border border-line">
-                  {ta.class_name || ta.name}: <span className="text-brand-700 dark:text-brand-400 font-bold">{ta.subject_name || 'Subject'}</span>
-                </span>
-              ))}
-            </div>
+            {teachingAssignments.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                {teachingAssignments.slice(0, 4).map((ta, i) => (
+                  <span key={i} className="px-2 py-1 rounded-lg bg-canvas text-[11px] font-semibold text-ink border border-line">
+                    {ta.class_name || ta.name}: <span className="text-brand-700 dark:text-brand-400 font-bold">{ta.subject_name || 'Subject'}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -278,54 +257,60 @@ export default function TeacherDashboard() {
           </button>
         }
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {dynamicTimetable.map((t, idx) => {
-            const isNow = t.status === 'current';
-            const isDone = t.status === 'completed';
+        {dynamicTimetable.length === 0 ? (
+          <div className="p-8 text-center text-xs text-muted">
+            No active periods scheduled on your timetable for today.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {dynamicTimetable.map((t, idx) => {
+              const isNow = t.status === 'current';
+              const isDone = t.status === 'completed';
 
-            return (
-              <div
-                key={idx}
-                onClick={() => navigate('/timetable')}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer hover:shadow-md hover:-translate-y-0.5 ${
-                  isNow
-                    ? 'bg-brand-50/70 border-brand-500/80 ring-2 ring-brand-500/30 dark:bg-brand-950/40'
-                    : isDone
-                      ? 'bg-canvas/50 border-line/60 opacity-80 hover:opacity-100'
-                      : 'bg-surface border-line hover:border-brand-500/50'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[11px] font-mono font-bold text-muted uppercase">Period {t.period}</span>
-                  {isNow ? (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-700 text-white uppercase tracking-wider animate-pulse shadow-xs">
-                      In Session
-                    </span>
-                  ) : isDone ? (
-                    <span className="text-[10px] text-brand-700 dark:text-brand-400 font-semibold flex items-center gap-0.5">
-                      <Check className="w-3 h-3" /> Done
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted font-medium">Upcoming</span>
-                  )}
+              return (
+                <div
+                  key={idx}
+                  onClick={() => navigate('/timetable')}
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer hover:shadow-md hover:-translate-y-0.5 ${
+                    isNow
+                      ? 'bg-brand-50/70 border-brand-500/80 ring-2 ring-brand-500/30 dark:bg-brand-950/40'
+                      : isDone
+                        ? 'bg-canvas/50 border-line/60 opacity-80 hover:opacity-100'
+                        : 'bg-surface border-line hover:border-brand-500/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] font-mono font-bold text-muted uppercase">Period {t.period}</span>
+                    {isNow ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-brand-700 text-white uppercase tracking-wider animate-pulse shadow-xs">
+                        In Session
+                      </span>
+                    ) : isDone ? (
+                      <span className="text-[10px] text-brand-700 dark:text-brand-400 font-semibold flex items-center gap-0.5">
+                        <Check className="w-3 h-3" /> Done
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted font-medium">Upcoming</span>
+                    )}
+                  </div>
+                  <div className="font-display font-bold text-sm text-ink">{t.subject}</div>
+                  <div className="text-xs text-muted mt-0.5">{t.class}</div>
+                  <div className="text-[10px] text-muted font-mono mt-2 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>{t.time}</span>
+                  </div>
                 </div>
-                <div className="font-display font-bold text-sm text-ink">{t.subject}</div>
-                <div className="text-xs text-muted mt-0.5">{t.class}</div>
-                <div className="text-[10px] text-muted font-mono mt-2 flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  <span>{t.time}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </Card>
 
       {/* KPI Strip */}
       <KpiStrip>
         <StatCard
           title="Marks Entered"
-          value="78%"
+          value={`${summary?.role_specific?.marks_entered_pct ?? 0}%`}
           sublabel="Mid-term CA components"
           icon={GraduationCap}
           iconColor="brand"
@@ -334,8 +319,8 @@ export default function TeacherDashboard() {
 
         <StatCard
           title="Attendance Action"
-          value={isClassTeacher ? "1 Class Pending" : "2 Classes"}
-          sublabel="Registers pending submission"
+          value={isClassTeacher ? "1 Class Assigned" : "Subject Teacher"}
+          sublabel={isClassTeacher ? "Form Master daily roll call" : "Class teacher manages roll call"}
           icon={Calendar}
           iconColor="accent"
           to="/attendance"
@@ -343,7 +328,7 @@ export default function TeacherDashboard() {
 
         <StatCard
           title="Students At Risk"
-          value="6 Learners"
+          value={`${summary?.role_specific?.students_at_risk ?? 0} Learners`}
           sublabel="Attendance < 75% or fail grade"
           icon={AlertTriangle}
           iconColor="danger"
@@ -352,8 +337,8 @@ export default function TeacherDashboard() {
 
         <StatCard
           title="Schemes of Work"
-          value={`Week ${currentTerm.week || 7} Approved`}
-          sublabel="HOD reviewed & signed"
+          value={`Week ${currentTerm.week || 7}`}
+          sublabel="Term schemes matrix"
           icon={Layers}
           iconColor="brand"
           to="/teacher/schemes"
@@ -375,20 +360,19 @@ export default function TeacherDashboard() {
             </button>
           }
         >
-          <div className="grid grid-cols-2 gap-4 py-3">
-            <div className="flex flex-col items-center">
-              <ProgressRing value={90} size={84} color="brand" label="Form 3 Gamma" />
+          {teachingAssignments.length === 0 ? (
+            <div className="p-8 text-center text-xs text-muted">
+              No classes currently assigned for marks entry.
             </div>
-            <div className="flex flex-col items-center">
-              <ProgressRing value={65} size={84} color="accent" label="Form 4 Delta" />
+          ) : (
+            <div className="grid grid-cols-2 gap-4 py-3">
+              {teachingAssignments.slice(0, 4).map((ta, idx) => (
+                <div key={idx} className="flex flex-col items-center">
+                  <ProgressRing value={0} size={84} color="brand" label={ta.class_name} />
+                </div>
+              ))}
             </div>
-            <div className="flex flex-col items-center">
-              <ProgressRing value={85} size={84} color="brand" label="Lower 6 Sciences" />
-            </div>
-            <div className="flex flex-col items-center">
-              <ProgressRing value={40} size={84} color="danger" label="Form 2 Beta" />
-            </div>
-          </div>
+          )}
         </Card>
 
         {/* Students At Risk */}
@@ -397,21 +381,8 @@ export default function TeacherDashboard() {
           subtitle="Learners falling below performance thresholds"
           className="lg:col-span-2"
         >
-          <div className="divide-y divide-line/60">
-            {[
-              { name: 'Kudakwashe Zhou', class: 'Form 4 Delta', reason: 'Math mark 38% & 3 absences', severity: 'critical' },
-              { name: 'Tariro Mhlanga', class: 'Form 3 Gamma', reason: 'Missed CALA Project 1 submission', severity: 'warning' },
-              { name: 'Panashe Dube', class: 'Form 2 Beta', reason: 'Attendance dropped to 68%', severity: 'critical' },
-              { name: 'Ruvimbo Chiwenga', class: 'Lower 6 Sciences', reason: 'Chemistry test score 42%', severity: 'warning' }
-            ].map((s, idx) => (
-              <div key={idx} className="py-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold text-ink">{s.name}</div>
-                  <div className="text-[11px] text-muted">{s.class} • {s.reason}</div>
-                </div>
-                <StatusPill status={s.severity === 'critical' ? 'critical' : 'pending'} label={s.severity === 'critical' ? 'Action Required' : 'Monitor'} />
-              </div>
-            ))}
+          <div className="p-8 text-center text-xs text-muted">
+            No learners currently flagged for academic intervention.
           </div>
         </Card>
       </div>

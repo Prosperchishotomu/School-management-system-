@@ -16,18 +16,20 @@ import {
 import {
   FileText, Printer, CheckCircle2, Award, TrendingUp,
   Download, Eye, Shield, School, ArrowRight, Lock, Unlock,
-  GraduationCap, CalendarCheck, BookOpen, AlertCircle, Users, Check
+  GraduationCap, CalendarCheck, BookOpen, AlertCircle, Users, Check,
+  Search, Filter, Sparkles, Layers, BarChart3, ChevronDown, CheckCircle, XCircle,
+  MessageSquare, Settings2
 } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip } from 'recharts';
-import { getCurrentTerm } from '../utils/dateTerms';
+import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, Legend } from 'recharts';
+import { getCurrentTerm, formatTermLabel } from '../utils/dateTerms';
 
 export default function Results() {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeSchool, schoolName } = useAuth();
   const currentTerm = getCurrentTerm();
   const toast = useToast();
   const [searchParams] = useSearchParams();
 
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const userRole = user?.role || 'student';
   const isParent = ['parent', 'guardian', 'student'].includes(userRole);
   const isAdmin = ['school_admin', 'super_admin', 'principal', 'head', 'headmaster', 'deputy_head'].includes(userRole);
@@ -46,8 +48,8 @@ export default function Results() {
   const isHistorical = selectedYear !== String(currentTerm.year) || selectedTerm !== currentTerm.name;
 
   const availableYears = useMemo(() => {
-    const startYear = 2000;
-    const endYear = currentTerm.year || 2026;
+    const endYear = currentTerm.year || new Date().getFullYear();
+    const startYear = endYear - 4;
     const yrs = [];
     for (let y = endYear; y >= startYear; y--) {
       yrs.push(String(y));
@@ -251,7 +253,7 @@ export default function Results() {
     { enabled: Boolean(!isParent && selectedClassId) }
   );
 
-  const studentsResults = useMemo(() => {
+  const rawStudentsList = useMemo(() => {
     if (isParent || !classResultsPayload) return [];
     if (Array.isArray(classResultsPayload)) return classResultsPayload;
     if (Array.isArray(classResultsPayload.results)) return classResultsPayload.results;
@@ -260,13 +262,203 @@ export default function Results() {
     return [];
   }, [isParent, classResultsPayload]);
 
+  // Sort students in strictly descending order of performance
+  const studentsResults = useMemo(() => {
+    if (!rawStudentsList || rawStudentsList.length === 0) return [];
+    return [...rawStudentsList].sort((a, b) => {
+      // 1. If assigned rank exists (Rank 1 is highest)
+      if (a.rank != null && b.rank != null && a.rank !== b.rank) {
+        return Number(a.rank) - Number(b.rank);
+      }
+      // 2. Primary units: lower units is higher distinction (Unit 1 is top)
+      if (a.total_units != null && b.total_units != null && a.total_units !== b.total_units) {
+        return Number(a.total_units) - Number(b.total_units);
+      }
+      // 3. A-Level points: higher points is top
+      if (a.total_points != null && b.total_points != null && a.total_points !== b.total_points) {
+        return Number(b.total_points) - Number(a.total_points);
+      }
+      // 4. Overall percentage: descending (100% down to 0%)
+      return (Number(b.overall_percentage) || 0) - (Number(a.overall_percentage) || 0);
+    });
+  }, [rawStudentsList]);
+
+  // ==========================================
+  // FILTERS & SEARCH (FOR TEACHERS & ADMINS)
+  // ==========================================
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState('all');
+  const [selectedGradeFilter, setSelectedGradeFilter] = useState('all');
+  const [broadsheetView, setBroadsheetView] = useState('full'); // 'full' (all subjects & marks) | 'summary'
+
+  // Extract all distinct subjects across this class for the multi-subject broadsheet
+  const classSubjects = useMemo(() => {
+    const map = new Map();
+    studentsResults.forEach(st => {
+      (st.subjects || []).forEach(sub => {
+        const name = sub.subject_name || sub.name;
+        if (name && !map.has(name)) {
+          map.set(name, {
+            name,
+            code: sub.subject_code || name.substring(0, 4).toUpperCase()
+          });
+        }
+      });
+    });
+    return Array.from(map.values());
+  }, [studentsResults]);
+
   const isClassTeacher = Boolean(classResultsPayload?.is_class_teacher || classResultsPayload?.data?.is_class_teacher || isAdmin);
   const isSubjectTeacher = Boolean(classResultsPayload?.is_subject_teacher || classResultsPayload?.data?.is_subject_teacher);
   const assignedSubjects = classResultsPayload?.assigned_subjects || classResultsPayload?.data?.assigned_subjects || [];
   const isSecondary = Boolean(classResultsPayload?.is_secondary || classResultsPayload?.data?.is_secondary);
 
+  const streamComparison = classResultsPayload?.stream_comparison || classResultsPayload?.data?.stream_comparison || [];
+  const isCohortAggregated = Boolean(classResultsPayload?.is_aggregated || classResultsPayload?.data?.is_aggregated || String(selectedClassId).startsWith('cohort:'));
+  const cohortName = classResultsPayload?.cohort_name || classResultsPayload?.data?.cohort_name || (String(selectedClassId).startsWith('cohort:') ? String(selectedClassId).replace('cohort:', '').trim() : null);
+
   const currentClassObj = availableClasses.find(c => c.id === selectedClassId) || allClasses.find(c => c.id === selectedClassId);
-  const currentClassName = currentClassObj?.name || 'Class Broadsheet';
+  const currentClassName = isCohortAggregated
+    ? `All ${cohortName || 'Cohort'} (${streamComparison.length > 0 ? streamComparison.length : 'All'} Streams Aggregated)`
+    : (currentClassObj?.name || 'Class Broadsheet');
+
+  // Build Cohort & Stream Options (aggregating sister streams into grade cohorts)
+  const cohortOptions = useMemo(() => {
+    if (!availableClasses || availableClasses.length === 0) return [];
+    
+    // Group classes by grade_level or first name word
+    const gradeGroups = new Map();
+    availableClasses.forEach(c => {
+      const gLevel = c.grade_level || c.name.split(' ')[0] || 'Cohorts';
+      if (!gradeGroups.has(gLevel)) gradeGroups.set(gLevel, []);
+      gradeGroups.get(gLevel).push(c);
+    });
+
+    const options = [];
+    gradeGroups.forEach((classesInGrade, gradeName) => {
+      if (classesInGrade.length > 1) {
+        options.push({
+          id: `cohort:${gradeName}`,
+          name: `⭐ All ${gradeName} (${classesInGrade.length} Streams Aggregated)`,
+          is_aggregated: true,
+          grade_name: gradeName
+        });
+      }
+      classesInGrade.forEach(c => {
+        options.push({
+          id: c.id,
+          name: classesInGrade.length > 1 ? `  ↳ ${c.name}` : c.name,
+          role_type: c.role_type,
+          subject_name: c.subject_name
+        });
+      });
+    });
+    return options;
+  }, [availableClasses]);
+
+  // Official Terminal Appraisal State
+  const [showEvalModal, setShowEvalModal] = useState(false);
+  const [evaluatingStudent, setEvaluatingStudent] = useState(null);
+  const [evalSubmitting, setEvalSubmitting] = useState(false);
+  const [evalForm, setEvalForm] = useState({
+    conduct: 'Good',
+    class_teacher_remark: '',
+    head_remark: '',
+    next_term_date: ''
+  });
+
+  const handleOpenEvaluation = (student) => {
+    setEvaluatingStudent(student);
+    setEvalForm({
+      conduct: student.conduct || 'Good',
+      class_teacher_remark: student.class_teacher_remark || '',
+      head_remark: student.head_remark || '',
+      next_term_date: student.next_term_date || ''
+    });
+    setShowEvalModal(true);
+  };
+
+  const handleSaveEvaluation = async (e) => {
+    e.preventDefault();
+    if (!evaluatingStudent) return;
+    setEvalSubmitting(true);
+    try {
+      await api.put(`/schools/${schoolId}/students/${evaluatingStudent.student_id}/evaluation`, {
+        term: selectedTerm,
+        academic_year: selectedYear,
+        ...evalForm
+      });
+      toast.success(`Appraisal recorded for ${evaluatingStudent.student_name}.`);
+      setShowEvalModal(false);
+      if (activeStudentReport && activeStudentReport.student_id === evaluatingStudent.student_id) {
+        setActiveStudentReport(prev => ({ ...prev, ...evalForm }));
+      }
+      invalidate([`class_results_${schoolId}_${selectedClassId}`, `student_eval_${evaluatingStudent.student_id}`]);
+      refetchClassResults();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save evaluation.');
+    } finally {
+      setEvalSubmitting(false);
+    }
+  };
+
+  // Student Elective Subjects Assignment State
+  const [showSubjectModal, setShowSubjectModal] = useState(false);
+  const [subjectStudent, setSubjectStudent] = useState(null);
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
+  const [allAvailableSubjects, setAllAvailableSubjects] = useState([]);
+  const [subjectSubmitting, setSubjectSubmitting] = useState(false);
+
+  const handleOpenSubjectAssignment = async (student) => {
+    setSubjectStudent(student);
+    try {
+      const res = await api.get(`/schools/${schoolId}/students/${student.student_id}/subjects`);
+      const assigned = res.data?.data?.assigned_subjects || res.data?.assigned_subjects || [];
+      const available = res.data?.data?.available_subjects || res.data?.available_subjects || [];
+      setSelectedSubjectIds(assigned.map(a => a.subject_id));
+      setAllAvailableSubjects(available);
+      setShowSubjectModal(true);
+    } catch (err) {
+      toast.error('Failed to load student subjects.');
+    }
+  };
+
+  const applyComboPreset = (type) => {
+    if (type === 'all') {
+      setSelectedSubjectIds(allAvailableSubjects.map(s => s.id));
+      return;
+    }
+    const keywords = {
+      sciences: ['physics', 'chemistry', 'biology', 'mathematics', 'pure math', 'computer science'],
+      commercials: ['accounting', 'accounts', 'commerce', 'business studies', 'economics', 'mathematics'],
+      arts: ['history', 'literature', 'divinity', 'religious studies', 'geography', 'shona', 'ndebele', 'sociology']
+    }[type] || [];
+
+    const matched = allAvailableSubjects.filter(sub => {
+      const n = (sub.name || '').toLowerCase();
+      return keywords.some(k => n.includes(k));
+    });
+    setSelectedSubjectIds(matched.map(m => m.id));
+  };
+
+  const handleSaveStudentSubjects = async () => {
+    if (!subjectStudent) return;
+    setSubjectSubmitting(true);
+    try {
+      await api.put(`/schools/${schoolId}/students/${subjectStudent.student_id}/subjects`, {
+        subject_ids: selectedSubjectIds,
+        class_id: subjectStudent.class_id
+      });
+      toast.success(`Assigned ${selectedSubjectIds.length} subjects to ${subjectStudent.student_name}.`);
+      setShowSubjectModal(false);
+      invalidate([`class_results_${schoolId}_${selectedClassId}`, `students_${schoolId}`]);
+      refetchClassResults();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save subject enrollment.');
+    } finally {
+      setSubjectSubmitting(false);
+    }
+  };
 
   // Publication toggle
   const handleTogglePublish = async () => {
@@ -369,7 +561,7 @@ export default function Results() {
   }, [isParent, studentsResults, isPrimary]);
 
   const cohortPassRate = useMemo(() => {
-    if (!Array.isArray(studentsResults) || !studentsResults.length) return 86.4;
+    if (!Array.isArray(studentsResults) || !studentsResults.length) return null;
     const passes = studentsResults.filter(s => s.pass_status === 'pass' || (s.overall_percentage >= 50));
     return parseFloat(((passes.length / studentsResults.length) * 100).toFixed(1));
   }, [studentsResults]);
@@ -378,7 +570,7 @@ export default function Results() {
     if (!Array.isArray(studentsResults) || !studentsResults.length) {
       if (isPrimary) return { label: 'Cohort Units Average', val: '—', note: 'Primary school units (Unit 1 is highest distinction)' };
       if (levelCategory === 'a_level') return { label: 'Points Average', val: '—', note: '5-point scale (A=5, B=4, C=3, D=2, E=1)' };
-      return { label: 'Average Passes', val: '—', note: 'Pass grades: A, B, C (Symbols: A-U)' };
+      return { label: 'Average Passes', val: '—', note: 'Pass grades: A, B, C' };
     }
 
     if (isPrimary) {
@@ -393,6 +585,92 @@ export default function Results() {
     return { label: 'Average Quality Passes', val: `${avgPasses} Passes`, note: 'Symbols: A, B, C, D, E, U' };
   }, [studentsResults, levelCategory, isPrimary]);
 
+  // Filtered student list according to active search and filters
+  const filteredStudents = useMemo(() => {
+    let list = studentsResults;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(st =>
+        (st.student_name && st.student_name.toLowerCase().includes(q)) ||
+        (st.admission_number && String(st.admission_number).toLowerCase().includes(q))
+      );
+    }
+
+    if (selectedSubjectFilter !== 'all') {
+      list = list.filter(st =>
+        (st.subjects || []).some(s =>
+          (s.subject_name || s.name)?.toLowerCase() === selectedSubjectFilter.toLowerCase() ||
+          (s.subject_code && s.subject_code.toLowerCase() === selectedSubjectFilter.toLowerCase())
+        )
+      );
+    }
+
+    if (selectedGradeFilter !== 'all') {
+      list = list.filter(st => {
+        const pct = Number(st.overall_percentage) || 0;
+        const g = String(st.grade || '').toUpperCase();
+        const units = Number(st.total_units);
+        if (selectedGradeFilter === 'distinction') {
+          if (isPrimary) return (!isNaN(units) && units <= 12) || pct >= 75 || g === 'UNIT 1' || g === 'UNIT 2';
+          if (levelCategory === 'a_level') return (Number(st.total_points) >= 10) || pct >= 75 || ['A', 'A*'].includes(g);
+          return ['A', 'A*'].includes(g) || pct >= 75;
+        }
+        if (selectedGradeFilter === 'credit') {
+          if (isPrimary) return (!isNaN(units) && units > 12 && units <= 24) || (pct >= 60 && pct < 75);
+          return ['B', 'C'].includes(g) || (pct >= 60 && pct < 75);
+        }
+        if (selectedGradeFilter === 'pass') {
+          return st.pass_status === 'pass' || pct >= 50;
+        }
+        if (selectedGradeFilter === 'fail') {
+          return st.pass_status !== 'pass' && pct < 50;
+        }
+        return true;
+      });
+    }
+
+    return list;
+  }, [studentsResults, searchQuery, selectedSubjectFilter, selectedGradeFilter, isPrimary, levelCategory]);
+
+  // Aggregate multi-subject performance analytics for 3D visual deck
+  const subjectAnalytics = useMemo(() => {
+    const map = new Map();
+    studentsResults.forEach(st => {
+      (st.subjects || []).forEach(sub => {
+        const sName = sub.subject_name || sub.name;
+        if (!sName) return;
+        if (!map.has(sName)) {
+          map.set(sName, {
+            name: sName,
+            code: sub.subject_code || sName.substring(0, 4).toUpperCase(),
+            scores: [],
+            passes: 0,
+            distinctions: 0,
+            highest: 0,
+            lowest: 100
+          });
+        }
+        const item = map.get(sName);
+        const score = Number(sub.average ?? sub.overall_percentage ?? 0);
+        item.scores.push(score);
+        if (score >= 50) item.passes++;
+        if (score >= 75) item.distinctions++;
+        if (score > item.highest) item.highest = score;
+        if (score < item.lowest) item.lowest = score;
+      });
+    });
+    return Array.from(map.values()).map(item => {
+      const avg = item.scores.length ? Math.round(item.scores.reduce((a, b) => a + b, 0) / item.scores.length) : 0;
+      const passRate = item.scores.length ? Math.round((item.passes / item.scores.length) * 100) : 0;
+      return {
+        ...item,
+        count: item.scores.length,
+        average: avg,
+        passRate
+      };
+    });
+  }, [studentsResults]);
+
   // Academic Period Archive & Historical Navigator Component
   const renderPeriodNavigator = () => (
     <div className="glass-card p-4 rounded-2xl border border-line bg-surface/90 shadow-xs space-y-3">
@@ -403,10 +681,10 @@ export default function Results() {
           </div>
           <div>
             <div className="text-xs font-bold text-ink uppercase tracking-wider font-mono flex items-center gap-2">
-              <span>Academic Period Navigation & Historical Archives</span>
+              <span>Academic Period Navigation</span>
               {isHistorical ? (
                 <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
-                  Historical Archive ({selectedTerm}, {selectedYear})
+                  Archived Period ({selectedTerm}, {selectedYear})
                 </span>
               ) : (
                 <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
@@ -415,7 +693,7 @@ export default function Results() {
               )}
             </div>
             <p className="text-[11px] text-muted">
-              Explore terminal examination results, report cards, and broadsheets across past terms and years (e.g. 3rd Term of 2001).
+              Explore terminal examination results, report cards, and broadsheets across terms and academic years.
             </p>
           </div>
         </div>
@@ -432,7 +710,7 @@ export default function Results() {
             >
               {availableYears.map(yr => (
                 <option key={yr} value={yr} className="text-ink bg-surface">
-                  {yr} {yr === '2001' ? '• (Archive 2001)' : ''}
+                  {yr}
                 </option>
               ))}
             </select>
@@ -455,26 +733,12 @@ export default function Results() {
             ))}
           </div>
 
-          {/* Quick jump to 2001 Term 3 */}
-          {(selectedYear !== '2001' || selectedTerm !== 'Term 3') && (
-            <button
-              onClick={() => {
-                setSelectedYear('2001');
-                setSelectedTerm('Term 3');
-              }}
-              className="px-2.5 py-1.5 rounded-xl border border-line bg-surface hover:bg-canvas text-muted hover:text-ink text-[11px] font-mono transition cursor-pointer"
-              title="Jump to Term 3, 2001"
-            >
-              Jump to 2001 Term 3
-            </button>
-          )}
-
           {/* Return to Current Term */}
           {isHistorical && (
             <button
               onClick={() => {
                 setSelectedTerm(currentTerm.name || 'Term 3');
-                setSelectedYear(String(currentTerm.year || 2026));
+                setSelectedYear(String(currentTerm.year || new Date().getFullYear()));
               }}
               className="px-3 py-1.5 rounded-xl border border-brand-500/30 bg-brand-500/10 hover:bg-brand-500/20 text-brand-700 dark:text-brand-300 font-bold text-xs transition cursor-pointer"
               title="Reset to current active term"
@@ -642,10 +906,12 @@ export default function Results() {
               <div className="glass-card p-5 border border-line">
                 <span className="text-xs text-muted font-medium uppercase font-mono">Terminal Average</span>
                 <div className="text-2xl font-bold font-display text-brand-700 mt-1">
-                  {activeChildResult.overall_percentage}%
+                  {activeChildResult.pass_status === 'ungraded' ? '0%' : `${activeChildResult.overall_percentage}%`}
                 </div>
                 <div className="text-[11px] text-muted mt-0.5">
-                  {isPrimary ? (
+                  {activeChildResult.pass_status === 'ungraded' ? (
+                    'No terminal marks recorded'
+                  ) : isPrimary ? (
                     <>Total Aggregate: <span className="font-bold text-ink">{activeChildResult.total_units || 0} Units</span> ({activeChildResult.pass_status === 'pass' ? 'Passing' : 'Needs Review'})</>
                   ) : (
                     <>Overall Grade: <span className="font-bold text-ink">{activeChildResult.grade}</span> ({activeChildResult.pass_status === 'pass' ? 'Passing' : 'Needs Review'})</>
@@ -662,11 +928,13 @@ export default function Results() {
                     : 'Quality Passes (A-C)'}
                 </span>
                 <div className="text-2xl font-bold font-display text-ink mt-1">
-                  {isPrimary
+                  {activeChildResult.pass_status === 'ungraded'
+                    ? '0'
+                    : (isPrimary
                     ? `${activeChildResult.total_units || 0} Units`
                     : activeChildResult.level_category === 'a_level'
                     ? `${activeChildResult.total_points || 0} Pts`
-                    : `${activeChildResult.passes_count || 0} Passes`}
+                    : `${activeChildResult.passes_count || 0} Passes`)}
                 </div>
                 <div className="text-[11px] text-muted mt-0.5">
                   {isPrimary
@@ -772,16 +1040,16 @@ export default function Results() {
               </div>
             </Card>
 
-            {/* Official Remarks Card */}
+            {/* Official Remarks Card - Wired to real database evaluation */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card title="Class Teacher's Term Appraisal" subtitle={`Form Master: ${activeChildResult.form_master_name}`}>
+              <Card title="Class Teacher's Term Appraisal" subtitle={`Form Master: ${activeChildResult.form_master_name || 'Class Teacher'}`}>
                 <div className="p-4 rounded-xl bg-canvas/40 border border-line/60 space-y-3">
                   <p className="text-xs text-ink italic leading-relaxed">
-                    "{activeChildResult.student_name} has shown commendable focus and academic discipline this term. Demonstrates sound understanding in both continuous assessment and end-of-term examinations."
+                    "{activeChildResult.class_teacher_remark || (activeChildResult.evaluation && activeChildResult.evaluation.class_teacher_remark) || `${activeChildResult.student_name} has demonstrated sound academic commitment and consistent effort in terminal assessments. Commended.`}"
                   </p>
                   <div className="flex items-center justify-between text-[11px] text-muted border-t border-line/60 pt-2 font-mono">
-                    <span>Conduct: Exemplary</span>
-                    <span>Class Standing: Good</span>
+                    <span>Conduct: <strong className="text-ink">{activeChildResult.conduct || (activeChildResult.evaluation && activeChildResult.evaluation.conduct) || 'Good'}</strong></span>
+                    <span>Class Standing: <strong className="text-ink">{activeChildResult.rank ? `Rank #${activeChildResult.rank}` : (activeChildResult.overall_percentage >= 50 ? 'Passing' : 'Review')}</strong></span>
                   </div>
                 </div>
               </Card>
@@ -789,11 +1057,11 @@ export default function Results() {
               <Card title="Headmaster's Endorsement" subtitle="Executive Academic Directorate">
                 <div className="p-4 rounded-xl bg-canvas/40 border border-line/60 space-y-3">
                   <p className="text-xs text-ink italic leading-relaxed">
-                    "A commendable terminal evaluation reflecting consistent hard work and dedication. Well positioned for upcoming term evaluations and national board preparation."
+                    "{activeChildResult.head_remark || (activeChildResult.evaluation && activeChildResult.evaluation.head_remark) || 'A commendable terminal evaluation reflecting consistent hard work and dedication. Well positioned for upcoming term evaluations and national board preparation.'}"
                   </p>
                   <div className="flex items-center justify-between text-[11px] text-muted border-t border-line/60 pt-2 font-mono">
-                    <span>Next Term Begins: 12 Jan 2027</span>
-                    <span>Status: Enrolled</span>
+                    <span>Next Term Begins: <strong className="text-ink">{activeChildResult.next_term_date || (activeChildResult.evaluation && activeChildResult.evaluation.next_term_date) || 'To be communicated'}</strong></span>
+                    <span>Status: <strong className="text-ink">Enrolled</strong></span>
                   </div>
                 </div>
               </Card>
@@ -806,10 +1074,6 @@ export default function Results() {
       </div>
     );
   }
-
-  // =========================================================================
-  // RENDER: TEACHER & ADMIN VIEW (ROLE-SCOPED BROADSHEET & ALLOCATIONS)
-  // =========================================================================
   return (
     <div className="space-y-6">
       <PageHeader
@@ -902,222 +1166,1032 @@ export default function Results() {
         </Card>
       )}
 
-      {/* Class Selector & Grade Distribution Chart */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card
-          title={isPrimary ? "Units Distribution Histogram" : "Grade Distribution Histogram"}
-          subtitle={
-            isClassTeacher
-              ? (isPrimary ? "Frequency of units (Unit 1 to Unit 9) across cohort subjects" : "Frequency of letter grades across all registered syllabi")
-              : `Spread for your allocated subject: ${assignedSubjects[0]?.subject_name || 'Subject'}`
-          }
-          className="lg:col-span-2"
-        >
-          {/* Class Select Header */}
-          <div className="flex flex-wrap items-center gap-3 pb-4 mb-2 border-b border-line text-xs">
-            <span className="font-semibold text-muted">Select Cohort:</span>
-            <select
-              value={selectedClassId}
-              onChange={e => setSelectedClassId(e.target.value)}
-              className="glass-input font-medium"
-            >
-              {availableClasses.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.role_type === 'class_teacher' ? '★ (Class Teacher)' : c.role_type === 'subject_teacher' ? `• (${c.subject_name || 'Subject'})` : ''}
-                </option>
-              ))}
-            </select>
+      {/* ========================================================================= */}
+      {/* 3D VISUAL PERFORMANCE DECK (FOR ADMINS, HEADS, AND TEACHERS)               */}
+      {/* ========================================================================= */}
+      <div className="space-y-6">
+        {/* Class Selection & Inspection Control Bar */}
+        <div className="p-5 rounded-2xl border border-line bg-surface/90 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-linear-to-br from-brand-600 to-indigo-700 text-white flex items-center justify-center shadow-md shadow-brand-700/20 shrink-0">
+              <School className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-ink">
+                  {currentClassName}
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-brand-500/10 text-brand-700 dark:text-brand-300 border border-brand-500/20">
+                  {formatTermLabel(selectedTerm)} • {selectedYear}
+                </span>
+                {isClassTeacher && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                    {isAdmin ? 'School Administrator' : 'Form Master / Class Teacher'}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted mt-0.5">
+                {isAdmin
+                  ? `Full administrative access: ${availableClasses.length} class cohorts available across the institution.`
+                  : isClassTeacher
+                  ? `Class Form Master broadsheet authorization. Multi-subject ledger and terminal transcripts enabled.`
+                  : `Subject Teacher portal. Assigned to: ${assignedSubjects.map(s => s.subject_name).join(', ') || 'Class Syllabus'}.`}
+              </p>
+            </div>
           </div>
 
-          <div className="h-44 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={gradeDistribution} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                <XAxis dataKey="grade" stroke="var(--muted)" fontSize={11} />
-                <YAxis stroke="var(--muted)" fontSize={11} />
-                <Tooltip
-                  formatter={(v) => [v, 'Students']}
-                  contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--line)', borderRadius: '0.75rem', fontSize: '12px' }}
-                />
-                <Bar dataKey="count" radius={[5, 5, 0, 0]}>
-                  {gradeDistribution.map((entry, idx) => {
-                    const g = String(entry.grade || '').toUpperCase();
-                    let color = '#2563eb';
-                    if (g === 'A' || g === '1' || g.includes('DIST')) color = '#059669';
-                    else if (g === 'B' || g === '2' || g.includes('MERIT')) color = '#2563eb';
-                    else if (g === 'C' || g === '3' || g.includes('CRED')) color = '#7c3aed';
-                    else if (g === 'D' || g === '4') color = '#d97706';
-                    else if (g === 'E' || g === '5') color = '#ea580c';
-                    else if (g === 'U' || g.includes('FAIL')) color = '#e11d48';
-                    return <Cell key={`grade-cell-${idx}`} fill={color} />;
-                  })}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        {/* Cohort Performance KPI Strip */}
-        <div className="space-y-4">
-          <div className="glass-card p-5">
-            <span className="text-xs text-muted font-medium uppercase font-mono">Cohort Pass Rate</span>
-            <div className="text-2xl font-bold font-display text-brand-700 mt-1">{cohortPassRate}%</div>
-            <span className="text-[11px] text-muted">Overall passing threshold reached</span>
-          </div>
-
-          <div className="glass-card p-5">
-            <span className="text-xs text-muted font-medium uppercase font-mono">{cohortAggregateKpi.label}</span>
-            <div className="text-2xl font-bold font-display text-ink mt-1">{cohortAggregateKpi.val}</div>
-            <span className="text-[11px] text-muted">{cohortAggregateKpi.note}</span>
-          </div>
-
-          <div className="glass-card p-5">
-            <span className="text-xs text-muted font-medium uppercase font-mono">Publication Status</span>
-            <div className="mt-1">
-              <StatusPill status={pubStep === 2 ? 'published' : 'draft'} label={pubStep === 2 ? 'Live for Parents' : 'Under Review'} />
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-canvas px-3 py-1.5 rounded-xl border border-line text-xs font-semibold">
+              <span className="text-muted font-mono">Cohort / Stream:</span>
+              <select
+                value={selectedClassId}
+                onChange={e => {
+                  setSelectedClassId(e.target.value);
+                  setSelectedSubjectFilter('all');
+                  setSelectedGradeFilter('all');
+                  setSearchQuery('');
+                }}
+                className="bg-transparent font-bold text-ink focus:outline-hidden cursor-pointer max-w-[280px] truncate"
+              >
+                {cohortOptions.map(c => (
+                  <option 
+                    key={c.id} 
+                    value={c.id} 
+                    className={`text-ink bg-surface ${c.is_aggregated ? 'font-bold text-brand-700 dark:text-brand-300' : ''}`}
+                  >
+                    {c.name} {c.role_type === 'class_teacher' ? '★ (Class Teacher)' : c.role_type === 'subject_teacher' ? `• (${c.subject_name || 'Subject'})` : ''}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Class Ranking Table */}
-      <Card
-        title={
-          isClassTeacher
-            ? `Class Broadsheet: ${currentClassName}`
-            : `Subject Mark Sheet: ${currentClassName} — ${assignedSubjects[0]?.subject_name || 'Allocated Subject'}`
-        }
-        subtitle={
-          isClassTeacher
-            ? (isPrimary
-                ? 'Full multi-subject broadsheet ranked by Total Units (Unit 1 is highest distinction)'
-                : levelCategory === 'a_level'
-                ? 'Full multi-subject broadsheet ranked by Total Points (A=5, B=4, C=3, D=2, E=1)'
-                : 'Full broadsheet ranked by Mean Aggregate & O-Level Passes (A, B, C, D, E, U)')
-            : 'Subject Teacher view: Showing marks and performance for your allocated subject only.'
-        }
-      >
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-line text-muted uppercase text-[11px]">
-                <th className="py-2.5 text-center w-14">Rank</th>
-                <th className="py-2.5 text-left">Learner Name</th>
-                <th className="py-2.5 text-left">Admission No</th>
-                {isClassTeacher ? (
-                  <>
-                    <th className="py-2.5 text-right">Weighted Avg</th>
-                    <th className="py-2.5 text-center">
-                      {isPrimary
-                        ? 'Total Units (Best 6)'
-                        : levelCategory === 'a_level'
-                        ? 'Total Points (A-Level)'
-                        : 'Quality Passes (A-C)'}
-                    </th>
-                    <th className="py-2.5 text-center">{isPrimary ? 'Unit Score' : 'Grade'}</th>
-                    <th className="py-2.5 text-center">Status</th>
-                    <th className="py-2.5 text-right">Report Card</th>
-                  </>
-                ) : (
-                  <>
-                    <th className="py-2.5 text-left">Allocated Subject</th>
-                    <th className="py-2.5 text-right">Subject Score</th>
-                    <th className="py-2.5 text-center">{isPrimary ? 'Unit' : 'Subject Grade'}</th>
-                    <th className="py-2.5 text-center">Pass / Fail</th>
-                  </>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line/60">
-              {studentsResults.map((st, idx) => {
-                const teacherSubject = st.subjects?.[0];
-                return (
-                  <tr key={st.student_id || idx} className="hover:bg-canvas/40 transition-colors">
-                    <td className="py-3 text-center font-bold text-ink font-mono">
-                      <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs ${
-                        (st.rank || idx + 1) === 1
-                          ? 'bg-amber-100 text-amber-800 font-extrabold border border-amber-300'
-                          : (st.rank || idx + 1) <= 3
-                          ? 'bg-neutral-100 text-neutral-800 font-bold'
-                          : 'text-muted'
-                      }`}>
-                        {st.rank || idx + 1}
-                      </span>
-                    </td>
-                    <td className="py-3 font-semibold text-ink">{st.student_name}</td>
-                    <td className="py-3 font-mono text-muted">{st.admission_number}</td>
+        {/* 4-COLUMN 3D ISOMETRIC METRIC CARDS */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 1. Cohort Pass Rate */}
+          <div className="relative overflow-hidden rounded-2xl p-5 border border-line bg-linear-to-br from-surface to-surface/80 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.08),inset_0_1px_1px_rgba(255,255,255,0.7)] hover:-translate-y-0.5 transition-all">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-muted">Pass Rate</span>
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                <Award className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-3xl font-extrabold font-display text-emerald-600 dark:text-emerald-400 mt-2">
+              {cohortPassRate !== null ? `${cohortPassRate}%` : '—'}
+            </div>
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+              <div className="h-1.5 flex-1 bg-canvas rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-linear-to-r from-emerald-500 to-teal-400 rounded-full"
+                  style={{ width: `${cohortPassRate !== null ? Math.min(100, Math.max(0, cohortPassRate)) : 0}%` }}
+                />
+              </div>
+              <span className="font-mono text-[11px] font-bold">
+                {studentsResults?.length > 0
+                  ? `${studentsResults.filter(s => s.pass_status === 'pass' || s.overall_percentage >= 50).length}/${studentsResults.length}`
+                  : 'No marks recorded'
+                }
+              </span>
+            </div>
+          </div>
 
-                    {isClassTeacher ? (
-                      <>
-                        <td className="py-3 text-right font-mono font-bold text-ink">{st.overall_percentage}%</td>
-                        <td className="py-3 text-center font-mono font-semibold">
-                          {isPrimary ? (
-                            <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold">
-                              {st.total_units !== undefined ? `${st.total_units} units` : '—'}
-                            </span>
-                          ) : levelCategory === 'a_level' ? (
-                            <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold">
-                              {st.total_points !== undefined ? `${st.total_points} pts` : '—'}
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 font-bold">
-                              {st.passes_count !== undefined ? `${st.passes_count} passes` : '—'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 text-center font-bold font-mono">
-                          {isPrimary
-                            ? (st.units ? `Unit ${st.units}` : getPrimaryUnitLabel(st.grade, st.overall_percentage))
-                            : (st.grade || '—')}
-                        </td>
-                        <td className="py-3 text-center">
-                          <StatusPill
-                            status={st.pass_status === 'pass' || (st.overall_percentage >= 50) ? 'present' : 'absent'}
-                            label={st.pass_status === 'pass' || (st.overall_percentage >= 50) ? 'Pass' : 'Fail'}
-                            size="sm"
-                          />
-                        </td>
-                        <td className="py-3 text-right">
-                          <button
-                            onClick={() => handleOpenReport(st)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border border-line bg-surface hover:border-brand-500 text-ink font-semibold text-xs transition-colors cursor-pointer"
-                          >
-                            <Printer className="w-3.5 h-3.5 text-muted" />
-                            <span>Print A4</span>
-                          </button>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="py-3 text-left font-medium text-brand-700 dark:text-brand-400">
-                          {teacherSubject?.subject_name || assignedSubjects[0]?.subject_name || 'Allocated Subject'}
-                        </td>
-                        <td className="py-3 text-right font-mono font-bold text-ink">
-                          {teacherSubject ? `${teacherSubject.average}%` : `${st.overall_percentage}%`}
-                        </td>
-                        <td className="py-3 text-center font-bold font-mono">
-                          {isPrimary
-                            ? (teacherSubject?.units ? `Unit ${teacherSubject.units}` : getPrimaryUnitLabel(teacherSubject?.grade || st.grade, teacherSubject ? teacherSubject.average : st.overall_percentage))
-                            : (teacherSubject?.grade || st.grade || '—')}
-                        </td>
-                        <td className="py-3 text-center">
-                          <StatusPill
-                            status={(teacherSubject?.average || st.overall_percentage) >= 50 ? 'present' : 'absent'}
-                            label={(teacherSubject?.average || st.overall_percentage) >= 50 ? 'Pass' : 'Fail'}
-                            size="sm"
-                          />
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* 2. Academic Aggregate Benchmark */}
+          <div className="relative overflow-hidden rounded-2xl p-5 border border-line bg-linear-to-br from-surface to-surface/80 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.08),inset_0_1px_1px_rgba(255,255,255,0.7)] hover:-translate-y-0.5 transition-all">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-muted">
+                {cohortAggregateKpi.label}
+              </span>
+              <div className="w-7 h-7 rounded-lg bg-brand-500/10 text-brand-700 dark:text-brand-400 flex items-center justify-center">
+                <GraduationCap className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-3xl font-extrabold font-display text-ink mt-2">
+              {cohortAggregateKpi.val}
+            </div>
+            <p className="text-[11px] text-muted mt-2 truncate" title={cohortAggregateKpi.note}>
+              {cohortAggregateKpi.note}
+            </p>
+          </div>
+
+          {/* 3. Class Enrollment & Capacity Limit */}
+          <div className="relative overflow-hidden rounded-2xl p-5 border border-line bg-linear-to-br from-surface to-surface/80 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.08),inset_0_1px_1px_rgba(255,255,255,0.7)] hover:-translate-y-0.5 transition-all">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-muted">
+                Class Limit & Enrolled
+              </span>
+              <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                <Users className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-3xl font-extrabold font-display text-ink mt-2 flex items-baseline gap-1.5">
+              <span>{studentsResults.length}</span>
+              {currentClassObj?.capacity ? (
+                <span className="text-base font-normal text-muted">/ {currentClassObj.capacity}</span>
+              ) : (
+                <span className="text-xs font-normal text-muted">Learners</span>
+              )}
+            </div>
+            {currentClassObj?.capacity ? (
+              <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+                <div className="h-1.5 flex-1 bg-canvas rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-linear-to-r from-blue-500 to-indigo-500 rounded-full"
+                    style={{ width: `${Math.min(100, Math.round((studentsResults.length / currentClassObj.capacity) * 100))}%` }}
+                  />
+                </div>
+                <span className="font-mono text-[11px] font-bold">
+                  {Math.round((studentsResults.length / currentClassObj.capacity) * 100)}%
+                </span>
+              </div>
+            ) : (
+              <div className="mt-2 text-xs text-muted font-mono">Enrolled candidates</div>
+            )}
+          </div>
+
+          {/* 4. Top Performer / Dux Scholar */}
+          <div className="relative overflow-hidden rounded-2xl p-5 border border-line bg-linear-to-br from-surface to-surface/80 shadow-[0_10px_25px_-5px_rgba(0,0,0,0.08),inset_0_1px_1px_rgba(255,255,255,0.7)] hover:-translate-y-0.5 transition-all">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-muted">
+                Cohort Leader (Rank #1)
+              </span>
+              <div className="w-7 h-7 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                <Sparkles className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="text-base font-bold text-ink mt-2 truncate" title={studentsResults[0]?.student_name || 'Pending'}>
+              {studentsResults[0]?.student_name || 'No marks recorded'}
+            </div>
+            <div className="text-xs text-muted mt-1 flex items-center gap-2">
+              <span className="font-mono font-extrabold text-brand-700 dark:text-brand-300 text-sm">
+                {studentsResults[0]?.overall_percentage != null ? `${studentsResults[0].overall_percentage}%` : '—'}
+              </span>
+              {studentsResults[0] && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                  {isPrimary
+                    ? getPrimaryUnitLabel(studentsResults[0].grade, studentsResults[0].overall_percentage)
+                    : (studentsResults[0].grade || 'Grade A')}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-      </Card>
+
+        {/* 3D VISUAL DISTRIBUTION & CURRICULUM SUBJECT MASTERY DECK */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left: 3D Grade / Units Distribution Histogram */}
+          <div className="lg:col-span-1 rounded-2xl border border-line bg-surface p-5 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between pb-3 border-b border-line">
+                <div>
+                  <h4 className="font-bold text-sm text-ink flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-brand-700 dark:text-brand-400" />
+                    <span>{isPrimary ? "Units Histogram (1-9)" : "Grade Spread (A-U)"}</span>
+                  </h4>
+                  <p className="text-[11px] text-muted mt-0.5">
+                    {isPrimary ? 'Primary units frequency (Unit 1 is top distinction)' : 'Letter grade breakdown across cohort'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="h-52 w-full mt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={gradeDistribution} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <XAxis dataKey="grade" stroke="var(--muted)" fontSize={11} />
+                    <YAxis stroke="var(--muted)" fontSize={11} />
+                    <Tooltip
+                      formatter={(v) => [v, 'Students']}
+                      contentStyle={{
+                        backgroundColor: 'var(--surface)',
+                        borderColor: 'var(--line)',
+                        borderRadius: '0.75rem',
+                        fontSize: '12px',
+                        boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)'
+                      }}
+                    />
+                    <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                      {gradeDistribution.map((entry, idx) => {
+                        const g = String(entry.grade || '').toUpperCase();
+                        let color = '#2563eb';
+                        if (g === 'A' || g === '1' || g.includes('UNIT 1') || g.includes('DIST')) color = '#059669';
+                        else if (g === 'B' || g === '2' || g.includes('UNIT 2') || g.includes('MERIT')) color = '#0284c7';
+                        else if (g === 'C' || g === '3' || g.includes('UNIT 3') || g.includes('CRED')) color = '#7c3aed';
+                        else if (g === 'D' || g === '4' || g.includes('UNIT 4')) color = '#d97706';
+                        else if (g === 'E' || g === '5') color = '#ea580c';
+                        else if (g === 'U' || g.includes('FAIL') || g.includes('UNIT 9')) color = '#e11d48';
+                        return <Cell key={`grade-cell-${idx}`} fill={color} />;
+                      })}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-line text-[11px] text-muted flex items-center justify-between font-mono">
+              <span>Cohort Size: {studentsResults.length}</span>
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Pass Threshold: 50%</span>
+            </div>
+          </div>
+
+          {/* Right: 3D Curriculum Subject Mastery Grid */}
+          <div className="lg:col-span-2 rounded-2xl border border-line bg-surface p-5 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-line">
+                <div>
+                  <h4 className="font-bold text-sm text-ink flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-brand-700 dark:text-brand-400" />
+                    <span>Curriculum Subject Mastery Deck ({classSubjects.length} Syllabi)</span>
+                  </h4>
+                  <p className="text-[11px] text-muted mt-0.5">
+                    Live performance breakdown per subject syllabus with mean marks and passing rates.
+                  </p>
+                </div>
+                {selectedSubjectFilter !== 'all' && (
+                  <button
+                    onClick={() => setSelectedSubjectFilter('all')}
+                    className="text-xs text-brand-700 dark:text-brand-300 font-bold hover:underline self-start sm:self-auto cursor-pointer"
+                  >
+                    Clear Filter ({selectedSubjectFilter})
+                  </button>
+                )}
+              </div>
+
+              {subjectAnalytics.length === 0 ? (
+                <div className="py-12 text-center text-xs text-muted italic">
+                  No subject examination marks compiled yet for this cohort in {formatTermLabel(selectedTerm)}.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mt-4">
+                  {subjectAnalytics.map(sub => {
+                    const isSelected = selectedSubjectFilter.toLowerCase() === sub.name.toLowerCase();
+                    return (
+                      <div
+                        key={sub.name}
+                        onClick={() => setSelectedSubjectFilter(isSelected ? 'all' : sub.name)}
+                        className={`group relative rounded-xl p-3.5 border transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-brand-500/10 border-brand-500/40 shadow-sm ring-2 ring-brand-500/30'
+                            : 'bg-canvas/50 hover:bg-canvas border-line hover:border-brand-500/30 shadow-2xs'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="font-bold text-xs text-ink truncate max-w-[130px]" title={sub.name}>
+                            {sub.name}
+                          </span>
+                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-surface border border-line text-muted">
+                            {sub.code}
+                          </span>
+                        </div>
+
+                        <div className="flex items-baseline justify-between mt-2">
+                          <div>
+                            <span className="text-[10px] uppercase font-mono text-muted block">Class Mean</span>
+                            <span className="text-lg font-black font-display text-ink">{sub.average}%</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] uppercase font-mono text-muted block">Pass Rate</span>
+                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 font-mono">
+                              {sub.passRate}%
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 h-1.5 bg-line/60 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              sub.passRate >= 75
+                                ? 'bg-linear-to-r from-emerald-500 to-teal-400'
+                                : sub.passRate >= 50
+                                ? 'bg-linear-to-r from-blue-500 to-indigo-400'
+                                : 'bg-linear-to-r from-amber-500 to-rose-500'
+                            }`}
+                            style={{ width: `${Math.min(100, Math.max(0, sub.passRate))}%` }}
+                          />
+                        </div>
+
+                        <div className="mt-2 pt-2 border-t border-line/60 flex items-center justify-between text-[10px] text-muted">
+                          <span>Peak: <strong className="text-ink">{sub.highest}%</strong></span>
+                          <span className="font-bold text-brand-700 dark:text-brand-300 group-hover:underline">
+                            {isSelected ? 'Filtering Active ✓' : 'Focus Subject →'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 pt-3 border-t border-line text-[11px] text-muted flex items-center justify-between">
+              <span>Click any subject tile to filter the broadsheet marks below</span>
+              <span className="font-mono">{formatTermLabel(selectedTerm)} • {selectedYear}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* INTERACTIVE BROADSHEET SEARCH & FILTER TOOLBAR                             */}
+        {/* ========================================================================= */}
+        <div className="glass-card p-4 rounded-2xl border border-line bg-surface/90 shadow-xs space-y-3">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            {/* Search Input */}
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search student by name or admission number..."
+                className="w-full pl-9 pr-8 py-2 rounded-xl text-xs bg-canvas/60 border border-line text-ink placeholder:text-muted focus:outline-hidden focus:border-brand-500 transition-colors"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-xs font-bold"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Filter Dropdowns */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Subject Filter Dropdown */}
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-line bg-canvas/60 text-xs">
+                <BookOpen className="w-3.5 h-3.5 text-muted" />
+                <span className="text-[11px] font-semibold text-muted font-mono">Subject:</span>
+                <select
+                  value={selectedSubjectFilter}
+                  onChange={e => setSelectedSubjectFilter(e.target.value)}
+                  className="bg-transparent font-bold text-ink focus:outline-hidden cursor-pointer"
+                >
+                  <option value="all" className="text-ink bg-surface">All Class Subjects ({classSubjects.length})</option>
+                  {classSubjects.map(s => (
+                    <option key={s.name} value={s.name} className="text-ink bg-surface">
+                      {s.name} ({s.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Academic Standing Filter Dropdown */}
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-line bg-canvas/60 text-xs">
+                <Filter className="w-3.5 h-3.5 text-muted" />
+                <span className="text-[11px] font-semibold text-muted font-mono">Standing:</span>
+                <select
+                  value={selectedGradeFilter}
+                  onChange={e => setSelectedGradeFilter(e.target.value)}
+                  className="bg-transparent font-bold text-ink focus:outline-hidden cursor-pointer"
+                >
+                  <option value="all" className="text-ink bg-surface">All Standings</option>
+                  <option value="distinction" className="text-ink bg-surface">
+                    {isPrimary ? 'Distinctions (Units 1-2 / 75%+)' : levelCategory === 'a_level' ? 'Distinctions (10+ Pts / A)' : 'Distinctions (Grade A)'}
+                  </option>
+                  <option value="credit" className="text-ink bg-surface">
+                    {isPrimary ? 'Merits / Credits (Units 3-5)' : 'Credits (Grade B-C)'}
+                  </option>
+                  <option value="pass" className="text-ink bg-surface">Passing (50%+)</option>
+                  <option value="fail" className="text-ink bg-surface">Needs Remedial (&lt;50%)</option>
+                </select>
+              </div>
+
+              {/* Reset Filters Button */}
+              {(searchQuery || selectedSubjectFilter !== 'all' || selectedGradeFilter !== 'all') && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedSubjectFilter('all');
+                    setSelectedGradeFilter('all');
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-line bg-surface hover:bg-canvas text-xs font-semibold text-ink transition cursor-pointer"
+                >
+                  Clear Filters
+                </button>
+              )}
+
+              {/* Live Count Badge */}
+              <div className="px-2.5 py-1 rounded-full bg-brand-500/10 text-brand-700 dark:text-brand-300 font-mono text-[11px] font-bold">
+                Showing {filteredStudents.length} of {studentsResults.length} learners
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* STREAM PERFORMANCE COMPARISON DECK (WHEN COHORT HAS MULTIPLE STREAMS)       */}
+        {/* ========================================================================= */}
+        {streamComparison.length > 1 && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-ink flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-brand-700" />
+                  <span>Stream Comparative Performance Breakdown</span>
+                </h3>
+                <p className="text-xs text-muted">
+                  Cross-stream academic comparison across all {streamComparison.length} streams in {cohortName || 'this cohort'}
+                </p>
+              </div>
+              <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-full bg-brand-500/10 text-brand-700 dark:text-brand-300">
+                {streamComparison.reduce((acc, s) => acc + (s.student_count || 0), 0)} Total Learners
+              </span>
+            </div>
+
+            {/* Stream Comparison Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {streamComparison.map((strm, idx) => (
+                <div
+                  key={strm.stream_id || idx}
+                  className="p-3.5 rounded-2xl border border-line bg-surface shadow-2xs hover:border-brand-500/40 transition-all flex flex-col justify-between"
+                >
+                  <div className="flex items-center justify-between pb-2 border-b border-line">
+                    <span className="font-bold text-ink text-xs truncate">{strm.stream_name || strm.stream}</span>
+                    <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-canvas border border-line text-muted">
+                      {strm.student_count} learners
+                    </span>
+                  </div>
+
+                  <div className="py-3 space-y-2.5">
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-muted">Mean Score:</span>
+                        <span className="font-mono font-extrabold text-ink">{strm.mean_score}%</span>
+                      </div>
+                      <div className="h-1.5 w-full rounded-full bg-line overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-brand-500"
+                          style={{ width: `${Math.min(100, Math.max(0, strm.mean_score))}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-muted">Pass Rate:</span>
+                      <span className={`font-mono font-bold ${
+                        strm.pass_rate >= 70 ? 'text-brand-700 dark:text-brand-300' : strm.pass_rate >= 50 ? 'text-amber-600' : 'text-danger'
+                      }`}>
+                        {strm.pass_rate}%
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-muted">Distinctions:</span>
+                      <span className="font-mono font-semibold text-ink">{strm.distinctions || 0}</span>
+                    </div>
+
+                    {strm.top_student && (
+                      <div className="pt-2 border-t border-line/60 text-[11px] truncate">
+                        <span className="text-muted">Top: </span>
+                        <span className="font-semibold text-ink">{strm.top_student.name}</span>
+                        <span className="font-mono text-brand-700 ml-1">({strm.top_student.score}%)</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedClassId(strm.stream_id)}
+                    className="w-full mt-1 py-1 rounded-lg border border-line bg-canvas hover:bg-surface text-[11px] font-bold text-brand-700 transition cursor-pointer text-center"
+                  >
+                    Drill Into {strm.stream_name || strm.stream}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* CLASS RANKING & MULTI-SUBJECT BROADSHEET TABLE                             */}
+        {/* ========================================================================= */}
+        <Card
+          title={
+            isClassTeacher
+              ? `Class Broadsheet: ${currentClassName}`
+              : `Subject Mark Sheet: ${currentClassName} — ${assignedSubjects[0]?.subject_name || 'Allocated Subject'}`
+          }
+          subtitle={
+            isClassTeacher
+              ? (isPrimary
+                  ? 'Official multi-subject broadsheet displaying all enrolled learners with individual subjects, marks, and units in descending rank order (Unit 1 is highest distinction)'
+                  : levelCategory === 'a_level'
+                  ? 'Official multi-subject broadsheet displaying all enrolled learners with individual subjects, marks, and ZIMSEC points in descending order (A=5, B=4, C=3, D=2, E=1)'
+                  : 'Official multi-subject broadsheet displaying all enrolled learners with individual subjects, marks, and symbols (A-U) in descending rank order')
+              : 'Subject Teacher ledger: Displaying marks, units, and standings for your allocated syllabus.'
+          }
+          actions={
+            isClassTeacher && classSubjects.length > 0 ? (
+              <div className="flex items-center gap-1 bg-canvas p-1 rounded-xl border border-line text-xs font-semibold">
+                <button
+                  onClick={() => setBroadsheetView('full')}
+                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                    broadsheetView === 'full' ? 'bg-surface text-brand-700 shadow-xs font-bold' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  Multi-Subject View ({classSubjects.length})
+                </button>
+                <button
+                  onClick={() => setBroadsheetView('summary')}
+                  className={`px-3 py-1 rounded-lg transition cursor-pointer ${
+                    broadsheetView === 'summary' ? 'bg-surface text-brand-700 shadow-xs font-bold' : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  Summary View
+                </button>
+              </div>
+            ) : null
+          }
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-line text-muted uppercase text-[11px] bg-canvas/30">
+                  <th className="py-2.5 px-3 text-center w-12">
+                    {isCohortAggregated ? 'Univ Rank' : 'Rank'}
+                  </th>
+                  {isCohortAggregated && (
+                    <th className="py-2.5 px-2 text-center w-14">Stream Rank</th>
+                  )}
+                  <th className="py-2.5 px-3 text-left min-w-[170px]">Learner Name</th>
+                  {isCohortAggregated && (
+                    <th className="py-2.5 px-2 text-center w-24">Stream</th>
+                  )}
+                  <th className="py-2.5 px-3 text-left w-24">Adm No</th>
+                  {isClassTeacher ? (
+                    <>
+                      {broadsheetView === 'full' && classSubjects.map(sub => {
+                        const isTargetFilter = selectedSubjectFilter.toLowerCase() === sub.name.toLowerCase();
+                        return (
+                          <th
+                            key={sub.name}
+                            className={`py-2.5 px-2 text-center min-w-[95px] transition-colors ${
+                              isTargetFilter ? 'bg-brand-500/15 text-brand-700 dark:text-brand-300 font-bold' : ''
+                            }`}
+                            title={sub.name}
+                          >
+                            <div>{sub.code || sub.name}</div>
+                            <div className="text-[9px] text-muted font-normal lowercase truncate max-w-[90px]">{sub.name}</div>
+                          </th>
+                        );
+                      })}
+                      <th className="py-2.5 px-3 text-right min-w-[90px]">Weighted Avg</th>
+                      <th className="py-2.5 px-3 text-center min-w-[95px]">
+                        {isPrimary
+                          ? 'Total Units'
+                          : levelCategory === 'a_level'
+                          ? 'Total Points'
+                          : 'Passes (A-C)'}
+                      </th>
+                      <th className="py-2.5 px-3 text-center min-w-[90px]">{isPrimary ? 'Unit' : 'Grade'}</th>
+                      <th className="py-2.5 px-3 text-center w-20">Status</th>
+                      <th className="py-2.5 px-3 text-right min-w-[180px]">Actions</th>
+                    </>
+                  ) : (
+                    <>
+                      <th className="py-2.5 px-3 text-left">Allocated Subject</th>
+                      <th className="py-2.5 px-3 text-right">Subject Score</th>
+                      <th className="py-2.5 px-3 text-center">{isPrimary ? 'Unit' : 'Subject Grade'}</th>
+                      <th className="py-2.5 px-3 text-center">Pass / Fail</th>
+                      <th className="py-2.5 px-3 text-right min-w-[100px]">Actions</th>
+                    </>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line/60">
+                {filteredStudents.length === 0 ? (
+                  <tr>
+                    <td colSpan={isClassTeacher ? (broadsheetView === 'full' ? classSubjects.length + 10 : 10) : 8}>
+                      <div className="p-8 text-center space-y-3">
+                        <div className="w-10 h-10 rounded-full bg-brand-500/10 text-brand-700 dark:text-brand-400 flex items-center justify-center mx-auto">
+                          <AlertCircle className="w-5 h-5" />
+                        </div>
+                        <h4 className="text-sm font-bold text-ink">No matching learners found</h4>
+                        <p className="text-xs text-muted max-w-sm mx-auto">
+                          {searchQuery || selectedSubjectFilter !== 'all' || selectedGradeFilter !== 'all'
+                            ? 'No learners in this cohort match the active search or filter criteria.'
+                            : 'No student results compiled for this class yet in this term.'}
+                        </p>
+                        {(searchQuery || selectedSubjectFilter !== 'all' || selectedGradeFilter !== 'all') && (
+                          <button
+                            onClick={() => {
+                              setSearchQuery('');
+                              setSelectedSubjectFilter('all');
+                              setSelectedGradeFilter('all');
+                            }}
+                            className="btn-secondary text-xs inline-flex items-center gap-1.5"
+                          >
+                            Clear Active Filters
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredStudents.map((st, idx) => {
+                    const teacherSubject = st.subjects?.[0];
+                    return (
+                      <tr key={st.student_id || idx} className="hover:bg-canvas/40 transition-colors">
+                        <td className="py-2.5 px-3 text-center font-bold text-ink font-mono">
+                          <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs ${
+                            (st.form_rank || st.rank || idx + 1) === 1
+                              ? 'bg-amber-100 text-amber-800 font-extrabold border border-amber-300'
+                              : (st.form_rank || st.rank || idx + 1) <= 3
+                              ? 'bg-neutral-100 text-neutral-800 font-bold'
+                              : 'text-muted'
+                          }`}>
+                            {st.form_rank || st.rank || idx + 1}
+                          </span>
+                        </td>
+
+                        {isCohortAggregated && (
+                          <td className="py-2.5 px-2 text-center font-mono text-muted text-[11px]">
+                            {st.class_rank ? `#${st.class_rank}` : '—'}
+                          </td>
+                        )}
+
+                        <td className="py-2.5 px-3 font-semibold text-ink whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span>{st.student_name}</span>
+                            {st.combination && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded-full bg-brand-500/10 text-brand-700 dark:text-brand-300 border border-brand-500/20">
+                                {st.combination}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {isCohortAggregated && (
+                          <td className="py-2.5 px-2 text-center whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded-md bg-canvas border border-line font-medium text-[10px] text-ink">
+                              {st.stream || st.class_name}
+                            </span>
+                          </td>
+                        )}
+
+                        <td className="py-2.5 px-3 font-mono text-muted text-[11px] whitespace-nowrap">{st.admission_number}</td>
+
+                        {isClassTeacher ? (
+                          <>
+                            {/* Multi-subject marks per student */}
+                            {broadsheetView === 'full' && classSubjects.map(sub => {
+                              const match = (st.subjects || []).find(s => (s.subject_name || s.name)?.toLowerCase() === sub.name.toLowerCase() || (s.subject_code && s.subject_code.toLowerCase() === sub.code.toLowerCase()));
+                              const isTargetFilter = selectedSubjectFilter.toLowerCase() === sub.name.toLowerCase();
+                              
+                              // Check if learner is enrolled in this elective subject
+                              const isEnrolledInSubject = (st.enrolled_subject_ids || []).includes(sub.id) ||
+                                (st.enrolled_subject_names || []).some(n => n.toLowerCase() === sub.name.toLowerCase()) ||
+                                Boolean(match);
+
+                              if (!match) {
+                                if (isEnrolledInSubject) {
+                                  return (
+                                    <td
+                                      key={sub.name}
+                                      className={`py-2 px-2 text-center font-mono text-[11px] ${
+                                        isTargetFilter ? 'bg-brand-500/5' : ''
+                                      }`}
+                                      title="Learner enrolled — marks pending assessment recording"
+                                    >
+                                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                                        Pending
+                                      </span>
+                                    </td>
+                                  );
+                                }
+                                return (
+                                  <td
+                                    key={sub.name}
+                                    className={`py-2 px-2 text-center text-muted/50 font-mono text-[11px] ${
+                                      isTargetFilter ? 'bg-brand-500/5' : ''
+                                    }`}
+                                    title="Not enrolled in this elective subject"
+                                  >
+                                    —
+                                  </td>
+                                );
+                              }
+                              const score = match.average ?? match.overall_percentage;
+                              const grade = isPrimary
+                                ? (match.units ? `U${match.units}` : getPrimaryUnitLabel(match.grade, score))
+                                : (match.grade || '—');
+                              return (
+                                <td
+                                  key={sub.name}
+                                  className={`py-2 px-2 text-center font-mono text-[11px] whitespace-nowrap ${
+                                    isTargetFilter ? 'bg-brand-500/10 font-bold ring-1 ring-brand-500/20' : ''
+                                  }`}
+                                >
+                                  <div className="font-extrabold text-ink">{score != null ? `${score}%` : '—'}</div>
+                                  <div className={`text-[10px] font-bold ${
+                                    isPrimary
+                                      ? 'text-teal-dark dark:text-teal-400'
+                                      : ['A', 'B', 'C'].includes(match.grade)
+                                      ? 'text-brand-700 dark:text-brand-400'
+                                      : 'text-muted'
+                                  }`}>
+                                    {grade}
+                                  </div>
+                                </td>
+                              );
+                            })}
+
+                            <td className="py-2.5 px-3 text-right font-mono font-black text-sm text-ink">{st.overall_percentage}%</td>
+                            <td className="py-2.5 px-3 text-center font-mono font-semibold whitespace-nowrap">
+                              {isPrimary ? (
+                                <span className="px-2 py-0.5 rounded-full bg-teal-primary/10 text-teal-dark font-bold text-xs">
+                                  {st.total_units !== undefined ? `${st.total_units} units` : '—'}
+                                </span>
+                              ) : levelCategory === 'a_level' ? (
+                                <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-bold text-xs">
+                                  {st.total_points !== undefined ? `${st.total_points} pts` : '—'}
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300 font-bold text-xs">
+                                  {st.passes_count !== undefined ? `${st.passes_count} passes` : '—'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold font-mono">
+                              {isPrimary
+                                ? (st.units ? `Unit ${st.units}` : getPrimaryUnitLabel(st.grade, st.overall_percentage))
+                                : (st.grade || '—')}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <StatusPill
+                                status={st.pass_status === 'pass' || (st.overall_percentage >= 50) ? 'present' : 'absent'}
+                                label={st.pass_status === 'pass' || (st.overall_percentage >= 50) ? 'Pass' : 'Fail'}
+                                size="sm"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEvaluation(st)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-line bg-surface hover:bg-canvas text-ink font-semibold text-xs transition-colors cursor-pointer shadow-2xs"
+                                  title="Record or update terminal appraisal remarks"
+                                >
+                                  <Award className="w-3.5 h-3.5 text-brand-700" />
+                                  <span>Appraise</span>
+                                </button>
+                                {isSecondary && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenSubjectAssignment(st)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-line bg-surface hover:bg-canvas text-ink font-semibold text-xs transition-colors cursor-pointer shadow-2xs"
+                                    title="Assign / update enrolled elective subjects"
+                                  >
+                                    <BookOpen className="w-3.5 h-3.5 text-info" />
+                                    <span>Electives</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenReport(st)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-line bg-surface hover:border-brand-500 text-ink font-semibold text-xs transition-colors cursor-pointer shadow-2xs"
+                                >
+                                  <Printer className="w-3.5 h-3.5 text-muted" />
+                                  <span>Print A4</span>
+                                </button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="py-2.5 px-3 text-left font-medium text-brand-700 dark:text-brand-400">
+                              {teacherSubject?.subject_name || assignedSubjects[0]?.subject_name || 'Allocated Subject'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-ink">
+                              {teacherSubject ? `${teacherSubject.average}%` : `${st.overall_percentage}%`}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold font-mono">
+                              {isPrimary
+                                ? (teacherSubject?.units ? `Unit ${teacherSubject.units}` : getPrimaryUnitLabel(teacherSubject?.grade || st.grade, teacherSubject ? teacherSubject.average : st.overall_percentage))
+                                : (teacherSubject?.grade || st.grade || '—')}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <StatusPill
+                                status={(teacherSubject?.average || st.overall_percentage) >= 50 ? 'present' : 'absent'}
+                                label={(teacherSubject?.average || st.overall_percentage) >= 50 ? 'Pass' : 'Fail'}
+                                size="sm"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenReport(st)}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-line bg-surface hover:border-brand-500 text-ink font-semibold text-xs transition-colors cursor-pointer shadow-2xs"
+                              >
+                                <Printer className="w-3.5 h-3.5 text-muted" />
+                                <span>Report Card</span>
+                              </button>
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
 
       {/* PRINTABLE A4 TRANSCRIPT MODAL */}
       {renderPrintModal()}
+
+      {/* OFFICIAL TERMINAL APPRAISAL MODAL */}
+      <Modal
+        isOpen={showEvalModal}
+        onClose={() => setShowEvalModal(false)}
+        title={`Terminal Appraisal: ${evaluatingStudent?.student_name || 'Learner'}`}
+        description="Record official conduct rating, form master remark, and headmaster's endorsement for the printed report card."
+      >
+        <form onSubmit={handleSaveEvaluation} className="space-y-4">
+          <div className="p-3 rounded-xl bg-canvas border border-line text-xs flex justify-between">
+            <div>
+              <span className="text-muted block">Admission Number</span>
+              <span className="font-mono font-bold text-ink">{evaluatingStudent?.admission_number || '—'}</span>
+            </div>
+            <div>
+              <span className="text-muted block">Current Standing</span>
+              <span className="font-bold text-brand-700 font-mono">
+                {evaluatingStudent?.overall_percentage}% • Rank #{evaluatingStudent?.rank || '—'}
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">General Conduct & Discipline Rating *</label>
+            <select
+              value={evalForm.conduct}
+              onChange={e => setEvalForm({ ...evalForm, conduct: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+            >
+              <option value="Excellent">Excellent — Exemplary discipline and attitude</option>
+              <option value="Very Good">Very Good — Highly cooperative and responsible</option>
+              <option value="Good">Good — Satisfactory general demeanor</option>
+              <option value="Fair">Fair — Average compliance, occasional reminders needed</option>
+              <option value="Needs Improvement">Needs Improvement — Requires focused behavioral intervention</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Class Teacher's Term Appraisal *</label>
+            <textarea
+              required
+              rows={3}
+              value={evalForm.class_teacher_remark}
+              onChange={e => setEvalForm({ ...evalForm, class_teacher_remark: e.target.value })}
+              placeholder="e.g. Shows great diligence and academic discipline across all subjects. Commended for consistency."
+              className="w-full p-3 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Headmaster's Official Endorsement</label>
+            <textarea
+              rows={2}
+              value={evalForm.head_remark}
+              onChange={e => setEvalForm({ ...evalForm, head_remark: e.target.value })}
+              placeholder="e.g. An excellent terminal achievement. Positioned well for national examinations."
+              className="w-full p-3 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Next Term Re-opening Date</label>
+            <input
+              type="date"
+              value={evalForm.next_term_date}
+              onChange={e => setEvalForm({ ...evalForm, next_term_date: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowEvalModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={evalSubmitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {evalSubmitting ? 'Recording...' : 'Save Official Appraisal'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* STUDENT ELECTIVES ASSIGNMENT MODAL */}
+      <Modal
+        isOpen={showSubjectModal}
+        onClose={() => setShowSubjectModal(false)}
+        title={`Elective Syllabus: ${subjectStudent?.student_name || 'Learner'}`}
+        description="Allocate specific curriculum subjects studied by this secondary or A-level student."
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-1.5 p-2 rounded-xl bg-canvas border border-line">
+            <span className="text-[11px] font-bold text-muted px-2">Combination Presets:</span>
+            <button
+              type="button"
+              onClick={() => applyComboPreset('sciences')}
+              className="px-2.5 py-1 rounded-lg bg-surface border border-line hover:border-brand-500 text-[11px] font-bold text-ink"
+            >
+              🔬 Sciences
+            </button>
+            <button
+              type="button"
+              onClick={() => applyComboPreset('commercials')}
+              className="px-2.5 py-1 rounded-lg bg-surface border border-line hover:border-brand-500 text-[11px] font-bold text-ink"
+            >
+              📊 Commercials
+            </button>
+            <button
+              type="button"
+              onClick={() => applyComboPreset('arts')}
+              className="px-2.5 py-1 rounded-lg bg-surface border border-line hover:border-brand-500 text-[11px] font-bold text-ink"
+            >
+              📚 Arts & Humanities
+            </button>
+            <button
+              type="button"
+              onClick={() => applyComboPreset('all')}
+              className="px-2.5 py-1 rounded-lg bg-surface border border-line hover:border-brand-500 text-[11px] font-bold text-ink"
+            >
+              All Subjects
+            </button>
+          </div>
+
+          <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1 border border-line rounded-xl p-2 bg-canvas/30">
+            {allAvailableSubjects.length === 0 ? (
+              <div className="p-4 text-center text-xs text-muted">No curriculum subjects registered in this school.</div>
+            ) : (
+              allAvailableSubjects.map(sub => {
+                const checked = selectedSubjectIds.includes(sub.id);
+                return (
+                  <label
+                    key={sub.id}
+                    className={`flex items-center justify-between p-2 rounded-lg border text-xs cursor-pointer transition ${
+                      checked
+                        ? 'border-brand-500 bg-brand-500/10 text-brand-900 dark:text-brand-100 font-bold'
+                        : 'border-line bg-surface text-ink hover:bg-canvas font-medium'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedSubjectIds([...selectedSubjectIds, sub.id]);
+                          } else {
+                            setSelectedSubjectIds(selectedSubjectIds.filter(id => id !== sub.id));
+                          }
+                        }}
+                        className="rounded border-line text-brand-700 focus:ring-brand-500"
+                      />
+                      <span>{sub.name}</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-muted uppercase">
+                      {sub.code || sub.department || 'General'}
+                    </span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-3 border-t border-line text-xs">
+            <span className="font-semibold text-muted">
+              {selectedSubjectIds.length} subjects enrolled
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowSubjectModal(false)}
+                className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveStudentSubjects}
+                disabled={subjectSubmitting}
+                className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+              >
+                {subjectSubmitting ? 'Saving...' : 'Save Enrolled Subjects'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 
@@ -1152,10 +2226,10 @@ export default function Results() {
                 </div>
               </div>
               <h2 className="font-serif font-extrabold text-xl tracking-wide uppercase">
-                {activeStudentReport.school_name || 'HARARE ACADEMY & HIGH SCHOOL'}
+                {activeStudentReport.school_name || activeSchool?.name || schoolName || 'School Academic Report'}
               </h2>
               <p className="text-xs uppercase tracking-wider font-mono">
-                Ministry of Primary & Secondary Education Centre #6024
+                Ministry of Primary & Secondary Education Centre #{activeStudentReport.center_no || activeSchool?.center_no || '—'}
               </p>
               <h3 className="text-sm font-bold font-sans mt-2 underline">
                 OFFICIAL TERMINAL REPORT CARD — {(activeStudentReport?.term || selectedTerm).toUpperCase()}, {activeStudentReport?.academic_year || activeStudentReport?.year || selectedYear}
@@ -1165,9 +2239,9 @@ export default function Results() {
             {/* Student Bio Strip */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs border p-3 rounded-lg bg-neutral-50/50">
               <div>Name: <strong>{activeStudentReport.student_name}</strong></div>
-              <div>ADM: <strong className="font-mono">{activeStudentReport.admission_number}</strong></div>
+              <div>ADM: <strong className="font-mono">{activeStudentReport.admission_number || '—'}</strong></div>
               <div>Class: <strong>{activeStudentReport.class_name || currentClassName}</strong></div>
-              <div>Rank: <strong className="font-mono">{activeStudentReport.rank ? `${activeStudentReport.rank} of ${activeStudentReport.class_size || 40}` : '3rd of 38'}</strong></div>
+              <div>Rank: <strong className="font-mono">{activeStudentReport.rank ? `${activeStudentReport.rank} of ${activeStudentReport.class_size || '—'}` : '—'}</strong></div>
             </div>
 
             {/* Broadsheet Subject Marks */}
@@ -1184,36 +2258,29 @@ export default function Results() {
                 </tr>
               </thead>
               <tbody>
-                {(activeStudentReport.subjects && activeStudentReport.subjects.length > 0 ? activeStudentReport.subjects : (
-                  isPrimary ? [
-                    { subject_name: 'Mathematics', test_score: 18, project_score: 26, exam_score: 42, average: 86, units: 1, grade: 'Unit 1', remark: 'Excellent analytical grasp.' },
-                    { subject_name: 'English Language', test_score: 16, project_score: 24, exam_score: 39, average: 79, units: 2, grade: 'Unit 2', remark: 'Commendable creative prose.' },
-                    { subject_name: 'Indigenous Language (Shona)', test_score: 17, project_score: 25, exam_score: 40, average: 82, units: 1, grade: 'Unit 1', remark: 'Distinction in literature.' },
-                    { subject_name: 'Science & Technology', test_score: 15, project_score: 22, exam_score: 38, average: 75, units: 2, grade: 'Unit 2', remark: 'Sound practical experimentation.' },
-                    { subject_name: 'Social Sciences', test_score: 14, project_score: 21, exam_score: 35, average: 70, units: 2, grade: 'Unit 2', remark: 'Consistent mapwork competence.' },
-                    { subject_name: 'Physical Education & Arts', test_score: 18, project_score: 27, exam_score: 43, average: 88, units: 1, grade: 'Unit 1', remark: 'Outstanding artistic talent.' }
-                  ] : [
-                    { subject_name: 'Mathematics', test_score: 18, project_score: 26, exam_score: 42, average: 86, grade: 'A', remark: 'Excellent analytical grasp.' },
-                    { subject_name: 'English Language', test_score: 16, project_score: 24, exam_score: 39, average: 79, grade: 'A', remark: 'Commendable creative prose.' },
-                    { subject_name: 'Combined Science', test_score: 15, project_score: 22, exam_score: 38, average: 75, grade: 'B', remark: 'Sound practical experimentation.' },
-                    { subject_name: 'Shona Language', test_score: 17, project_score: 25, exam_score: 40, average: 82, grade: 'A', remark: 'Distinction in literature analysis.' },
-                    { subject_name: 'Geography', test_score: 14, project_score: 21, exam_score: 35, average: 70, grade: 'B', remark: 'Consistent mapwork competence.' }
-                  ]
-                )).map((row, i) => (
-                  <tr key={i} className="border-b border-black/40">
-                    <td className="p-2 border-r border-black font-semibold">{row.subject_name || row.name}</td>
-                    <td className="p-2 border-r border-black text-right font-mono">{row.test_score !== undefined ? `${row.test_score}` : '17'}</td>
-                    <td className="p-2 border-r border-black text-right font-mono">{row.project_score !== undefined ? `${row.project_score}` : '24'}</td>
-                    <td className="p-2 border-r border-black text-right font-mono">{row.exam_score !== undefined ? `${row.exam_score}` : '39'}</td>
-                    <td className="p-2 border-r border-black text-right font-mono font-bold">{row.average}%</td>
-                    <td className="p-2 border-r border-black text-center font-bold">
-                      {isPrimary
-                        ? (row.units ? `Unit ${row.units}` : getPrimaryUnitLabel(row.grade, row.average))
-                        : (row.grade || '—')}
+                {activeStudentReport.subjects && activeStudentReport.subjects.length > 0 ? (
+                  activeStudentReport.subjects.map((row, i) => (
+                    <tr key={i} className="border-b border-black/40">
+                      <td className="p-2 border-r border-black font-semibold">{row.subject_name || row.name}</td>
+                      <td className="p-2 border-r border-black text-right font-mono">{row.test_score !== undefined && row.test_score !== null ? `${row.test_score}` : '—'}</td>
+                      <td className="p-2 border-r border-black text-right font-mono">{row.project_score !== undefined && row.project_score !== null ? `${row.project_score}` : '—'}</td>
+                      <td className="p-2 border-r border-black text-right font-mono">{row.exam_score !== undefined && row.exam_score !== null ? `${row.exam_score}` : '—'}</td>
+                      <td className="p-2 border-r border-black text-right font-mono font-bold">{row.average !== undefined && row.average !== null ? `${row.average}%` : '—'}</td>
+                      <td className="p-2 border-r border-black text-center font-bold">
+                        {isPrimary
+                          ? (row.units ? `Unit ${row.units}` : getPrimaryUnitLabel(row.grade, row.average))
+                          : (row.grade || '—')}
+                      </td>
+                      <td className="p-2 italic text-neutral-700">{row.remark || '—'}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="7" className="p-6 text-center text-neutral-500 italic">
+                      No academic marks recorded for this student in {(activeStudentReport?.term || selectedTerm)}. Enter marks in the Academic Ledger to populate this report card.
                     </td>
-                    <td className="p-2 italic text-neutral-700">{row.remark || 'Good progress shown this term.'}</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
 
@@ -1224,7 +2291,7 @@ export default function Results() {
                 <span>
                   {activeStudentReport.attendance?.total_days
                     ? `${activeStudentReport.attendance.present_days || 0} of ${activeStudentReport.attendance.total_days} days present (${activeStudentReport.attendance.rate || 0}%) • ${activeStudentReport.attendance.absent_days || 0} absent`
-                    : 'Terminal roll call records on file'}
+                    : 'No attendance records on file for this period'}
                 </span>
               </div>
               <div>
@@ -1237,20 +2304,40 @@ export default function Results() {
                 </span>
                 <span className="font-mono text-base font-bold">
                   {isPrimary
-                    ? `${activeStudentReport.total_units || 9} Units (${(activeStudentReport.total_units || 9) <= 12 ? 'Distinction' : (activeStudentReport.total_units || 9) <= 24 ? 'Credit' : 'Satisfactory Pass'})`
+                    ? (activeStudentReport.total_units !== undefined && activeStudentReport.total_units !== null
+                        ? `${activeStudentReport.total_units} Units (${activeStudentReport.total_units <= 12 ? 'Distinction' : activeStudentReport.total_units <= 24 ? 'Credit' : 'Satisfactory Pass'})`
+                        : '—')
                     : levelCategory === 'a_level'
-                    ? `${activeStudentReport.total_points || 14} Points`
-                    : `${activeStudentReport.passes_count || 6} Passes (A-C)`}
+                    ? (activeStudentReport.total_points !== undefined && activeStudentReport.total_points !== null ? `${activeStudentReport.total_points} Points` : '—')
+                    : (activeStudentReport.passes_count !== undefined && activeStudentReport.passes_count !== null ? `${activeStudentReport.passes_count} Passes (A-C)` : '—')}
                 </span>
               </div>
             </div>
+
+            {/* Conduct & Next Term Schedule Strip */}
+            {(activeStudentReport.conduct || activeStudentReport.next_term_date) && (
+              <div className="grid grid-cols-2 gap-4 text-xs border p-3 rounded-lg bg-neutral-50/50">
+                {activeStudentReport.conduct && (
+                  <div>
+                    <span className="font-bold text-neutral-600 block">General Conduct & Discipline:</span>
+                    <span className="font-semibold text-black">{activeStudentReport.conduct}</span>
+                  </div>
+                )}
+                {activeStudentReport.next_term_date && (
+                  <div>
+                    <span className="font-bold text-neutral-600 block">Next Term Resumption:</span>
+                    <span className="font-semibold text-black">{activeStudentReport.next_term_date}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Official Signature Blocks */}
             <div className="grid grid-cols-2 gap-8 pt-6 border-t border-black text-xs">
               <div className="space-y-4">
                 <span className="font-bold block">Class Teacher's Term Remark:</span>
-                <p className="italic text-neutral-800">
-                  A dedicated, consistent learner who sets a high academic standard for the cohort. Commended.
+                <p className="italic text-neutral-800 min-h-[36px]">
+                  {activeStudentReport.class_teacher_remark || 'Satisfactory academic performance and diligence observed.'}
                 </p>
                 <div className="pt-6 border-b border-black w-48 text-[11px] text-neutral-600">
                   Signature: {activeStudentReport.form_master_name || 'Form Master'}
@@ -1259,8 +2346,8 @@ export default function Results() {
 
               <div className="space-y-4">
                 <span className="font-bold block">Headmaster's Official Endorsement:</span>
-                <p className="italic text-neutral-800">
-                  Outstanding performance this term. Well poised for upcoming terminal and national examinations.
+                <p className="italic text-neutral-800 min-h-[36px]">
+                  {activeStudentReport.head_remark || 'Approved and endorsed for official academic progression.'}
                 </p>
                 <div className="pt-6 border-b border-black w-48 text-[11px] text-neutral-600">
                   Signature & Official School Seal

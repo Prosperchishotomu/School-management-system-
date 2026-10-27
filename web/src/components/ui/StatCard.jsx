@@ -257,9 +257,11 @@ export default function StatCard({
 
   const renderedValue = displayValue !== null
     ? displayValue
-    : typeof rawValue === 'number'
-      ? `${resolvedPrefix}${animatedNumber.toLocaleString()}${suffix}`
-      : `${resolvedPrefix}${rawValue ?? '-'}${suffix}`;
+    : React.isValidElement(rawValue)
+      ? rawValue
+      : typeof rawValue === 'number'
+        ? `${resolvedPrefix}${animatedNumber.toLocaleString()}${suffix}`
+        : `${resolvedPrefix}${rawValue ?? '-'}${suffix}`;
 
   // Generous, airy card container sizing matching Command Center
   const containerClasses = `${currentTheme.container} p-5 sm:p-5.5 min-h-[96px] sm:min-h-[106px] rounded-2xl border shadow-xs`;

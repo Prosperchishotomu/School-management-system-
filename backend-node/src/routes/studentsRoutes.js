@@ -42,6 +42,9 @@ router.get('/', authenticateToken, async (req, res) => {
       return res.json({ data: children, meta: { total: children.length, per_page: children.length, page: 1 } });
     }
 
+    const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+    const limitNum = Math.min(1000, Math.max(1, parseInt(req.query.per_page) || 100));
+
     // If requester is a teacher, restrict view to students in their classes or studying their subjects only
     if (req.user.role === 'teacher') {
       const staffRows = await query('SELECT id FROM staff WHERE user_id = ?', [req.user.id]);
@@ -50,7 +53,8 @@ router.get('/', authenticateToken, async (req, res) => {
       const teacherPlaceholders = teacherIds.map(() => '?').join(',');
 
       let teacherSql = `
-        SELECT st.*, c.name as class_name,
+        SELECT st.*, 
+               MAX(c.name) as class_name,
                GROUP_CONCAT(DISTINCT g.name SEPARATOR ', ') as guardian_name,
                MAX(g.phone) as guardian_phone,
                MAX(g.email) as guardian_email
@@ -69,29 +73,30 @@ router.get('/', authenticateToken, async (req, res) => {
       `;
       const teacherParams = [schoolId, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds, ...teacherIds];
 
-      if (class_id) {
+      if (class_id && class_id !== 'all' && class_id !== 'undefined' && class_id !== 'null') {
         teacherSql += ' AND st.class_id = ?';
         teacherParams.push(class_id);
       }
-      if (status) {
+      if (status && status !== 'all') {
         teacherSql += ' AND st.status = ?';
         teacherParams.push(status);
       }
-      if (search) {
+      if (search && search.trim()) {
         teacherSql += ' AND (st.first_name LIKE ? OR st.last_name LIKE ? OR st.admission_number LIKE ?)';
-        teacherParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        teacherParams.push(`%${search.trim()}%`, `%${search.trim()}%`, `%${search.trim()}%`);
       }
       teacherSql += ' GROUP BY st.id ORDER BY st.first_name ASC, st.last_name ASC';
 
       const students = await query(teacherSql, teacherParams);
       return res.json({
         data: students,
-        meta: { total: students.length, per_page: 15, page: 1 }
+        meta: { total: students.length, per_page: limitNum, page: pageNum }
       });
     }
 
     let sql = `
-      SELECT st.*, c.name as class_name,
+      SELECT st.*, 
+             MAX(c.name) as class_name,
              GROUP_CONCAT(DISTINCT g.name SEPARATOR ', ') as guardian_name,
              MAX(g.phone) as guardian_phone,
              MAX(g.email) as guardian_email
@@ -103,19 +108,19 @@ router.get('/', authenticateToken, async (req, res) => {
     `;
     const params = [schoolId];
 
-    if (class_id) {
+    if (class_id && class_id !== 'all' && class_id !== 'undefined' && class_id !== 'null') {
       sql += ' AND st.class_id = ?';
       params.push(class_id);
     }
 
-    if (status) {
+    if (status && status !== 'all') {
       sql += ' AND st.status = ?';
       params.push(status);
     }
 
-    if (search) {
+    if (search && search.trim()) {
       sql += ' AND (st.first_name LIKE ? OR st.last_name LIKE ? OR st.admission_number LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      params.push(`%${search.trim()}%`, `%${search.trim()}%`, `%${search.trim()}%`);
     }
 
     sql += ' GROUP BY st.id ORDER BY st.first_name ASC, st.last_name ASC';
@@ -125,8 +130,8 @@ router.get('/', authenticateToken, async (req, res) => {
       data: students,
       meta: {
         total: students.length,
-        per_page: students.length,
-        page: 1
+        per_page: limitNum,
+        page: pageNum
       }
     });
   } catch (err) {
@@ -435,12 +440,12 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
       balance:     parseFloat(balance.toFixed(2)),
       amount_due:  parseFloat(totalDue.toFixed(2)),         // legacy frontend field
       amount_paid: parseFloat(totalPaid.toFixed(2)),        // legacy frontend field
-      status:      balance <= 0 ? 'cleared' : (totalPaid > 0 ? 'partial' : 'unpaid'),
+      status:      totalDue === 0 ? 'no_invoices' : (balance <= 0 ? 'cleared' : (totalPaid > 0 ? 'partial' : 'unpaid')),
       records:     feeRecords
     };
 
     // Attendance summary
-    let attendanceSummary = { present: 0, absent: 0, late: 0, total: 0, percentage: 100 };
+    let attendanceSummary = { present: 0, absent: 0, late: 0, total: 0, percentage: 0 };
     try {
       const attRecords = await query(
         'SELECT status FROM attendance WHERE student_id = ?', [id]
@@ -451,7 +456,7 @@ router.get('/:id/profile', authenticateToken, async (req, res) => {
       const total   = attRecords.length;
       attendanceSummary = {
         present, absent, late, total,
-        percentage: total > 0 ? Math.round(((present + late) / total) * 100) : 100
+        percentage: total > 0 ? Math.round(((present + late) / total) * 100) : 0
       };
     } catch(e) {}
 

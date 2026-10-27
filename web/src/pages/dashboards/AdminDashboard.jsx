@@ -29,12 +29,15 @@ import {
   ChevronDown, RefreshCw, Eye, Sparkles, AlertTriangle, FileText
 } from 'lucide-react';
 import { getCurrentTerm } from '../../utils/dateTerms';
+import { isSchoolBoarding, isModuleEnabled } from '../../utils/modules';
 
 export default function AdminDashboard() {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeSchool, schoolName } = useAuth();
   const navigate = useNavigate();
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const currentTerm = getCurrentTerm();
+  const hasBoarding = isSchoolBoarding(activeSchool);
+  const hasFees = isModuleEnabled(activeSchool, 'fees');
 
   // Active executive lens tab: 'overview' | 'academics' | 'finance' | 'campus'
   const [activeLens, setActiveLens] = useState('overview');
@@ -143,20 +146,19 @@ export default function AdminDashboard() {
   // Calculate class analytics
   const classAnalytics = useMemo(() => {
     if (rawResults.length === 0) {
-      // Deterministic synthetic baseline for demonstration if school has not keyed in grades for this stream yet
       return {
-        totalStudents: activeClassObj.total_students || 36,
-        meanScore: 68.4,
-        passRate: 83.3,
-        distinctionRate: 25.0,
-        highestMark: 94.0,
+        totalStudents: activeClassObj?.total_students || 0,
+        meanScore: 0,
+        passRate: 0,
+        distinctionRate: 0,
+        highestMark: 0,
         gradeBuckets: [
-          { name: 'Grade A', count: 9, fill: '#10B981' },
-          { name: 'Grade B', count: 12, fill: '#06B6D4' },
-          { name: 'Grade C', count: 9, fill: '#3B82F6' },
-          { name: 'Grade D', count: 4, fill: '#F5A524' },
-          { name: 'Grade E', count: 1, fill: '#F97316' },
-          { name: 'Grade U', count: 1, fill: '#EF4444' }
+          { name: 'A (75%+)', count: 0, fill: '#10B981' },
+          { name: 'B (65-74%)', count: 0, fill: '#06B6D4' },
+          { name: 'C (50-64%)', count: 0, fill: '#3B82F6' },
+          { name: 'D (45-49%)', count: 0, fill: '#F5A524' },
+          { name: 'E (40-44%)', count: 0, fill: '#F97316' },
+          { name: 'U (<40%)', count: 0, fill: '#EF4444' }
         ],
         roster: []
       };
@@ -236,8 +238,8 @@ export default function AdminDashboard() {
   const heatmapData = {};
   (attMatrix || []).slice(0, 8).forEach(c => {
     heatmapCols.forEach(day => {
-      const base = Number(c.attendance_pct) || 90;
-      heatmapData[`${c.class_name}_${day}`] = Math.min(100, Math.max(65, base + (day === 'Fri' ? -4 : day === 'Mon' ? 2 : 0)));
+      const base = Number(c.attendance_pct) || 0;
+      heatmapData[`${c.class_name}_${day}`] = base > 0 ? Math.min(100, Math.max(0, base + (day === 'Fri' ? -4 : day === 'Mon' ? 2 : 0))) : 0;
     });
   });
 
@@ -366,8 +368,8 @@ export default function AdminDashboard() {
         {[
           { id: 'overview', label: 'Executive 360° Overview', icon: Layers },
           { id: 'academics', label: 'Class Academic Results & Broadsheet', icon: GraduationCap, badge: `${classesList.length} Classes` },
-          { id: 'finance', label: 'Financial & Debtors Oversight', icon: DollarSign },
-          { id: 'campus', label: 'Operations & Hostels', icon: Building2 },
+          ...(hasFees ? [{ id: 'finance', label: 'Financial & Debtors Oversight', icon: DollarSign }] : []),
+          { id: 'campus', label: hasBoarding ? 'Operations & Hostels' : 'Operations & Facilities', icon: Building2 },
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeLens === tab.id;
@@ -881,24 +883,26 @@ export default function AdminDashboard() {
               </div>
             </Card>
 
-            {/* Boarding Status */}
-            <Card
-              title="Boarding & Gate Pulse"
-              subtitle="Hostel capacity & live gate out counter"
-              action={<button onClick={() => navigate('/boarding/exeats')} className="text-xs text-brand-700 font-semibold hover:underline cursor-pointer">Exeat Passes →</button>}
-            >
-              <div className="flex items-center justify-between gap-4 py-3">
-                <ProgressRing value={boarding?.hostels?.[0]?.occupancy_pct ?? 0} size={80} color="brand" label="Boys Hostel" />
-                <ProgressRing value={boarding?.hostels?.[1]?.occupancy_pct ?? 0} size={80} color="brand" label="Girls Hostel" />
-              </div>
-              <div className="mt-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-semibold text-accent block">Out of School Now</span>
-                  <span className="text-xs text-ink/80">Approved gate passes active</span>
+            {/* Boarding Status (Hostels & Exeat) — only rendered if school operates boarding */}
+            {hasBoarding && (
+              <Card
+                title="Boarding & Gate Pulse"
+                subtitle="Hostel capacity & live gate out counter"
+                action={<button onClick={() => navigate('/boarding/exeats')} className="text-xs text-brand-700 font-semibold hover:underline cursor-pointer">Exeat Passes →</button>}
+              >
+                <div className="flex items-center justify-between gap-4 py-3">
+                  <ProgressRing value={boarding?.hostels?.[0]?.occupancy_pct ?? 0} size={80} color="brand" label="Boys Hostel" />
+                  <ProgressRing value={boarding?.hostels?.[1]?.occupancy_pct ?? 0} size={80} color="brand" label="Girls Hostel" />
                 </div>
-                <span className="font-mono font-extrabold text-xl text-accent tabular-nums">{boarding?.out_count ?? 0}</span>
-              </div>
-            </Card>
+                <div className="mt-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40 flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-semibold text-accent block">Out of School Now</span>
+                    <span className="text-xs text-ink/80">Approved gate passes active</span>
+                  </div>
+                  <span className="font-mono font-extrabold text-xl text-accent tabular-nums">{boarding?.out_count ?? 0}</span>
+                </div>
+              </Card>
+            )}
 
             {/* Live Audit Log */}
             <Card
@@ -964,7 +968,7 @@ export default function AdminDashboard() {
                 Ministry of Primary and Secondary Education
               </h2>
               <h3 className="text-sm font-sans font-bold tracking-tight text-slate-700 uppercase">
-                {schoolId === 'HARAREPR' ? 'Harare High & Primary School Base' : 'SchoolBase Certified Educational Institution'}
+                {activeSchool?.name || schoolName || 'SchoolBase Certified Educational Institution'}
               </h3>
               <p className="text-[11px] font-mono text-slate-600 mt-0.5">
                 EXECUTIVE BROADSHEET & MASTER EXAMINATION LEDGER • {selectedTerm.toUpperCase()} {selectedYear}

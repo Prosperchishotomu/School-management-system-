@@ -11,14 +11,16 @@ import {
   Card,
   StatusPill,
   EmptyState,
-  Skeleton
+  Skeleton,
+  Modal
 } from '../components/ui';
 import {
-  GraduationCap, CheckCircle2, AlertCircle, TrendingUp, Award, Users, BookOpen
+  GraduationCap, CheckCircle2, AlertCircle, TrendingUp, Award, Users, BookOpen,
+  Sliders, Plus, Trash2, RotateCcw, Check, Sparkles
 } from 'lucide-react';
 
 export default function Grades() {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeSchool } = useAuth();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -27,7 +29,7 @@ export default function Grades() {
     return <Navigate to="/results" replace />;
   }
 
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const paramClass = searchParams.get('class') || '';
   const paramSubject = searchParams.get('subject') || '';
 
@@ -44,7 +46,7 @@ export default function Grades() {
     `grades_classes_${schoolId}`,
     () => api.get(`/schools/${schoolId}/classes`)
   );
-  const allClasses = classesData || [];
+  const allClasses = Array.isArray(classesData?.data) ? classesData.data : (Array.isArray(classesData) ? classesData : []);
 
   // Determine available classes based on teacher allocations
   const availableClasses = useMemo(() => {
@@ -76,17 +78,7 @@ export default function Grades() {
     `grades_subjects_${schoolId}`,
     () => api.get(`/schools/${schoolId}/subjects`)
   );
-  const allSubjects = subjectsData || [
-    { code: 'MATH', name: 'Mathematics' },
-    { code: 'ENG',  name: 'English Language' },
-    { code: 'SHON', name: 'Shona' },
-    { code: 'SCIE', name: 'Science and Technology' },
-    { code: 'PHYS', name: 'Physics' },
-    { code: 'CHEM', name: 'Chemistry' },
-    { code: 'GEO',  name: 'Geography' },
-    { code: 'HIST', name: 'History' },
-    { code: 'AGRI', name: 'Agriculture' }
-  ];
+  const allSubjects = Array.isArray(subjectsData?.data) ? subjectsData.data : (Array.isArray(subjectsData) ? subjectsData : []);
 
   // Determine available subjects for current selected class
   const availableSubjects = useMemo(() => {
@@ -115,14 +107,14 @@ export default function Grades() {
 
   // Current selected subject
   const selectedSubject = useMemo(() => {
-    if (paramSubject && availableSubjects.some(s => s.name.toLowerCase() === paramSubject.toLowerCase())) {
+    if (paramSubject && availableSubjects.some(s => s.name?.toLowerCase() === paramSubject.toLowerCase())) {
       return paramSubject;
     }
-    return availableSubjects[0]?.name || 'Mathematics';
+    return availableSubjects[0]?.name || '';
   }, [paramSubject, availableSubjects]);
 
   // 4. Fetch Class Grades and Scoped Student Roster from Backend
-  const { data: gradesData, loading: gradesLoading, refetch: refetchGrades } = useApi(
+  const { data: gradesData, loading: gradesLoading } = useApi(
     currentClassId && selectedSubject ? `gradebook_${schoolId}_${currentClassId}_${selectedSubject}` : null,
     () => api.get(`/schools/${schoolId}/classes/${currentClassId}/grades?subject=${encodeURIComponent(selectedSubject)}`),
     { enabled: Boolean(currentClassId && selectedSubject) }
@@ -136,44 +128,107 @@ export default function Grades() {
     return [];
   }, [gradebookPayload]);
 
-  // Assessment columns
-  const [columns] = useState([
-    { id: 'ca1', label: 'Test 1 (20%)', max: 20 },
-    { id: 'ca2', label: 'CALA / Project (30%)', max: 30 },
-    { id: 'exam', label: 'Exam Paper (50%)', max: 50 }
-  ]);
+  // Assessment columns (Teacher configurable: Add, edit name, edit max marks, remove)
+  const defaultColumns = useMemo(() => [
+    { id: 'ca1', label: 'Test 1', max: 20 },
+    { id: 'ca2', label: 'CALA / Project', max: 30 },
+    { id: 'exam', label: 'Exam Paper', max: 50 }
+  ], []);
+
+  const [columns, setColumns] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`sb_grade_cols_${schoolId}_${currentClassId}_${selectedSubject}`);
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return defaultColumns;
+  });
+
+  // Load saved columns whenever class or subject changes
+  useEffect(() => {
+    if (!currentClassId || !selectedSubject) return;
+    try {
+      const saved = localStorage.getItem(`sb_grade_cols_${schoolId}_${currentClassId}_${selectedSubject}`);
+      if (saved) {
+        setColumns(JSON.parse(saved));
+        return;
+      }
+    } catch (_) {}
+    setColumns(defaultColumns);
+  }, [schoolId, currentClassId, selectedSubject, defaultColumns]);
+
+  // Test configuration modal state
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [configCols, setConfigCols] = useState([]);
+
+  const openConfigModal = () => {
+    setConfigCols(columns.map(c => ({ ...c })));
+    setShowConfigModal(true);
+  };
+
+  const handleSaveColumns = () => {
+    if (!configCols || configCols.length === 0) {
+      toast.error('You must keep at least one assessment test.');
+      return;
+    }
+    const sanitized = configCols.map((c, i) => ({
+      id: c.id || `test_${i + 1}`,
+      label: c.label?.trim() || `Test ${i + 1}`,
+      max: Math.max(1, Number(c.max) || 100)
+    }));
+    setColumns(sanitized);
+    try {
+      localStorage.setItem(`sb_grade_cols_${schoolId}_${currentClassId}_${selectedSubject}`, JSON.stringify(sanitized));
+    } catch (_) {}
+    toast.success('Assessment tests & max marks saved for this subject.');
+    setShowConfigModal(false);
+  };
+
+  const handleResetColumns = () => {
+    setConfigCols(defaultColumns.map(c => ({ ...c })));
+  };
+
+  const handleAddTest = () => {
+    const nextIdx = configCols.length + 1;
+    setConfigCols([
+      ...configCols,
+      { id: `test_${Date.now().toString(36)}`, label: `Test ${nextIdx}`, max: 50 }
+    ]);
+  };
+
+  const handleRemoveTest = (idx) => {
+    if (configCols.length <= 1) {
+      toast.error('You must have at least one test.');
+      return;
+    }
+    setConfigCols(configCols.filter((_, i) => i !== idx));
+  };
 
   // Grid scores state: { [student_id]: { [col_id]: number } }
   const [scores, setScores] = useState({});
   const [autosaveState, setAutosaveState] = useState('saved'); // 'saved' | 'saving' | 'dirty'
   const autosaveTimeout = useRef(null);
 
-  // Initialize scores with saved database marks or initial plausible scores
+  // Initialize scores with saved database marks (defaulting to empty/unrecorded)
   useEffect(() => {
     if (students.length > 0) {
       const initial = {};
       const rawGrades = gradebookPayload.raw_grades || [];
 
-      students.forEach((s, i) => {
+      students.forEach((s) => {
         const studentScores = {};
-        // Match saved marks from backend raw_grades
         const sGrades = rawGrades.filter(g => g.student_id === s.id && g.subject === selectedSubject);
         if (sGrades.length > 0) {
           sGrades.forEach(g => {
-            const col = (g.assessment_name || '').toLowerCase();
-            if (col.includes('ca1') || col.includes('test 1')) studentScores.ca1 = g.grade_value;
-            else if (col.includes('ca2') || col.includes('cala')) studentScores.ca2 = g.grade_value;
-            else if (col.includes('exam')) studentScores.exam = g.grade_value;
-            else studentScores.exam = g.grade_value;
+            const colName = (g.assessment_name || '').toLowerCase();
+            columns.forEach(col => {
+              if (colName === col.id.toLowerCase() || colName === col.label.toLowerCase() || colName.includes(col.id.toLowerCase())) {
+                studentScores[col.id] = g.grade_value;
+              }
+            });
+            if (studentScores.exam === undefined && colName.includes('exam')) studentScores.exam = g.grade_value;
+            if (studentScores.ca1 === undefined && (colName.includes('test 1') || colName.includes('ca1'))) studentScores.ca1 = g.grade_value;
+            if (studentScores.ca2 === undefined && (colName.includes('cala') || colName.includes('ca2'))) studentScores.ca2 = g.grade_value;
           });
-        }
-
-        // Fallback default spread if no database marks recorded yet
-        if (Object.keys(studentScores).length === 0) {
-          const base = 55 + ((i * 7) % 38);
-          studentScores.ca1 = Math.min(20, Math.round(base * 0.2));
-          studentScores.ca2 = Math.min(30, Math.round(base * 0.3));
-          studentScores.exam = Math.min(50, Math.round(base * 0.5));
         }
 
         initial[s.id] = studentScores;
@@ -182,7 +237,7 @@ export default function Grades() {
       setScores(initial);
       setAutosaveState('saved');
     }
-  }, [students, currentClassId, selectedSubject, gradebookPayload.raw_grades]);
+  }, [students, currentClassId, selectedSubject, gradebookPayload.raw_grades, columns]);
 
   // Handle cell changes & keyboard navigation
   const handleScoreChange = (studentId, colId, value) => {
@@ -252,37 +307,70 @@ export default function Grades() {
     }
   };
 
-  // Live Statistics Computations
+  // Level detection (Strict separation between Primary, O-Level, and A-Level)
+  const className = currentClass?.name || '';
+  const classLevel = (currentClass?.level || '').toLowerCase();
+  const schoolType = (activeSchool?.school_type || '').toLowerCase();
+
+  const isALevel = /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced|a[- ]?level/i.test(className) ||
+                   /a[- ]?level|form\s*[5-6]/i.test(classLevel);
+  const isSecondary = isALevel || /form\s*[1-4]|ordinary|o[- ]?level/i.test(className) || classLevel.includes('sec') || schoolType.includes('secondary');
+  const isPrimary = !isSecondary;
+
+  // Live Statistics Computations (normalized against total max marks: 0 to 100%)
   const computedStats = useMemo(() => {
-    let totalScore = 0;
+    let totalPct = 0;
     let count = 0;
     let highest = 0;
     let lowest = 100;
     let passing = 0;
 
+    const totalPossible = columns.reduce((a, c) => a + (Number(c.max) || 0), 0) || 100;
+
     students.forEach(s => {
       const studentScores = scores[s.id] || {};
-      const sum = (Number(studentScores.ca1) || 0) + (Number(studentScores.ca2) || 0) + (Number(studentScores.exam) || 0);
-      totalScore += sum;
+      const hasScores = columns.some(c => studentScores[c.id] !== '' && studentScores[c.id] != null);
+      if (!hasScores) return;
+
+      const rawEarned = columns.reduce((a, c) => a + (Number(studentScores[c.id]) || 0), 0);
+      // Normalized percentage strictly clamped between 0 and 100%
+      const pct = Math.min(100, Math.max(0, Math.round((rawEarned / totalPossible) * 100)));
+
+      totalPct += pct;
       count++;
-      if (sum > highest) highest = sum;
-      if (sum < lowest) lowest = sum;
-      if (sum >= 50) passing++;
+      if (pct > highest) highest = pct;
+      if (pct < lowest) lowest = pct;
+      if (pct >= 50) passing++;
     });
 
-    const mean = count > 0 ? (totalScore / count).toFixed(1) : 0;
+    const mean = count > 0 ? (totalPct / count).toFixed(1) : 0;
     const passRate = count > 0 ? Math.round((passing / count) * 100) : 0;
 
     return { mean, highest, lowest: count > 0 ? lowest : 0, passRate, candidateCount: count };
-  }, [students, scores]);
+  }, [students, scores, columns]);
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Interactive Gradebook & Mark Entry"
-        subtitle="Tiered grading matrix with teacher-subject scoping, keyboard navigation & live compiling."
+        subtitle={
+          isPrimary
+            ? `Primary Mark Entry (Units 1 to 9) • ${selectedSubject}`
+            : isALevel
+            ? `High School A-Level Mark Entry (5-Point Scale A-F) • ${selectedSubject}`
+            : `Secondary O-Level Mark Entry (ZIMSEC Symbols A-U) • ${selectedSubject}`
+        }
         actions={
           <div className="flex items-center gap-3">
+            <button
+              onClick={openConfigModal}
+              className="btn-secondary text-xs flex items-center gap-1.5 px-3 py-2 cursor-pointer shadow-xs"
+              title="Add, remove or edit tests and their max marks"
+            >
+              <Sliders className="w-3.5 h-3.5 text-brand-700 dark:text-brand-400" />
+              <span>Configure Tests ({columns.length})</span>
+            </button>
+
             {/* Autosave Indicator */}
             <span className="text-xs flex items-center gap-1.5 font-medium text-muted">
               {autosaveState === 'saving' ? (
@@ -319,7 +407,7 @@ export default function Grades() {
         <StatCard
           title="Credit Pass Rate"
           value={`${computedStats.passRate}%`}
-          sublabel="Scoring 50%+ (Credit / Distinction)"
+          sublabel={isPrimary ? "Scoring Unit 1 to 4 (50%+)" : isALevel ? "Scoring 50%+ (Grade C & above)" : "Scoring 50%+ (Grade A to C)"}
           icon={TrendingUp}
           iconColor={computedStats.passRate >= 70 ? 'brand' : 'accent'}
         />
@@ -393,11 +481,17 @@ export default function Grades() {
                 <th className="py-2.5 px-3 text-left min-w-[200px]">Student Name & ADM</th>
                 {columns.map(c => (
                   <th key={c.id} className="py-2.5 px-3 text-center min-w-[120px]">
-                    {c.label}
+                    <div>{c.label}</div>
+                    <div className="text-[10px] text-muted font-mono font-normal">Max: {c.max}</div>
                   </th>
                 ))}
-                <th className="py-2.5 px-3 text-right min-w-[100px]">Total (100)</th>
-                <th className="py-2.5 px-3 text-center w-28">Grade / Units</th>
+                <th className="py-2.5 px-3 text-right min-w-[110px]">
+                  <div>Percentage</div>
+                  <div className="text-[10px] text-muted font-mono font-normal">Max 100%</div>
+                </th>
+                <th className="py-2.5 px-3 text-center min-w-[130px]">
+                  {isPrimary ? 'Units (1-9)' : isALevel ? 'A-Level (Pts)' : 'O-Level (A-U)'}
+                </th>
               </tr>
             </thead>
 
@@ -417,29 +511,33 @@ export default function Grades() {
               ) : (
                 students.map((st, sIdx) => {
                   const studentScores = scores[st.id] || {};
-                  const total = (Number(studentScores.ca1) || 0) + (Number(studentScores.ca2) || 0) + (Number(studentScores.exam) || 0);
+                  const hasScores = columns.some(c => studentScores[c.id] !== '' && studentScores[c.id] != null);
 
-                  const className = currentClass?.name || '';
-                  const classLevel = (currentClass?.level || '').toLowerCase();
-                  const isALevel = /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(className);
-                  const isSecondary = isALevel || /form\s*[1-4]|ordinary/i.test(className) || classLevel.includes('sec');
-                  const isPrimary = !isSecondary;
+                  const totalPossible = columns.reduce((a, c) => a + (Number(c.max) || 0), 0) || 100;
+                  const rawEarned = columns.reduce((a, c) => a + (Number(studentScores[c.id]) || 0), 0);
+                  // Clamped 0% to 100%
+                  const percentage = hasScores
+                    ? Math.min(100, Math.max(0, Math.round((rawEarned / totalPossible) * 100)))
+                    : 0;
 
-                  let gradeDisplay = '';
-                  let gradeBadge = 'absent';
+                  let gradeDisplay = 'Ungraded';
+                  let gradeBadge = 'neutral';
 
-                  if (isPrimary) {
-                    // Primary schools have units only (Unit 1 to Unit 9), not symbols like A, B, C, D, E, U
-                    const u = total >= 80 ? 1 : total >= 70 ? 2 : total >= 60 ? 3 : total >= 50 ? 4 : total >= 45 ? 5 : total >= 40 ? 6 : total >= 35 ? 7 : total >= 30 ? 8 : 9;
-                    gradeDisplay = `Unit ${u}`;
-                    gradeBadge = u <= 3 ? 'present' : u <= 6 ? 'submitted' : 'absent';
-                  } else if (isALevel) {
-                    gradeDisplay = total >= 70 ? 'A (5pts)' : total >= 60 ? 'B (4pts)' : total >= 50 ? 'C (3pts)' : total >= 45 ? 'D (2pts)' : total >= 40 ? 'E (1pt)' : total >= 35 ? 'O (0pts)' : 'F (0pts)';
-                    gradeBadge = total >= 50 ? 'present' : total >= 40 ? 'submitted' : 'absent';
-                  } else {
-                    // Secondary O-Level Symbols: A, B, C, D, E, U
-                    gradeDisplay = total >= 75 ? 'A' : total >= 65 ? 'B' : total >= 50 ? 'C' : total >= 45 ? 'D' : total >= 40 ? 'E' : 'U';
-                    gradeBadge = ['A', 'B', 'C'].includes(gradeDisplay) ? 'present' : ['D', 'E'].includes(gradeDisplay) ? 'submitted' : 'absent';
+                  if (hasScores) {
+                    if (isPrimary) {
+                      // Primary schools have units only (Unit 1 to Unit 9), strictly NO letter symbols
+                      const u = percentage >= 80 ? 1 : percentage >= 70 ? 2 : percentage >= 60 ? 3 : percentage >= 50 ? 4 : percentage >= 45 ? 5 : percentage >= 40 ? 6 : percentage >= 35 ? 7 : percentage >= 30 ? 8 : 9;
+                      gradeDisplay = `Unit ${u}`;
+                      gradeBadge = u <= 3 ? 'present' : u <= 6 ? 'submitted' : 'absent';
+                    } else if (isALevel) {
+                      // High School A-Level: 5-Point scale (A=5pts, B=4pts, C=3pts, D=2pts, E=1pt, O=0pts, F=0pts)
+                      gradeDisplay = percentage >= 70 ? 'A (5pts)' : percentage >= 60 ? 'B (4pts)' : percentage >= 50 ? 'C (3pts)' : percentage >= 45 ? 'D (2pts)' : percentage >= 40 ? 'E (1pt)' : percentage >= 35 ? 'O (0pts)' : 'F (0pts)';
+                      gradeBadge = percentage >= 50 ? 'present' : percentage >= 40 ? 'submitted' : 'absent';
+                    } else {
+                      // Secondary O-Level: Letter symbols A (75%+), B (65-74%), C (50-64%), D (45-49%), E (40-44%), U (0-39%)
+                      gradeDisplay = percentage >= 75 ? 'A' : percentage >= 65 ? 'B' : percentage >= 50 ? 'C' : percentage >= 45 ? 'D' : percentage >= 40 ? 'E' : 'U';
+                      gradeBadge = ['A', 'B', 'C'].includes(gradeDisplay) ? 'present' : ['D', 'E'].includes(gradeDisplay) ? 'submitted' : 'absent';
+                    }
                   }
 
                   return (
@@ -466,9 +564,14 @@ export default function Grades() {
                         </td>
                       ))}
 
-                      {/* Computed Total & Grade */}
-                      <td className="py-2 px-3 text-right font-mono font-extrabold text-sm text-ink tabular-nums">
-                        {total}%
+                      {/* Computed Total & Percentage (Never exceeds 100%) */}
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">
+                        {hasScores ? (
+                          <div>
+                            <span className="font-extrabold text-sm text-ink">{percentage}%</span>
+                            <span className="text-[10px] text-muted block font-normal">({rawEarned}/{totalPossible})</span>
+                          </div>
+                        ) : '—'}
                       </td>
                       <td className="py-2 px-3 text-center">
                         <StatusPill status={gradeBadge} label={gradeDisplay} size="sm" />
@@ -481,6 +584,115 @@ export default function Grades() {
           </table>
         </div>
       </Card>
+
+      {/* Configure Assessment Tests Modal */}
+      <Modal
+        isOpen={showConfigModal}
+        onClose={() => setShowConfigModal(false)}
+        title={`Configure Assessment Tests: ${selectedSubject}`}
+        description="Choose the tests, change test titles, and specify maximum marks. Total percentage will automatically normalize to 100%."
+      >
+        <div className="space-y-4">
+          <div className="space-y-3">
+            {configCols.map((col, idx) => (
+              <div key={col.id || idx} className="p-3 rounded-xl border border-line bg-canvas flex items-center gap-3">
+                <span className="w-6 h-6 rounded-full bg-brand-500/10 text-brand-700 font-mono font-bold text-xs flex items-center justify-center shrink-0">
+                  {idx + 1}
+                </span>
+
+                <div className="flex-1">
+                  <label className="block text-[11px] font-bold text-muted uppercase mb-1">Test Name</label>
+                  <input
+                    type="text"
+                    value={col.label}
+                    onChange={e => {
+                      const updated = [...configCols];
+                      updated[idx].label = e.target.value;
+                      setConfigCols(updated);
+                    }}
+                    placeholder="e.g. Test 1, CALA, Mid-Term"
+                    className="w-full px-3 py-1.5 rounded-lg border border-line bg-surface text-xs font-semibold text-ink focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                <div className="w-24">
+                  <label className="block text-[11px] font-bold text-muted uppercase mb-1">Max Mark</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={col.max}
+                    onChange={e => {
+                      const updated = [...configCols];
+                      updated[idx].max = Number(e.target.value) || 1;
+                      setConfigCols(updated);
+                    }}
+                    className="w-full px-2 py-1.5 rounded-lg border border-line bg-surface text-xs font-mono font-bold text-ink text-center focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+
+                <div className="pt-5">
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveTest(idx)}
+                    disabled={configCols.length <= 1}
+                    className="p-2 rounded-lg text-danger hover:bg-danger/10 disabled:opacity-30 cursor-pointer"
+                    title="Remove Test"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <button
+              type="button"
+              onClick={handleAddTest}
+              className="btn-secondary text-xs flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4 text-brand-700" />
+              <span>Add Another Test</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleResetColumns}
+              className="text-xs text-muted hover:text-ink flex items-center gap-1"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset to Standard</span>
+            </button>
+          </div>
+
+          <div className="p-3 rounded-xl bg-brand-500/10 border border-brand-500/20 text-xs text-brand-900 dark:text-brand-300">
+            <strong>Total Maximum Marks:</strong>{' '}
+            <span className="font-mono font-bold">
+              {configCols.reduce((sum, c) => sum + (Number(c.max) || 0), 0)}
+            </span>
+            . Learner earned marks will be divided by this total so subject percentage is always mathematically correct and never exceeds 100%.
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowConfigModal(false)}
+              className="btn-secondary text-xs"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveColumns}
+              className="btn-primary text-xs flex items-center gap-1.5"
+            >
+              <Check className="w-4 h-4" />
+              <span>Save & Apply Tests</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

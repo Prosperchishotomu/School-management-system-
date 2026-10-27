@@ -68,25 +68,16 @@ export default function Reporting() {
   const assignments = Array.isArray(assignmentsData) ? assignmentsData : [];
 
   // Academic Report dataset
-  const academicReport = Array.isArray(academicData) && academicData.length > 0 ? academicData : [
-    { subject: 'Mathematics', code: 'MATH', mean_score: 64.2, pass_rate: 78.4, total_candidates: 142, distinctions: 28 },
-    { subject: 'English Language', code: 'ENG', mean_score: 71.5, pass_rate: 85.2, total_candidates: 142, distinctions: 34 },
-    { subject: 'Indigenous Languages (Shona/Ndebele)', code: 'LANG', mean_score: 75.8, pass_rate: 91.0, total_candidates: 138, distinctions: 42 },
-    { subject: 'Physical Science', code: 'PHYS', mean_score: 61.8, pass_rate: 71.0, total_candidates: 128, distinctions: 18 },
-    { subject: 'Heritage Studies', code: 'HERI', mean_score: 74.0, pass_rate: 88.5, total_candidates: 142, distinctions: 39 },
-    { subject: 'History', code: 'HIST', mean_score: 76.2, pass_rate: 92.1, total_candidates: 110, distinctions: 36 },
-    { subject: 'Commerce', code: 'COMM', mean_score: 59.4, pass_rate: 68.0, total_candidates: 96, distinctions: 12 },
-    { subject: 'Agriculture', code: 'AGRI', mean_score: 68.4, pass_rate: 82.5, total_candidates: 120, distinctions: 26 },
-  ];
+  const academicReport = Array.isArray(academicData) ? academicData : [];
 
   // Stream Performance Breakdown
   const streamReport = useMemo(() => {
     return classes.map(c => {
       const isPrimary = (c.level || '').toLowerCase().includes('primary') || (c.name || '').toLowerCase().includes('grade');
       const isALevel = /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b/i.test(c.name || '');
-      const candidates = parseInt(c.total_students || 35);
-      const meanScore = isPrimary ? 68.5 : isALevel ? 72.0 : 64.8;
-      const passRate = isPrimary ? 86.4 : isALevel ? 89.2 : 79.5;
+      const candidates = parseInt(c.total_students || 0);
+      const meanScore = Number(c.mean_score || 0);
+      const passRate = Number(c.pass_rate || 0);
 
       return {
         id: c.id,
@@ -128,29 +119,19 @@ export default function Reporting() {
   }, [staff, assignments]);
 
   // Financial Report
-  const feesReport = Array.isArray(feesData) && feesData.length > 0 ? feesData : [
-    { period: 'Jan 2026', billed: 48500, collected: 42100, outstanding: 6400, rate: 86.8 },
-    { period: 'Feb 2026', billed: 52000, collected: 46800, outstanding: 5200, rate: 90.0 },
-    { period: 'Mar 2026', billed: 54000, collected: 49500, outstanding: 4500, rate: 91.6 },
-  ];
+  const feesReport = Array.isArray(feesData) ? feesData : [];
 
   // Attendance Report
-  const attendanceReport = Array.isArray(attendanceData) && attendanceData.length > 0 ? attendanceData : [
-    { day: 'Monday', rate: 96.4, absentees: 28 },
-    { day: 'Tuesday', rate: 97.2, absentees: 22 },
-    { day: 'Wednesday', rate: 95.8, absentees: 33 },
-    { day: 'Thursday', rate: 96.0, absentees: 31 },
-    { day: 'Friday', rate: 93.5, absentees: 51 },
-  ];
+  const attendanceReport = Array.isArray(attendanceData) ? attendanceData : [];
 
   // Enrolment Demographics
   const enrolmentReport = useMemo(() => {
     return classes.map(c => {
-      const total = parseInt(c.total_students || 35);
-      const boys = Math.floor(total * 0.48);
-      const girls = total - boys;
-      const capacity = parseInt(c.capacity || 40);
-      const occupancy = Math.round((total / capacity) * 100);
+      const total = parseInt(c.total_students || 0);
+      const boys = Number(c.boys_count ?? 0);
+      const girls = Number(c.girls_count ?? (total > boys ? total - boys : 0));
+      const capacity = parseInt(c.capacity || 0);
+      const occupancy = capacity > 0 ? Math.round((total / capacity) * 100) : 0;
 
       return {
         id: c.id,

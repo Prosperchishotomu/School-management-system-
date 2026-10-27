@@ -135,9 +135,13 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
     const resolvedLevel = level || (cleanName.toLowerCase().includes('form') ? 'Secondary' : 'Primary');
     const resolvedGradeLevel = grade_level || (cleanName.toLowerCase().includes('form') ? cleanName.split(' ')[0] : 'Primary');
 
+    const parsedCapacity = (capacity !== undefined && capacity !== '' && capacity !== null && !isNaN(parseInt(capacity))) 
+      ? parseInt(capacity) 
+      : null;
+
     await query(
       `INSERT INTO classes (id, school_id, name, level, grade_level, stream, capacity, form_master_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [classId, schoolId, cleanName, resolvedLevel, resolvedGradeLevel, stream ? normalizeText(stream) : null, parseInt(capacity || 40), form_master_id || null]
+      [classId, schoolId, cleanName, resolvedLevel, resolvedGradeLevel, stream ? normalizeText(stream) : null, parsedCapacity, form_master_id || null]
     );
 
     broadcastInvalidation(schoolId, ['classes', 'academics', 'dashboard', 'summary'], 'class_created');
@@ -280,6 +284,7 @@ router.get('/subjects', authenticateToken, async (req, res) => {
 // POST /schools/:schoolId/subjects
 router.post('/subjects', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
+    const { schoolId } = req.params;
     const { name, code, category, level } = req.body;
 
     const cleanName = normalizeName(name);
@@ -287,15 +292,18 @@ router.post('/subjects', authenticateToken, requireRoles('school_admin', 'super_
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subject name is required.' } });
     }
 
-    const subjCode = code ? normalizeCode(code) : normalizeCode(cleanName.substr(0, 4));
-    const dupSubj = await queryOne('SELECT id FROM subjects WHERE LOWER(name) = LOWER(?) OR LOWER(code) = LOWER(?)', [cleanName, subjCode]);
-    if (dupSubj) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Subject '${cleanName}' (${subjCode}) already exists.` } });
+    const cleanCode = code ? String(code).trim().toUpperCase() : null;
+    const dupSubj = await queryOne(
+      'SELECT id FROM subjects WHERE (school_id = ? OR school_id IS NULL) AND LOWER(name) = LOWER(?)',
+      [schoolId, cleanName]
+    );
+    if (dupSubj) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Subject '${cleanName}' already exists.` } });
 
     const subjectId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
 
     await query(
-      `INSERT INTO subjects (id, name, code, category, level, created_by) VALUES (?, ?, ?, ?, ?, ?)`,
-      [subjectId, cleanName, subjCode, category ? normalizeText(category) : 'general', level ? normalizeText(level) : 'all', req.user.id]
+      `INSERT INTO subjects (id, school_id, name, code, category, level, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [subjectId, schoolId, cleanName, cleanCode, category ? normalizeText(category) : 'general', level ? normalizeText(level) : 'all', req.user.id]
     );
 
     const created = await queryOne('SELECT * FROM subjects WHERE id = ?', [subjectId]);
@@ -620,24 +628,24 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       const attSummary = await queryOne(
         `SELECT 
            COUNT(*) as total_days,
-           SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present_days,
+           SUM(CASE WHEN status IN ('present', 'late') THEN 1 ELSE 0 END) as present_days,
            SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_days
          FROM attendance
          WHERE school_id = ? AND student_id = ?`,
         [schoolId, kid.id]
       );
-      const totalDays = Number(attSummary?.total_days || 60);
-      const presentDays = Number(attSummary?.present_days || (attSummary?.total_days ? attSummary.present_days : 57));
-      const absentDays = Number(attSummary?.absent_days || (totalDays - presentDays));
-      const attRate = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 95;
+      const totalDays = Number(attSummary?.total_days || 0);
+      const presentDays = Number(attSummary?.present_days || 0);
+      const absentDays = Number(attSummary?.absent_days || 0);
+      const attRate = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
       const detailedSubjects = processed.formattedSubjects.map(sub => {
         const raw = subjectResults.find(r => r.subject_name === sub.subject_name || r.subject_id === sub.subject_name);
         return {
           ...sub,
-          test_score: raw?.test_score !== null && raw?.test_score !== undefined ? parseFloat(raw.test_score) : Math.round(sub.average * 0.2),
-          project_score: raw?.project_score !== null && raw?.project_score !== undefined ? parseFloat(raw.project_score) : Math.round(sub.average * 0.3),
-          exam_score: raw?.exam_score !== null && raw?.exam_score !== undefined ? parseFloat(raw.exam_score) : Math.round(sub.average * 0.5)
+          test_score: raw?.test_score !== null && raw?.test_score !== undefined ? parseFloat(raw.test_score) : null,
+          project_score: raw?.project_score !== null && raw?.project_score !== undefined ? parseFloat(raw.project_score) : null,
+          exam_score: raw?.exam_score !== null && raw?.exam_score !== undefined ? parseFloat(raw.exam_score) : null
         };
       });
 
@@ -649,7 +657,8 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
         admission_number: kid.admission_number,
         class_id: kid.class_id,
         class_name: kid.class_name,
-        school_name: kid.school_name || 'Harare High School',
+        school_name: kid.school_name || '',
+        center_no: kid.center_no || '',
         form_master_name: kid.form_master_name || 'Class Teacher',
         level_category: levelCategory,
         term: term || 'Term 3',
@@ -689,22 +698,57 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
   // ==========================================
   // CASE 2: TEACHER & ADMIN ACCESS
   // ==========================================
-  if (!classId) {
+  let isCohortAggregated = false;
+  let cohortName = null;
+  let targetClasses = [];
+
+  if (classId && String(classId).startsWith('cohort:')) {
+    isCohortAggregated = true;
+    cohortName = String(classId).replace('cohort:', '').trim();
+    targetClasses = await query(
+      `SELECT c.*, s.school_type, s.name as school_name, s.code as center_no, stf.name as form_master_name
+       FROM classes c
+       LEFT JOIN schools s ON c.school_id = s.id
+       LEFT JOIN staff stf ON c.form_master_id = stf.id OR c.form_master_id = stf.user_id
+       WHERE c.school_id = ? AND (c.grade_level = ? OR c.name LIKE ? OR c.name LIKE ?)
+       ORDER BY c.name ASC`,
+      [schoolId, cohortName, `${cohortName}%`, `%${cohortName}%`]
+    );
+  } else if (!classId) {
     const firstClass = await queryOne('SELECT id FROM classes WHERE school_id = ? ORDER BY name ASC LIMIT 1', [schoolId]);
     classId = firstClass?.id;
+    if (classId) {
+      const cls = await queryOne(
+        `SELECT c.*, s.school_type, s.name as school_name, s.code as center_no, stf.name as form_master_name
+         FROM classes c 
+         LEFT JOIN schools s ON c.school_id = s.id 
+         LEFT JOIN staff stf ON c.form_master_id = stf.id OR c.form_master_id = stf.user_id
+         WHERE c.id = ? AND c.school_id = ?`,
+        [classId, schoolId]
+      );
+      if (cls) targetClasses = [cls];
+    }
+  } else {
+    const cls = await queryOne(
+      `SELECT c.*, s.school_type, s.name as school_name, s.code as center_no, stf.name as form_master_name
+       FROM classes c 
+       LEFT JOIN schools s ON c.school_id = s.id 
+       LEFT JOIN staff stf ON c.form_master_id = stf.id OR c.form_master_id = stf.user_id
+       WHERE c.id = ? AND c.school_id = ?`,
+      [classId, schoolId]
+    );
+    if (cls) targetClasses = [cls];
   }
-  if (!classId) return { data: [], is_admin: true };
 
-  const cls = await queryOne(
-    `SELECT c.*, s.school_type FROM classes c LEFT JOIN schools s ON c.school_id = s.id WHERE c.id = ? AND c.school_id = ?`,
-    [classId, schoolId]
-  );
-  if (!cls) return { error: { code: 'NOT_FOUND', message: 'Class not found.' }, status: 404 };
+  if (targetClasses.length === 0) {
+    return { data: [], stream_comparison: [], is_admin: true };
+  }
 
-  const levelCategory = determineLevelCategory(cls.name, cls.level, cls.school_type);
-  const isSecondary = (cls.level && String(cls.level).toLowerCase().includes('sec')) ||
-                      (cls.name && /form\s*[1-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|ordinary|advanced/i.test(cls.name)) ||
-                      (cls.school_type && (cls.school_type.includes('secondary') || cls.school_type.includes('high')));
+  const primaryCls = targetClasses[0];
+  const levelCategory = determineLevelCategory(primaryCls.name, primaryCls.level, primaryCls.school_type);
+  const isSecondary = (primaryCls.level && String(primaryCls.level).toLowerCase().includes('sec')) ||
+                      (primaryCls.name && /form\s*[1-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|ordinary|advanced/i.test(primaryCls.name)) ||
+                      (primaryCls.school_type && (primaryCls.school_type.includes('secondary') || primaryCls.school_type.includes('high')));
 
   let isClassTeacher = false;
   let isSubjectTeacher = false;
@@ -719,22 +763,24 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
     const empRecord = await queryOne('SELECT id FROM employees WHERE user_id = ? OR id = ?', [userId, userId]);
     const teacherIds = [String(userId), staffRecord?.id ? String(staffRecord.id) : null, empRecord?.id ? String(empRecord.id) : null].filter(Boolean);
 
-    isClassTeacher = Boolean(
-      (cls.form_master_id && teacherIds.includes(String(cls.form_master_id))) ||
-      (staffRecord?.class_id && String(staffRecord.class_id) === String(classId))
+    isClassTeacher = targetClasses.some(c => 
+      (c.form_master_id && teacherIds.includes(String(c.form_master_id))) ||
+      (staffRecord?.class_id && String(staffRecord.class_id) === String(c.id))
     );
 
+    const targetClassIds = targetClasses.map(c => c.id);
+    const placeholders = targetClassIds.map(() => '?').join(',');
     const taRows = await query(
       `SELECT ta.subject_id, sub.name as subject_name, sub.code as subject_code
        FROM teaching_assignments ta
        JOIN subjects sub ON ta.subject_id = sub.id
-       WHERE ta.school_id = ? AND ta.class_id = ? AND (
+       WHERE ta.school_id = ? AND ta.class_id IN (${placeholders}) AND (
          ta.teacher_id = ?
          OR ta.teacher_id IN (SELECT id FROM staff WHERE user_id = ?)
          OR ta.teacher_id IN (SELECT user_id FROM staff WHERE id = ?)
          OR ta.teacher_id IN (SELECT id FROM employees WHERE user_id = ?)
        )`,
-      [schoolId, classId, userId, userId, userId, userId]
+      [schoolId, ...targetClassIds, userId, userId, userId, userId]
     );
 
     if (taRows && taRows.length > 0) {
@@ -742,56 +788,109 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       assignedSubjects = taRows;
     }
 
-    if (!isSecondary && isClassTeacher) {
-      // Primary class teacher sees all subjects for their primary grade
-    } else if (isSecondary) {
-      // In secondary/high school, only Class Teacher sees all subjects; Subject Teachers only see their assigned subjects
-      if (!isClassTeacher && !isSubjectTeacher) {
-        return {
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Access denied: You are not assigned as Class Teacher or Subject Teacher for this class.'
-          },
-          status: 403
-        };
-      }
-    } else {
-      if (!isClassTeacher && !isSubjectTeacher) {
-        return {
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Access denied: You are not assigned to this class.'
-          },
-          status: 403
-        };
-      }
+    if (!isClassTeacher && !isSubjectTeacher && !isCohortAggregated) {
+      return {
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Access denied: You are not assigned to this class.'
+        },
+        status: 403
+      };
     }
   }
 
-  let isPublished = false;
-  try {
-    const pubRes = await queryOne(
-      `SELECT * FROM result_publications WHERE school_id = ? AND class_id = ? AND term = ? AND status IN ('published', 'released') AND (status = 'released' OR (release_at IS NOT NULL AND release_at <= NOW()))`,
-      [schoolId, classId, term || '2026-T1']
-    );
-    if (pubRes) isPublished = true;
-  } catch (e) {}
-
-  const students = await query(
-    `SELECT id as student_id, first_name, last_name, admission_number
-     FROM students
-     WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
-     ORDER BY first_name ASC`,
-    [schoolId, classId]
+  // Find all sister streams in this grade level for visual comparison charts
+  const comparisonCohort = cohortName || primaryCls.grade_level || primaryCls.name.split(' ')[0];
+  const sisterClasses = await query(
+    `SELECT c.*, s.school_type, s.name as school_name, stf.name as form_master_name
+     FROM classes c
+     LEFT JOIN schools s ON c.school_id = s.id
+     LEFT JOIN staff stf ON c.form_master_id = stf.id OR c.form_master_id = stf.user_id
+     WHERE c.school_id = ? AND (c.grade_level = ? OR c.name LIKE ? OR c.name LIKE ?)
+     ORDER BY c.name ASC`,
+    [schoolId, comparisonCohort, `${comparisonCohort}%`, `%${comparisonCohort}%`]
   );
+  const classesForComparison = sisterClasses.length > 0 ? sisterClasses : targetClasses;
+
+  // Retrieve all students across target classes
+  const targetClassIds = targetClasses.map(c => c.id);
+  const tcPlaceholders = targetClassIds.map(() => '?').join(',');
+  const students = await query(
+    `SELECT id as student_id, first_name, last_name, admission_number, class_id
+     FROM students
+     WHERE school_id = ? AND class_id IN (${tcPlaceholders}) AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
+     ORDER BY first_name ASC`,
+    [schoolId, ...targetClassIds]
+  );
+
+  // Load Real Report Card Terminal Evaluations
+  let evalMap = new Map();
+  try {
+    const resolvedTerm = term || 'Term 3';
+    const evaluations = await query(
+      `SELECT student_id, conduct, class_teacher_remark, head_remark, next_term_date, status, published_at
+       FROM report_cards
+       WHERE school_id = ? AND (term = ? OR term LIKE ? OR term IS NULL)`,
+      [schoolId, resolvedTerm, `%${resolvedTerm}%`]
+    );
+    evaluations.forEach(ev => evalMap.set(ev.student_id, ev));
+  } catch (evalErr) {
+    console.warn('Evaluation load notice:', evalErr.message);
+  }
+
+  // Load Student Elective Subject Enrollments
+  let enrolledSubjMap = new Map();
+  if (students.length > 0) {
+    try {
+      const stIds = students.map(s => s.student_id);
+      const stPlaceholders = stIds.map(() => '?').join(',');
+      const enrolledSubjs = await query(
+        `SELECT ss.student_id, ss.subject_id, sub.name as subject_name, sub.code as subject_code
+         FROM student_subjects ss
+         JOIN subjects sub ON ss.subject_id = sub.id
+         WHERE ss.school_id = ? AND ss.student_id IN (${stPlaceholders}) AND (ss.status = 'active' OR ss.status IS NULL)`,
+        [schoolId, ...stIds]
+      );
+      enrolledSubjs.forEach(es => {
+        if (!enrolledSubjMap.has(es.student_id)) enrolledSubjMap.set(es.student_id, []);
+        enrolledSubjMap.get(es.student_id).push(es);
+      });
+    } catch (ssErr) {
+      console.warn('Student subjects load notice:', ssErr.message);
+    }
+  }
+
+  // Helper to detect curriculum subject combination
+  const detectSubjectCombination = (subjects) => {
+    const names = (subjects || []).map(s => (s.subject_name || s.name || '').toLowerCase());
+    const sciences = ['physics', 'chemistry', 'biology', 'pure mathematics', 'mechanics', 'computer science'].filter(k => names.some(n => n.includes(k))).length;
+    const commercials = ['accounting', 'accounts', 'commerce', 'business studies', 'economics', 'statistics'].filter(k => names.some(n => n.includes(k))).length;
+    const arts = ['history', 'literature', 'divinity', 'religious studies', 'geography', 'sociology', 'shona', 'ndebele'].filter(k => names.some(n => n.includes(k))).length;
+
+    if (sciences >= 2 && sciences >= commercials && sciences >= arts) return 'Sciences';
+    if (commercials >= 2 && commercials >= sciences && commercials >= arts) return 'Commercials';
+    if (arts >= 2 && arts >= sciences && arts >= commercials) return 'Arts & Humanities';
+    if (sciences > 0 || commercials > 0 || arts > 0) return 'Elective Combination';
+    return 'General Core';
+  };
+
+  const classMap = new Map();
+  classesForComparison.forEach(c => classMap.set(c.id, c));
 
   const studentResults = [];
   for (const st of students) {
+    const stClass = classMap.get(st.class_id) || primaryCls;
+    const stEval = evalMap.get(st.student_id);
+    const assignedForStudent = enrolledSubjMap.get(st.student_id) || [];
+
     let sql = `
       SELECT g.subject as subject_id, 
              COALESCE(sub.name, g.subject) as subject_name,
              COALESCE(sub.code, '') as subject_code,
-             SUM(g.grade_value * COALESCE(g.weight, 1.0)) / NULLIF(SUM(COALESCE(g.weight, 1.0)), 0) as subject_avg
+             SUM(g.grade_value * COALESCE(g.weight, 1.0)) / NULLIF(SUM(COALESCE(g.weight, 1.0)), 0) as subject_avg,
+             MAX(CASE WHEN LOWER(g.assessment_name) LIKE '%test%' OR LOWER(g.assessment_name) LIKE '%ca1%' THEN g.grade_value END) as test_score,
+             MAX(CASE WHEN LOWER(g.assessment_name) LIKE '%cala%' OR LOWER(g.assessment_name) LIKE '%project%' OR LOWER(g.assessment_name) LIKE '%ca2%' THEN g.grade_value END) as project_score,
+             MAX(CASE WHEN LOWER(g.assessment_name) LIKE '%exam%' THEN g.grade_value END) as exam_score
       FROM grades g
       LEFT JOIN subjects sub ON (g.subject = sub.id OR g.subject = sub.name OR g.subject = sub.code)
       WHERE g.school_id = ? AND g.student_id = ?
@@ -808,13 +907,49 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
     sql += ' GROUP BY g.subject, sub.name, sub.code';
 
     const subjectResults = await query(sql, params);
+
+    // If student has assigned subjects in student_subjects that haven't received marks yet, include them with null/pending
+    assignedForStudent.forEach(as => {
+      const exists = subjectResults.some(sr => 
+        (sr.subject_name || '').toLowerCase() === (as.subject_name || '').toLowerCase() ||
+        String(sr.subject_id).toLowerCase() === String(as.subject_id).toLowerCase()
+      );
+      if (!exists) {
+        subjectResults.push({
+          subject_id: as.subject_id,
+          subject_name: as.subject_name,
+          subject_code: as.subject_code,
+          subject_avg: null,
+          test_score: null,
+          project_score: null,
+          exam_score: null,
+          is_enrolled: true
+        });
+      }
+    });
+
     const processed = processStudentSubjects(subjectResults, levelCategory);
 
-    // Subject Teacher filtering:
-    // If user is a Subject Teacher in secondary school and NOT the Class Teacher,
-    // restrict subjects strictly to only the teacher's assigned subjects!
-    let outputSubjects = processed.formattedSubjects;
-    if (userRole === 'teacher' && isSecondary && !isClassTeacher && isSubjectTeacher) {
+    let outputSubjects = processed.formattedSubjects.map(sub => {
+      const raw = subjectResults.find(r => 
+        (r.subject_name || '').toLowerCase() === (sub.subject_name || '').toLowerCase() ||
+        (r.subject_code && sub.subject_code && r.subject_code.toLowerCase() === sub.subject_code.toLowerCase())
+      );
+      const isAssigned = assignedForStudent.length === 0 || assignedForStudent.some(as => 
+        (as.subject_name || '').toLowerCase() === (sub.subject_name || '').toLowerCase() ||
+        String(as.subject_id) === String(sub.subject_id)
+      );
+      return {
+        ...sub,
+        test_score: raw?.test_score !== null && raw?.test_score !== undefined ? parseFloat(raw.test_score) : null,
+        project_score: raw?.project_score !== null && raw?.project_score !== undefined ? parseFloat(raw.project_score) : null,
+        exam_score: raw?.exam_score !== null && raw?.exam_score !== undefined ? parseFloat(raw.exam_score) : null,
+        is_assigned: isAssigned
+      };
+    });
+
+    // Subject Teacher filtering (only restrict if user is strictly subject teacher and not class teacher)
+    if (userRole === 'teacher' && isSecondary && !isClassTeacher && isSubjectTeacher && !isCohortAggregated) {
       const allowedNames = assignedSubjects.map(s => s.subject_name.toLowerCase());
       const allowedCodes = assignedSubjects.map(s => (s.subject_code || '').toLowerCase()).filter(Boolean);
       const allowedIds = assignedSubjects.map(s => String(s.subject_id).toLowerCase());
@@ -826,12 +961,21 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       );
     }
 
+    const combination = detectSubjectCombination(outputSubjects);
+
     studentResults.push({
       student_id: st.student_id,
       first_name: st.first_name,
       last_name: st.last_name,
       student_name: `${st.first_name} ${st.last_name}`,
       admission_number: st.admission_number,
+      class_id: st.class_id,
+      class_name: stClass?.name || primaryCls.name,
+      stream: stClass?.stream || stClass?.name?.replace(comparisonCohort, '').trim() || 'Main',
+      form_master_name: stClass?.form_master_name || primaryCls.form_master_name || 'Class Teacher',
+      class_size: students.filter(s => s.class_id === st.class_id).length,
+      school_name: stClass?.school_name || primaryCls.school_name || '',
+      center_no: stClass?.center_no || primaryCls.center_no || '',
       subjects: outputSubjects,
       counted_subjects: processed.countedSubjects,
       overall_percentage: processed.overallPercentage,
@@ -842,20 +986,74 @@ async function computeClassResults(schoolId, classId, term, userRole, userId, us
       grade: processed.grade,
       grade_symbol: processed.grade_symbol,
       pass_status: processed.passStatus,
-      status: isPublished ? 'published' : 'draft',
+      status: stEval?.status || 'draft',
       term: term || 'Term 3',
       academic_year: year || 2026,
       academic_period: `${term || 'Term 3'}, ${year || 2026}`,
-      level_category: levelCategory
+      level_category: levelCategory,
+      combination,
+      assigned_subjects_count: assignedForStudent.length > 0 ? assignedForStudent.length : outputSubjects.length,
+      conduct: stEval?.conduct || 'Good',
+      class_teacher_remark: stEval?.class_teacher_remark || '',
+      head_remark: stEval?.head_remark || '',
+      next_term_date: stEval?.next_term_date || '',
+      evaluation_status: stEval?.status || 'draft'
     });
   }
 
+  // 1. Overall cohort rank (Form Rank across all streams)
   const ranked = rankStudentResults(studentResults, levelCategory);
+
+  // 2. Class rank (within-stream rank)
+  const byClass = {};
+  ranked.forEach(s => {
+    if (!byClass[s.class_id]) byClass[s.class_id] = [];
+    byClass[s.class_id].push(s);
+  });
+  Object.values(byClass).forEach(clsList => {
+    clsList.forEach((st, idx) => {
+      st.class_rank = idx + 1;
+      st.form_rank = st.rank; // Overall cohort rank
+    });
+  });
+
+  // 3. Build Stream Comparison Data
+  const streamComparison = classesForComparison.map(c => {
+    const cStudents = ranked.filter(s => s.class_id === c.id);
+    const count = cStudents.length;
+    const avgPct = count > 0 
+      ? Math.round(cStudents.reduce((acc, s) => acc + (s.overall_percentage || 0), 0) / count) 
+      : 0;
+    const passes = cStudents.filter(s => s.pass_status === 'pass' || (s.overall_percentage || 0) >= 50).length;
+    const passRate = count > 0 ? Math.round((passes / count) * 100) : 0;
+    const distinctions = cStudents.filter(s => 
+      (s.overall_percentage >= 75) || 
+      (s.grade === 'A') || 
+      (s.total_units && s.total_units <= 12) || 
+      (s.total_points && s.total_points >= 10)
+    ).length;
+    const topStudent = count > 0 ? cStudents[0] : null;
+
+    return {
+      class_id: c.id,
+      class_name: c.name,
+      stream: c.stream || c.name.replace(comparisonCohort, '').trim() || c.name,
+      total_students: count,
+      average_score: avgPct,
+      pass_rate: passRate,
+      distinctions_count: distinctions,
+      top_student_name: topStudent ? topStudent.student_name : '—',
+      top_student_score: topStudent ? `${topStudent.overall_percentage}%` : '—'
+    };
+  });
 
   return {
     data: ranked,
     level_category: levelCategory,
-    class_info: cls,
+    class_info: primaryCls,
+    is_aggregated: isCohortAggregated,
+    cohort_name: comparisonCohort,
+    stream_comparison: streamComparison,
     is_class_teacher: isClassTeacher,
     is_subject_teacher: isSubjectTeacher,
     assigned_subjects: assignedSubjects,
@@ -902,24 +1100,24 @@ router.get(['/classes/:classId/results/export', '/results/export'], authenticate
         csvContent += `"${r.admission_number}","${r.student_name}",${sub?.average || 0},"${sub?.grade || ''}","${r.pass_status}"\n`;
       });
     } else if (level_category === 'primary_g4_g7') {
-      csvContent = 'Class Position,Admission Number,Student Name,Total Units (Best 6),Term Average (%),Grade,Status\n';
+      csvContent = 'Cohort Rank,Class Rank,Admission Number,Student Name,Stream,Total Units (Best 6),Term Average (%),Grade,Status\n';
       ranked.forEach(r => {
-        csvContent += `${r.rank},"${r.admission_number}","${r.student_name}",${r.total_units || 0},${r.overall_percentage},"${r.grade}","${r.pass_status}"\n`;
+        csvContent += `${r.rank},${r.class_rank || r.rank},"${r.admission_number}","${r.student_name}","${r.stream || ''}",${r.total_units || 0},${r.overall_percentage},"${r.grade}","${r.pass_status}"\n`;
       });
     } else if (level_category === 'a_level') {
-      csvContent = 'Class Position,Admission Number,Student Name,Total Points,Quality Passes,Term Average (%),Grade,Status\n';
+      csvContent = 'Cohort Rank,Class Rank,Admission Number,Student Name,Stream,Combination,Total Points,Quality Passes,Term Average (%),Grade,Status\n';
       ranked.forEach(r => {
-        csvContent += `${r.rank},"${r.admission_number}","${r.student_name}",${r.total_points || 0},${r.passes_count || 0},${r.overall_percentage},"${r.grade}","${r.pass_status}"\n`;
+        csvContent += `${r.rank},${r.class_rank || r.rank},"${r.admission_number}","${r.student_name}","${r.stream || ''}","${r.combination || ''}",${r.total_points || 0},${r.passes_count || 0},${r.overall_percentage},"${r.grade}","${r.pass_status}"\n`;
       });
     } else if (level_category === 'ecd_to_g3') {
-      csvContent = 'Class Position,Admission Number,Student Name,Total Marks,Term Average (%),Status\n';
+      csvContent = 'Cohort Rank,Class Rank,Admission Number,Student Name,Stream,Total Marks,Term Average (%),Status\n';
       ranked.forEach(r => {
-        csvContent += `${r.rank},"${r.admission_number}","${r.student_name}",${r.total_marks || 0},${r.overall_percentage},"${r.pass_status}"\n`;
+        csvContent += `${r.rank},${r.class_rank || r.rank},"${r.admission_number}","${r.student_name}","${r.stream || ''}",${r.total_marks || 0},${r.overall_percentage},"${r.pass_status}"\n`;
       });
     } else {
-      csvContent = 'Class Position,Admission Number,Student Name,Passes (A-C),Term Average (%),Grade,Status\n';
+      csvContent = 'Cohort Rank,Class Rank,Admission Number,Student Name,Stream,Combination,Passes (A-C),Term Average (%),Grade,Status\n';
       ranked.forEach(r => {
-        csvContent += `${r.rank},"${r.admission_number}","${r.student_name}",${r.passes_count || 0},${r.overall_percentage},"${r.grade}","${r.pass_status}"\n`;
+        csvContent += `${r.rank},${r.class_rank || r.rank},"${r.admission_number}","${r.student_name}","${r.stream || ''}","${r.combination || ''}",${r.passes_count || 0},${r.overall_percentage},"${r.grade}","${r.pass_status}"\n`;
       });
     }
 
@@ -965,7 +1163,10 @@ router.get(['/classes/:classId/results', '/results'], authenticateToken, async (
         assigned_subjects: result.assigned_subjects || [],
         is_secondary: Boolean(result.is_secondary),
         level_category: result.level_category,
-        class_info: result.class_info
+        class_info: result.class_info,
+        is_aggregated: Boolean(result.is_aggregated),
+        cohort_name: result.cohort_name || null,
+        stream_comparison: result.stream_comparison || []
       },
       results: result.data || [],
       children_list: result.children_list || [],
@@ -975,11 +1176,171 @@ router.get(['/classes/:classId/results', '/results'], authenticateToken, async (
       assigned_subjects: result.assigned_subjects || [],
       is_secondary: Boolean(result.is_secondary),
       level_category: result.level_category,
-      class_info: result.class_info
+      class_info: result.class_info,
+      is_aggregated: Boolean(result.is_aggregated),
+      cohort_name: result.cohort_name || null,
+      stream_comparison: result.stream_comparison || []
     });
   } catch (err) {
     console.error('Get class results error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch results.' } });
+  }
+});
+
+// GET /schools/:schoolId/students/:studentId/evaluation (Get report card evaluation)
+router.get('/students/:studentId/evaluation', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, studentId } = req.params;
+    const term = req.query.term || 'Term 3';
+    const evalRecord = await queryOne(
+      `SELECT * FROM report_cards WHERE school_id = ? AND student_id = ? AND (term = ? OR term LIKE ?) ORDER BY id DESC LIMIT 1`,
+      [schoolId, studentId, term, `%${term}%`]
+    );
+    return res.json({
+      data: evalRecord || {
+        conduct: 'Good',
+        class_teacher_remark: '',
+        head_remark: '',
+        next_term_date: ''
+      }
+    });
+  } catch (err) {
+    console.error('Get evaluation error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch student evaluation.' } });
+  }
+});
+
+// PUT /schools/:schoolId/students/:studentId/evaluation (Save report card appraisal)
+router.put('/students/:studentId/evaluation', authenticateToken, requireRoles('teacher', 'head', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, studentId } = req.params;
+    const { term, academic_year, conduct, class_teacher_remark, head_remark, next_term_date } = req.body;
+    const resolvedTerm = term || 'Term 3';
+    const resolvedYear = academic_year || new Date().getFullYear();
+
+    const existing = await queryOne(
+      `SELECT id FROM report_cards WHERE school_id = ? AND student_id = ? AND (term = ? OR term LIKE ?)`,
+      [schoolId, studentId, resolvedTerm, `%${resolvedTerm}%`]
+    );
+
+    if (existing) {
+      await query(
+        `UPDATE report_cards 
+         SET conduct = ?, class_teacher_remark = ?, head_remark = ?, next_term_date = ?, academic_year = ?, status = 'evaluated'
+         WHERE id = ?`,
+        [conduct || 'Good', class_teacher_remark || '', head_remark || '', next_term_date || '', resolvedYear, existing.id]
+      );
+    } else {
+      await query(
+        `INSERT INTO report_cards (school_id, student_id, term, academic_year, conduct, class_teacher_remark, head_remark, next_term_date, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'evaluated')`,
+        [schoolId, studentId, resolvedTerm, resolvedYear, conduct || 'Good', class_teacher_remark || '', head_remark || '', next_term_date || '']
+      );
+    }
+
+    broadcastInvalidation(schoolId, ['results', 'report_cards', 'dashboard'], 'evaluation_updated');
+    return res.json({ success: true, message: 'Terminal appraisal saved successfully.' });
+  } catch (err) {
+    console.error('Save evaluation error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save evaluation.' } });
+  }
+});
+
+// GET /schools/:schoolId/students/:studentId/subjects (Get student's enrolled subjects)
+router.get('/students/:studentId/subjects', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, studentId } = req.params;
+    const student = await queryOne('SELECT id, first_name, last_name, admission_number, class_id FROM students WHERE id = ? AND school_id = ?', [studentId, schoolId]);
+    if (!student) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Student not found.' } });
+
+    const assigned = await query(
+      `SELECT ss.id as assignment_id, ss.subject_id, sub.name as subject_name, sub.code as subject_code, ss.status
+       FROM student_subjects ss
+       JOIN subjects sub ON ss.subject_id = sub.id
+       WHERE ss.school_id = ? AND ss.student_id = ? AND (ss.status = 'active' OR ss.status IS NULL)
+       ORDER BY sub.name ASC`,
+      [schoolId, studentId]
+    );
+
+    const allSubjects = await query(
+      'SELECT id, name, code, category FROM subjects WHERE school_id = ? OR school_id IS NULL ORDER BY name ASC',
+      [schoolId]
+    );
+
+    return res.json({
+      data: {
+        student,
+        assigned_subjects: assigned,
+        available_subjects: allSubjects
+      }
+    });
+  } catch (err) {
+    console.error('Get student subjects error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch student subjects.' } });
+  }
+});
+
+// PUT /schools/:schoolId/students/:studentId/subjects (Update student's assigned subjects)
+router.put('/students/:studentId/subjects', authenticateToken, requireRoles('teacher', 'head', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, studentId } = req.params;
+    const { subject_ids, class_id } = req.body;
+    if (!Array.isArray(subject_ids)) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'subject_ids must be an array of subject IDs.' } });
+    }
+
+    const student = await queryOne('SELECT id, class_id FROM students WHERE id = ? AND school_id = ?', [studentId, schoolId]);
+    const targetClassId = class_id || student?.class_id || null;
+
+    // Reset student subjects
+    await query('DELETE FROM student_subjects WHERE school_id = ? AND student_id = ?', [schoolId, studentId]);
+
+    for (const sId of subject_ids) {
+      if (sId) {
+        await query(
+          `INSERT INTO student_subjects (school_id, student_id, class_id, subject_id, status)
+           VALUES (?, ?, ?, ?, 'active')
+           ON DUPLICATE KEY UPDATE status = 'active'`,
+          [schoolId, studentId, targetClassId, sId]
+        );
+      }
+    }
+
+    broadcastInvalidation(schoolId, ['results', 'students', 'classes'], 'student_subjects_updated');
+    return res.json({ success: true, message: `Updated elective subject enrollment for ${student?.first_name || 'student'}.` });
+  } catch (err) {
+    console.error('Update student subjects error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update student subjects.' } });
+  }
+});
+
+// POST /schools/:schoolId/classes/:classId/bulk-assign-subjects (Bulk assign subjects to class or combo)
+router.post('/classes/:classId/bulk-assign-subjects', authenticateToken, requireRoles('teacher', 'head', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, classId } = req.params;
+    const { student_ids, subject_ids } = req.body;
+    if (!Array.isArray(student_ids) || !Array.isArray(subject_ids) || student_ids.length === 0 || subject_ids.length === 0) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'student_ids and subject_ids are required arrays.' } });
+    }
+
+    for (const stId of student_ids) {
+      for (const subId of subject_ids) {
+        if (stId && subId) {
+          await query(
+            `INSERT INTO student_subjects (school_id, student_id, class_id, subject_id, status)
+             VALUES (?, ?, ?, ?, 'active')
+             ON DUPLICATE KEY UPDATE status = 'active'`,
+            [schoolId, stId, classId, subId]
+          );
+        }
+      }
+    }
+
+    broadcastInvalidation(schoolId, ['results', 'students', 'classes'], 'student_subjects_updated');
+    return res.json({ success: true, message: `Successfully enrolled ${student_ids.length} students into ${subject_ids.length} subjects.` });
+  } catch (err) {
+    console.error('Bulk assign subjects error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to bulk assign subjects.' } });
   }
 });
 

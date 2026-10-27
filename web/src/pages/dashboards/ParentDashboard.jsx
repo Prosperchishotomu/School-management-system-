@@ -23,12 +23,12 @@ import {
 export default function ParentDashboard() {
   const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
 
   const [selectedChildIndex, setSelectedChildIndex] = useState(0);
 
   // Summary with scoped children
-  const { data: summary } = useApi(
+  const { data: summary, loading } = useApi(
     `parent_summary_${schoolId}`,
     () => api.get(`/schools/${schoolId}/dashboard/summary?role=parent`)
   );
@@ -36,34 +36,7 @@ export default function ParentDashboard() {
   const rawChildren = summary?.role_specific?.children;
   const hasRealChildren = Array.isArray(rawChildren) && rawChildren.length > 0;
   
-  const children = hasRealChildren
-    ? rawChildren
-    : (!summary ? [
-        {
-          id: 'STU00101',
-          name: 'Tinashe Moyo',
-          class: 'Form 3 Gamma',
-          attendance_pct: 95,
-          term_average: 78.4,
-          class_position: '3rd of 42',
-          fee_balance: 140.00,
-          next_exam: 'Physics End-of-Term (18 Nov)',
-          exeat_status: 'approved',
-          exeat_step: 1
-        },
-        {
-          id: 'STU00102',
-          name: 'Nyasha Moyo',
-          class: 'Grade 7 Diamond',
-          attendance_pct: 98,
-          term_average: 84.0,
-          class_position: '1st of 36',
-          fee_balance: 0.00,
-          next_exam: 'ZIMSEC Mock 2 (24 Nov)',
-          exeat_status: 'none',
-          exeat_step: 0
-        }
-      ] : []);
+  const children = hasRealChildren ? rawChildren : [];
 
   const currentChild = children[selectedChildIndex] || children[0] || null;
 
@@ -74,8 +47,22 @@ export default function ParentDashboard() {
     { label: 'Returned' }
   ];
 
+  // Loading skeleton while fetching parent summary
+  if (loading && !summary) {
+    return (
+      <div className="space-y-6">
+        <div className="h-28 rounded-2xl bg-surface border border-line animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="h-24 rounded-2xl bg-surface border border-line animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // If summary loaded and parent has no linked children in database
-  if (summary && children.length === 0) {
+  if (!currentChild) {
     return (
       <div className="space-y-6">
         <div className="rounded-2xl p-6 bg-surface border border-line text-ink shadow-xs">
@@ -110,6 +97,8 @@ export default function ParentDashboard() {
   }
 
   const childFeeBalance = Number(currentChild?.fee_balance || 0);
+  const childFeeBilled = Number(currentChild?.fee_billed || 0);
+  const isFeeUnbilled = childFeeBilled === 0;
 
   return (
     <div className="space-y-6">
@@ -188,16 +177,16 @@ export default function ParentDashboard() {
         <StatCard
           title="Fee Balance"
           value={money(childFeeBalance)}
-          sublabel={childFeeBalance > 0 ? 'Due immediately' : 'Account cleared'}
+          sublabel={isFeeUnbilled ? 'No billing active' : (childFeeBalance > 0 ? 'Due immediately' : 'Account cleared')}
           icon={DollarSign}
-          iconColor={childFeeBalance > 0 ? 'accent' : 'brand'}
+          iconColor={isFeeUnbilled ? 'brand' : (childFeeBalance > 0 ? 'accent' : 'brand')}
           to={`/parent-portal?action=pay&child=${currentChild?.id || ''}`}
         />
 
         <StatCard
           title="Next Assessment"
-          value="Upcoming Exam"
-          sublabel={currentChild?.next_exam || 'Continuous assessment'}
+          value={currentChild?.next_exam ? "Upcoming Exam" : "Continuous Assessment"}
+          sublabel={currentChild?.next_exam || 'Terminal assessments pending'}
           icon={GraduationCap}
           iconColor="info"
           to="/parent-portal"
@@ -212,8 +201,8 @@ export default function ParentDashboard() {
           subtitle="Multi-currency payment desk (EcoCash, InnBucks, Cash Declaration, Bank Transfer)"
           action={
             <StatusPill
-              status={childFeeBalance === 0 ? 'paid' : 'partial'}
-              label={childFeeBalance === 0 ? 'Fully Paid' : 'Balance Pending'}
+              status={isFeeUnbilled ? 'neutral' : (childFeeBalance === 0 ? 'paid' : 'partial')}
+              label={isFeeUnbilled ? 'No Invoices' : (childFeeBalance === 0 ? 'Fully Paid' : 'Balance Pending')}
             />
           }
         >
@@ -260,23 +249,31 @@ export default function ParentDashboard() {
           <div className="py-4">
             <Stepper
               steps={exeatSteps}
-              currentStep={currentChild.exeat_step || 1}
+              currentStep={currentChild?.exeat_step || 1}
             />
           </div>
 
           <div className="mt-4 p-3 rounded-xl bg-canvas text-xs space-y-1">
             <div className="flex justify-between text-muted">
               <span>Status:</span>
-              <span className="font-semibold text-ink capitalize">{currentChild.exeat_status || 'None'}</span>
+              <span className="font-semibold text-ink capitalize">{currentChild?.exeat_status || 'None Active'}</span>
             </div>
-            <div className="flex justify-between text-muted">
-              <span>Destination:</span>
-              <span className="font-semibold text-ink">Family Residence (Harare)</span>
-            </div>
-            <div className="flex justify-between text-muted">
-              <span>Expected Return:</span>
-              <span className="font-semibold text-ink font-mono">Sunday 17:00</span>
-            </div>
+            {currentChild?.exeat_status && currentChild?.exeat_status !== 'none' ? (
+              <>
+                <div className="flex justify-between text-muted">
+                  <span>Destination:</span>
+                  <span className="font-semibold text-ink">{currentChild?.exeat_destination || '—'}</span>
+                </div>
+                <div className="flex justify-between text-muted">
+                  <span>Expected Return:</span>
+                  <span className="font-semibold text-ink font-mono">{currentChild?.exeat_return || '—'}</span>
+                </div>
+              </>
+            ) : (
+              <div className="text-[11px] text-muted italic pt-1">
+                No active exeat pass. Pupil is currently on campus or enrolled as a day scholar.
+              </div>
+            )}
           </div>
         </Card>
       </div>

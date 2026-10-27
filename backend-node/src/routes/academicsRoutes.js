@@ -89,7 +89,20 @@ router.get('/terms', authenticateToken, async (req, res) => {
   try {
     const schoolId = req.params.schoolId || req.user.school_id;
     const terms = await query(
-      `SELECT t.*, s.year as session_year, s.name as session_name,
+      `SELECT t.id, t.school_id, t.session_id,
+              CASE 
+                WHEN LOWER(t.name) LIKE '%1%' THEN 'Term 1'
+                WHEN LOWER(t.name) LIKE '%2%' THEN 'Term 2'
+                WHEN LOWER(t.name) LIKE '%3%' THEN 'Term 3'
+                ELSE REPLACE(t.name, '_', ' ')
+              END as name,
+              CASE 
+                WHEN LOWER(t.name) LIKE '%1%' THEN 1
+                WHEN LOWER(t.name) LIKE '%2%' THEN 2
+                WHEN LOWER(t.name) LIKE '%3%' THEN 3
+                ELSE 1
+              END as term_number,
+              t.start_date, t.end_date, s.year as session_year, s.name as session_name,
               CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE 0 END as is_current_by_date,
               CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 1 ELSE COALESCE(t.is_current, 0) END as is_current,
               CASE WHEN CURRENT_DATE BETWEEN t.start_date AND t.end_date THEN 'active' ELSE 'inactive' END as status

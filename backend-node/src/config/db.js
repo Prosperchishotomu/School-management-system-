@@ -11,7 +11,7 @@ const pool = mysql.createPool({
   connectionLimit: 15,
   queueLimit: 0,
   dateStrings: true,
-  connectTimeout: parseInt(process.env.DB_CONNECT_TIMEOUT || '3000', 10)
+  connectTimeout: parseInt(process.env.DB_CONNECT_TIMEOUT || '15000', 10)
 });
 
 // Helper for executing queries with parameters
@@ -70,6 +70,7 @@ async function ensureTables() {
     try { await query(`ALTER TABLE \`students\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`students\` MODIFY COLUMN \`class_id\` VARCHAR(50) NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`audit_logs\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`audit_logs\` DROP FOREIGN KEY \`audit_logs_ibfk_2\``); } catch(e) {}
     try { await query(`ALTER TABLE \`users\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`users\` MODIFY COLUMN \`school_id\` VARCHAR(50) NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`users\` ADD COLUMN \`student_id\` VARCHAR(50) NULL`); } catch(e) {}
@@ -121,7 +122,10 @@ async function ensureTables() {
     try { await query(`ALTER TABLE \`schools\` ADD COLUMN \`account_number\` VARCHAR(100) NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`schools\` ADD COLUMN \`currency\` VARCHAR(10) DEFAULT 'USD'`); } catch(e) {}
     try { await query(`ALTER TABLE \`schools\` ADD COLUMN \`code\` VARCHAR(50) NULL`); } catch(e) {}
-    try { await query(`ALTER TABLE \`schools\` ADD COLUMN \`tuition_fee_benchmark\` DECIMAL(12,2) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`schools\` ADD COLUMN \`enabled_modules\` TEXT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`timetable\` ADD COLUMN \`teacher_id\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`classes\` MODIFY \`capacity\` INT UNSIGNED NULL DEFAULT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`subjects\` MODIFY \`code\` VARCHAR(50) NULL DEFAULT NULL`); } catch(e) {}
 
     // Enquiries pipeline table
     await query(`

@@ -1,9 +1,4 @@
 /**
- * Utility functions for date-determined academic terms.
- * Rule: Date determines the active term always across the system.
- */
-
-/**
  * Determines the current academic term based on current date.
  * If today falls between start_date and end_date of a term, that term is active.
  * If today is during holiday/break, resolves to the upcoming term or most recent term.

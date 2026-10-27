@@ -116,7 +116,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setUsername(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="Enter your username or email"
+              placeholder="       Enter your username"
               autoComplete="username"
               className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700/80 bg-slate-950/70 text-white placeholder-slate-500 text-xs font-medium font-sans focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 shadow-inner transition-all"
             />
@@ -150,7 +150,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setPassword(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="Enter your password"
+              placeholder="       Enter your password"
               autoComplete="current-password"
               className="w-full pl-10 pr-11 py-3 rounded-xl border border-slate-700/80 bg-slate-950/70 text-white placeholder-slate-500 text-xs font-medium font-sans focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 shadow-inner transition-all"
             />

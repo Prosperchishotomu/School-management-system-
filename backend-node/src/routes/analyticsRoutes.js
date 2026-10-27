@@ -33,13 +33,13 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
              CONCAT_WS(' ', st.first_name, st.last_name) as name,
              COALESCE(c.name, 'Class Unassigned') as class,
              COALESCE(
-               (SELECT ROUND((COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0)))
+               (SELECT ROUND((COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0)))
                 FROM attendance a WHERE a.student_id = st.id AND a.school_id = ?),
-               96
+               0
              ) as attendance_pct,
              COALESCE(
                (SELECT ROUND(AVG(g.grade_value), 1) FROM grades g WHERE g.student_id = st.id AND g.school_id = ?),
-               78.5
+               0.0
              ) as term_average,
              COALESCE(
                (SELECT SUM(f.amount_due - f.amount_paid) FROM fees f WHERE f.student_id = st.id AND f.school_id = ?),
@@ -75,7 +75,7 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
       const totalFamilyBalance = linkedChildren.reduce((sum, c) => sum + Number(c.fee_balance || 0), 0);
       const avgAttendance = linkedChildren.length > 0
         ? Math.round(linkedChildren.reduce((sum, c) => sum + Number(c.attendance_pct || 0), 0) / linkedChildren.length)
-        : 95;
+        : 0;
 
       return res.json({
         data: {
@@ -117,7 +117,7 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
     try {
       const [att] = await query(
         `SELECT
-           COUNT(CASE WHEN status = 'present' THEN 1 END) as present_cnt,
+           COUNT(CASE WHEN status IN ('present', 'late') THEN 1 END) as present_cnt,
            COUNT(*) as total_cnt
          FROM attendance WHERE school_id = ? AND date = ?`,
         [schoolId, today]
@@ -295,34 +295,15 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
           };
         });
       } else {
-        const pool = myAssignments.length > 0 ? myAssignments : [
-          { subject_name: 'Mathematics', class_name: 'Form 3 Gamma' },
-          { subject_name: 'Mathematics', class_name: 'Form 4 Delta' },
-          { subject_name: 'Mathematics', class_name: 'Lower 6 Sciences' },
-          { subject_name: 'Combined Science', class_name: 'Form 2 Beta' }
-        ];
-
-        computedTimetable = pool.slice(0, 4).map((assign, idx) => {
-          const pt = periodTimes[idx] || periodTimes[0];
-          const status = currentMinutes >= pt.start && currentMinutes <= pt.end
-            ? 'current'
-            : currentMinutes > pt.end ? 'completed' : 'upcoming';
-          return {
-            period: String(pt.period),
-            time: pt.time,
-            subject: assign.subject_name || 'Subject',
-            class: assign.class_name || 'Form Stream',
-            status
-          };
-        });
+        computedTimetable = [];
       }
 
       const activeNow = computedTimetable.find(p => p.status === 'current');
 
       roleData = {
-        classes_to_mark: myAssignments.length || 2,
-        marks_entered_pct: 78,
-        students_at_risk: 6,
+        classes_to_mark: myAssignments.length,
+        marks_entered_pct: 0,
+        students_at_risk: 0,
         is_class_teacher: formMasterClasses.length > 0,
         class_teacher_classes: formMasterClasses,
         teaching_assignments: myAssignments,
@@ -333,33 +314,77 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
         is_weekend: now.getDay() === 0 || now.getDay() === 6
       };
     } else if (role === 'student') {
+      let stAttPct = 0, stAvg = 0, stTasks = 0, stSubjs = 0;
+      try {
+        const stUser = await queryOne('SELECT id FROM students WHERE user_id = ? OR id = ?', [req.user.id, req.user.id]);
+        if (stUser) {
+          const [att] = await query("SELECT ROUND((COUNT(CASE WHEN status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0))) as pct FROM attendance WHERE student_id = ? AND school_id = ?", [stUser.id, schoolId]);
+          stAttPct = Number(att?.pct || 0);
+          const [grd] = await query("SELECT ROUND(AVG(grade_value), 1) as avg FROM grades WHERE student_id = ? AND school_id = ?", [stUser.id, schoolId]);
+          stAvg = Number(grd?.avg || 0);
+          const [sub] = await query("SELECT COUNT(DISTINCT subject) as cnt FROM grades WHERE student_id = ? AND school_id = ?", [stUser.id, schoolId]);
+          stSubjs = Number(sub?.cnt || 0);
+          const [tsk] = await query("SELECT COUNT(*) as cnt FROM tasks WHERE school_id = ? AND status != 'completed'", [schoolId]);
+          stTasks = Number(tsk?.cnt || 0);
+        }
+      } catch (_) {}
       roleData = {
-        attendance_pct: 95,
-        term_average: 74.2,
-        upcoming_tasks: 3,
-        subjects_count: 8
+        attendance_pct: stAttPct,
+        term_average: stAvg,
+        upcoming_tasks: stTasks,
+        subjects_count: stSubjs
       };
     } else if (role === 'boarding_master' || role === 'warden') {
+      let totalBoarders = 0, hostelCap = 0, occPct = 0, outNow = 0, pendingEx = 0;
+      try {
+        const [bCount] = await query("SELECT COUNT(*) as c FROM students WHERE school_id = ? AND is_boarding = 1", [schoolId]);
+        totalBoarders = Number(bCount?.c || 0);
+        const [hCap] = await query("SELECT COALESCE(SUM(capacity), 0) as c FROM hostel_rooms WHERE school_id = ?", [schoolId]);
+        hostelCap = Number(hCap?.c || 0);
+        occPct = hostelCap > 0 ? Math.round((totalBoarders / hostelCap) * 100) : 0;
+        const [ex] = await query("SELECT COUNT(*) as c FROM exeats WHERE school_id = ? AND status = 'pending'", [schoolId]);
+        pendingEx = Number(ex?.c || 0);
+        const [out] = await query("SELECT COUNT(*) as c FROM exeats WHERE school_id = ? AND status = 'approved' AND return_date >= CURRENT_DATE()", [schoolId]);
+        outNow = Number(out?.c || 0);
+      } catch (_) {}
       roleData = {
-        total_boarders: 240,
-        hostel_capacity: 280,
-        occupancy_pct: 86,
-        out_of_school_now: 14,
-        pending_exeats: 6,
-        reconciliation_flags: 2
+        total_boarders: totalBoarders,
+        hostel_capacity: hostelCap,
+        occupancy_pct: occPct,
+        out_of_school_now: outNow,
+        pending_exeats: pendingEx,
+        reconciliation_flags: 0
       };
     } else if (role === 'nurse') {
+      let visitsToday = 0, chronicCount = 0, allergiesCount = 0;
+      try {
+        const [v] = await query("SELECT COUNT(*) as c FROM student_health WHERE school_id = ? AND DATE(created_at) = CURRENT_DATE()", [schoolId]);
+        visitsToday = Number(v?.c || 0);
+        const [ch] = await query("SELECT COUNT(*) as c FROM students WHERE school_id = ? AND medical_notes IS NOT NULL AND medical_notes != ''", [schoolId]);
+        chronicCount = Number(ch?.c || 0);
+        const [al] = await query("SELECT COUNT(*) as c FROM students WHERE school_id = ? AND allergies IS NOT NULL AND allergies != ''", [schoolId]);
+        allergiesCount = Number(al?.c || 0);
+      } catch (_) {}
       roleData = {
-        visits_today: 8,
-        chronic_conditions_count: 19,
-        allergies_count: 34,
-        referrals_this_term: 3
+        visits_today: visitsToday,
+        chronic_conditions_count: chronicCount,
+        allergies_count: allergiesCount,
+        referrals_this_term: 0
       };
     } else if (role === 'super_admin') {
+      let totalSchools = 0, totalPlatformUsers = 0, activeLic = 0;
+      try {
+        const [sc] = await query("SELECT COUNT(*) as c FROM schools");
+        totalSchools = Number(sc?.c || 0);
+        const [u] = await query("SELECT COUNT(*) as c FROM users");
+        totalPlatformUsers = Number(u?.c || 0);
+        const [l] = await query("SELECT COUNT(*) as c FROM licenses WHERE status = 'active'");
+        activeLic = Number(l?.c || 0);
+      } catch (_) {}
       roleData = {
-        total_schools: 3,
-        active_licenses: 3,
-        total_platform_users: 1420,
+        total_schools: totalSchools,
+        active_licenses: activeLic,
+        total_platform_users: totalPlatformUsers,
         system_health: 'optimal',
         db_pool_status: 'healthy',
         outbox_queue: 0
@@ -371,7 +396,7 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
         role,
         kpis: {
           attendance_today_pct: attendanceTodayPct,
-          attendance_delta: 2.1,
+          attendance_delta: 0,
           total_students: totalStudents,
           total_staff: totalStaff,
           total_classes: totalClasses,
@@ -416,7 +441,7 @@ router.get('/schools/:schoolId/dashboard/insights', authenticateToken, async (re
       }
     } catch (_) {}
 
-    // Rule 2: Unpaid Debtors (> $500 outstanding)
+    // Rule 2: Unpaid Debtors 
     try {
       const [debt] = await query(
         `SELECT COUNT(*) as debtor_cnt, COALESCE(SUM(amount_due - amount_paid), 0) as total_debt
@@ -479,7 +504,7 @@ router.get('/schools/:schoolId/dashboard/insights', authenticateToken, async (re
     // Rule 5: Low class attendance (< 80%)
     try {
       const lowAtt = await query(
-        `SELECT c.name, ROUND(COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 1) as att_pct
+        `SELECT c.name, ROUND(COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 1) as att_pct
          FROM classes c
          JOIN students st ON c.id = st.class_id
          JOIN attendance a ON st.id = a.student_id
@@ -772,7 +797,7 @@ router.get('/schools/:schoolId/analytics/attendance', authenticateToken, async (
       data = await query(
         `SELECT
            DAYNAME(date) as weekday,
-           ROUND(COUNT(CASE WHEN status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as attendance_pct
+           ROUND(COUNT(CASE WHEN status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1) as attendance_pct
          FROM attendance
          WHERE school_id = ? AND date >= DATE_SUB(CURDATE(), INTERVAL 28 DAY)
          GROUP BY DAYNAME(date), DAYOFWEEK(date)
@@ -783,8 +808,8 @@ router.get('/schools/:schoolId/analytics/attendance', authenticateToken, async (
       data = await query(
         `SELECT
            c.name as class_name,
-           ROUND(COUNT(CASE WHEN a.status = 'present' THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 1) as attendance_pct,
-           COUNT(CASE WHEN a.status = 'present' THEN 1 END) as present_cnt,
+           ROUND(COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) * 100.0 / NULLIF(COUNT(a.id), 0), 1) as attendance_pct,
+           COUNT(CASE WHEN a.status IN ('present', 'late') THEN 1 END) as present_cnt,
            COUNT(CASE WHEN a.status = 'absent' THEN 1 END) as absent_cnt
          FROM classes c
          JOIN students st ON c.id = st.class_id
@@ -989,7 +1014,10 @@ router.get('/search', authenticateToken, async (req, res) => {
       return res.json({ data: { students: [], staff: [], invoices: [], classes: [] } });
     }
 
-    const schoolId = req.user?.school_id || 'HARAREPR';
+    const schoolId = req.user?.school_id || req.headers['x-school-id'] || null;
+    if (!schoolId) {
+      return res.json({ data: { students: [], staff: [], invoices: [], classes: [] } });
+    }
     const pattern = `%${q}%`;
 
     const [students, staff, invoices, classes] = await Promise.all([

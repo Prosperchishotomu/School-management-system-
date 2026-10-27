@@ -278,6 +278,67 @@ router.post('/logout-all', authenticateToken, async (req, res) => {
   }
 });
 
+// GET /sessions or /auth/sessions
+const getSessionsHandler = async (req, res) => {
+  try {
+    const sessions = await query(
+      `SELECT id, ip, user_agent, created_at, expires_at
+       FROM refresh_tokens
+       WHERE user_id = ? AND revoked_at IS NULL AND expires_at > NOW()
+       ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+
+    const clientIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+    const clientUa = req.headers['user-agent'] || 'Current Browser';
+
+    if (!sessions || sessions.length === 0) {
+      return res.json({
+        data: [{
+          id: 'current',
+          ip: clientIp,
+          user_agent: clientUa,
+          created_at: new Date().toISOString(),
+          is_current: true
+        }]
+      });
+    }
+
+    return res.json({
+      data: sessions.map((s, idx) => ({
+        id: s.id,
+        ip: s.ip || clientIp,
+        user_agent: s.user_agent || clientUa,
+        created_at: s.created_at,
+        is_current: idx === 0
+      }))
+    });
+  } catch (err) {
+    console.error('Error fetching sessions:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to retrieve active sessions.' } });
+  }
+};
+
+router.get('/sessions', authenticateToken, getSessionsHandler);
+router.get('/auth/sessions', authenticateToken, getSessionsHandler);
+
+// DELETE /sessions/:id or /auth/sessions/:id
+const deleteSessionHandler = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (id === 'current') {
+      return res.json({ data: { message: 'Current session remains active.' } });
+    }
+    await query('UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = ? AND user_id = ?', [id, req.user.id]);
+    return res.json({ data: { message: 'Session revoked successfully.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to revoke session.' } });
+  }
+};
+
+router.delete('/sessions/:id', authenticateToken, deleteSessionHandler);
+router.delete('/auth/sessions/:id', authenticateToken, deleteSessionHandler);
+
 // GET /me
 router.get('/me', authenticateToken, async (req, res) => {
   try {

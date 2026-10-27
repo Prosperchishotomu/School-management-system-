@@ -19,23 +19,21 @@ import {
 export default function WardenDashboard() {
   const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
+
+  const { data: summaryData } = useApi(
+    `warden_summary_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/dashboard/summary?role=warden`)
+  );
 
   const { data: boarding } = useApi(
     `warden_boarding_${schoolId}`,
     () => api.get(`/schools/${schoolId}/boarding/overview`)
   );
 
-  const hostels = boarding?.hostels || [
-    { name: 'Chitepo Boys Hall', occupied: 120, capacity: 140, occupancy_pct: 86 },
-    { name: 'Kaguvi Girls Hall', occupied: 115, capacity: 140, occupancy_pct: 82 }
-  ];
-
-  const currentlyOut = boarding?.currently_out || [
-    { exeat_id: 'EX-01', student_name: 'Farai Ncube', class_name: 'Form 4 Delta', destination: 'Bulawayo', expected_return: 'Sun 17:00' },
-    { exeat_id: 'EX-02', student_name: 'Blessing Gumbo', class_name: 'Lower 6 Sciences', destination: 'Harare CBD', expected_return: 'Sat 18:00' },
-    { exeat_id: 'EX-03', student_name: 'Tinashe Moyo', class_name: 'Form 3 Gamma', destination: 'Chitungwiza', expected_return: 'Sun 16:30' }
-  ];
+  const wardenData = summaryData?.data?.role_specific || {};
+  const hostels = boarding?.hostels || [];
+  const currentlyOut = boarding?.currently_out || [];
 
   return (
     <div className="space-y-6">
@@ -49,7 +47,7 @@ export default function WardenDashboard() {
             Warden & Gate Desk
           </h1>
           <p className="text-xs md:text-sm text-muted mt-1 max-w-xl">
-            235 boarders in residence. 14 students currently off campus on active exeat passes.
+            {wardenData.total_boarders ?? 0} boarders registered. {wardenData.out_of_school_now ?? currentlyOut.length} students currently off campus on active exeat passes.
           </p>
         </div>
 
@@ -65,8 +63,8 @@ export default function WardenDashboard() {
       <KpiStrip>
         <StatCard
           title="Total Boarders"
-          value="235"
-          sublabel="84% campus occupancy"
+          value={String(wardenData.total_boarders ?? 0)}
+          sublabel={`${wardenData.occupancy_pct ?? 0}% campus occupancy`}
           icon={Building2}
           iconColor="brand"
           to="/hostels"
@@ -74,7 +72,7 @@ export default function WardenDashboard() {
 
         <StatCard
           title="Currently Out"
-          value={String(currentlyOut.length)}
+          value={String(wardenData.out_of_school_now ?? currentlyOut.length)}
           sublabel="Gate passes active"
           icon={Clock}
           iconColor="accent"
@@ -83,10 +81,10 @@ export default function WardenDashboard() {
 
         <StatCard
           title="Pending Exeats"
-          value="6 Requests"
-          sublabel="Awaiting warden sign-off"
-          icon={Users}
-          iconColor="info"
+          value={String(wardenData.pending_exeats ?? 0)}
+          sublabel="Awaiting review"
+          icon={AlertTriangle}
+          iconColor={wardenData.pending_exeats > 0 ? "accent" : "brand"}
           to="/boarding/exeats"
         />
 
@@ -102,28 +100,36 @@ export default function WardenDashboard() {
 
       {/* Hostel Occupancy Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {hostels.map(h => (
-          <Card
-            key={h.name}
-            title={h.name}
-            subtitle={`${h.occupied} of ${h.capacity} beds allocated`}
-            action={<StatusPill status="present" label="Operational" />}
-            to="/hostels"
-          >
-            <div className="flex items-center justify-between py-2">
-              <div>
-                <span className="text-xs text-muted block">Current Capacity</span>
-                <span className="text-3xl font-bold font-display text-ink tabular-nums">
-                  {h.occupied} / {h.capacity}
-                </span>
-                <span className="text-[11px] text-muted block mt-1">
-                  {h.capacity - h.occupied} beds vacant for allocation
-                </span>
-              </div>
-              <ProgressRing value={h.occupancy_pct} size={90} color="brand" />
+        {hostels.length === 0 ? (
+          <Card title="Hostel Allocation Overview" className="md:col-span-2">
+            <div className="p-8 text-center text-xs text-muted">
+              No hostel buildings registered yet. Add hostel facilities to monitor room capacity and bed occupancy.
             </div>
           </Card>
-        ))}
+        ) : (
+          hostels.map(h => (
+            <Card
+              key={h.name}
+              title={h.name}
+              subtitle={`${h.occupied || 0} of ${h.capacity || 0} beds allocated`}
+              action={<StatusPill status="present" label="Operational" />}
+              to="/hostels"
+            >
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <span className="text-xs text-muted block">Current Capacity</span>
+                  <span className="text-3xl font-bold font-display text-ink tabular-nums">
+                    {h.occupied || 0} / {h.capacity || 0}
+                  </span>
+                  <span className="text-[11px] text-muted block mt-1">
+                    {Math.max(0, (h.capacity || 0) - (h.occupied || 0))} beds vacant for allocation
+                  </span>
+                </div>
+                <ProgressRing value={h.occupancy_pct || 0} size={90} color="brand" />
+              </div>
+            </Card>
+          ))
+        )}
       </div>
 
       {/* Currently Out Live Board */}
@@ -139,32 +145,38 @@ export default function WardenDashboard() {
           </button>
         }
       >
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-line text-muted uppercase text-[11px]">
-                <th className="py-2.5 text-left">Student</th>
-                <th className="py-2.5 text-left">Class</th>
-                <th className="py-2.5 text-left">Destination</th>
-                <th className="py-2.5 text-right">Expected Return</th>
-                <th className="py-2.5 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line/60">
-              {currentlyOut.map(item => (
-                <tr key={item.exeat_id} className="hover:bg-canvas/40 transition-colors">
-                  <td className="py-2.5 font-semibold text-ink">{item.student_name}</td>
-                  <td className="py-2.5 text-muted">{item.class_name}</td>
-                  <td className="py-2.5 text-muted">{item.destination}</td>
-                  <td className="py-2.5 text-right font-mono font-medium">{item.expected_return}</td>
-                  <td className="py-2.5 text-center">
-                    <StatusPill status="pending" label="Checked Out" />
-                  </td>
+        {currentlyOut.length === 0 ? (
+          <div className="p-8 text-center text-xs text-muted">
+            No students currently logged out on active exeat passes.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-line text-muted uppercase text-[11px]">
+                  <th className="py-2.5 text-left">Student</th>
+                  <th className="py-2.5 text-left">Class</th>
+                  <th className="py-2.5 text-left">Destination</th>
+                  <th className="py-2.5 text-right">Expected Return</th>
+                  <th className="py-2.5 text-center">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-line/60">
+                {currentlyOut.map(item => (
+                  <tr key={item.exeat_id} className="hover:bg-canvas/40 transition-colors">
+                    <td className="py-2.5 font-semibold text-ink">{item.student_name}</td>
+                    <td className="py-2.5 text-muted">{item.class_name}</td>
+                    <td className="py-2.5 text-muted">{item.destination}</td>
+                    <td className="py-2.5 text-right font-mono font-medium">{item.expected_return}</td>
+                    <td className="py-2.5 text-center">
+                      <StatusPill status="pending" label="Checked Out" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </div>
   );

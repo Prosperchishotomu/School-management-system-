@@ -9,7 +9,8 @@ import {
 } from '../components/ui';
 import {
   MessageSquare, Bell, Megaphone, Send, Plus, Search, Paperclip,
-  CheckCircle2, Clock, Volume2, Play, Pause, Trash2, CheckCheck, Filter
+  CheckCircle2, Clock, Volume2, Play, Pause, Trash2, CheckCheck, Filter,
+  Sun, Moon, Palette
 } from 'lucide-react';
 
 export default function Messages() {
@@ -22,6 +23,28 @@ export default function Messages() {
   const [chatBody, setChatBody] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sending, setSending] = useState(false);
+  const messagesEndRef = useRef(null);
+
+  // Theme control state
+  const [currentTheme, setCurrentTheme] = useState(() => {
+    return localStorage.getItem('schoolbase_theme') || (document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+  });
+
+  const toggleTheme = (newTheme) => {
+    setCurrentTheme(newTheme);
+    localStorage.setItem('schoolbase_theme', newTheme);
+    document.documentElement.setAttribute('data-theme', newTheme);
+    if (newTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
+  // Auto scroll on thread change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [threadDetails]);
 
   // New Conversation Modal
   const [showComposeModal, setShowComposeModal] = useState(false);
@@ -59,9 +82,9 @@ export default function Messages() {
   );
 
   const { data: alertsData } = useApi(
-    `alerts_${activeSchoolId}`,
-    () => api.get(`/schools/${activeSchoolId}/alerts`).then(r => r.data || []).catch(() => []),
-    { deps: [activeSchoolId] }
+    `alerts_${activeSchoolId}_${user?.id}`,
+    () => api.get('/notifications').then(r => r.data?.data || r.data || []).catch(() => []),
+    { deps: [activeSchoolId, user?.id] }
   );
 
   const threads = Array.isArray(threadsData) ? threadsData : [];
@@ -69,40 +92,33 @@ export default function Messages() {
   const rawAnnouncements = Array.isArray(announcementsData) ? announcementsData : [];
   const rawAlerts = Array.isArray(alertsData) ? alertsData : [];
 
-  // Default sample data fallback for realistic preview if database is sparse
-  const sampleAnnouncements = [
-    { id: 1, title: 'End of Term 1 2026 Examination Schedule Published', category: 'academic', audience: 'All School', created_at: '2026-03-22', content: 'The comprehensive timetable for Forms 1 through 6 has been finalized. Morning sessions commence strictly at 08:30 AM.' },
-    { id: 2, title: 'Compulsory Hostel Exeat Weekend Protocol', category: 'boarding', audience: 'Boarding Parents', created_at: '2026-03-20', content: 'Mid-term exeat begins Friday 27 March at 13:00. All boarders must be cleared at the gate via SchoolBase QR pass.' },
-    { id: 3, title: 'Term 2 Fee Structures & Multi-Currency Guidelines', category: 'finance', audience: 'All Guardians', created_at: '2026-03-15', content: 'Approved fees for the upcoming term have been posted to pupil ledgers. Real-time RBZ ZiG exchange rates apply at the cashier desk.' },
-  ];
+  const announcements = rawAnnouncements;
+  const alerts = rawAlerts;
 
-  const sampleAlerts = [
-    { id: 'alt-1', title: 'Unreconciled Bank POP Payment', category: 'finance', created_at: '2026-03-24T08:15:00', read: false, message: 'Transfer of USD 450.00 from Stanbic Bank awaits bursar manual ledger match.' },
-    { id: 'alt-2', title: 'Hostel Gate Discrepancy Flag', category: 'boarding', created_at: '2026-03-23T19:30:00', read: false, message: 'Pupil Farai Sibanda was logged as Present on class roll but is on an active unreturned exeat pass.' },
-    { id: 'alt-3', title: 'Syllabus Review Submission Due', category: 'academic', created_at: '2026-03-22T14:00:00', read: true, message: 'Head of Department requires Term 2 Schemes of Work vetting by Friday 16:00.' },
-  ];
-
-  const announcements = rawAnnouncements.length > 0 ? rawAnnouncements : sampleAnnouncements;
-  const alerts = rawAlerts.length > 0 ? rawAlerts : sampleAlerts;
-
-  const unreadAlertsCount = alerts.filter(a => !a.read).length;
+  const unreadAlertsCount = alerts.filter(a => !a.read && !a.is_read).length;
   const unreadMessagesCount = threads.filter(t => t.unread_count > 0).length;
+
+  const filteredThreads = useMemo(() => {
+    if (!searchQuery.trim()) return threads;
+    const q = searchQuery.toLowerCase();
+    return threads.filter(t =>
+      (t.subject || '').toLowerCase().includes(q) ||
+      (t.sender_name || '').toLowerCase().includes(q) ||
+      (t.last_message || '').toLowerCase().includes(q)
+    );
+  }, [threads, searchQuery]);
 
   const openThread = async (t) => {
     setSelectedThread(t);
     try {
       const res = await api.get(`/messages/conversations/${t.id}`);
-      setThreadDetails(res.data);
+      setThreadDetails(res.data?.data || res.data || {});
       await api.post(`/messages/conversations/${t.id}/read`).catch(() => {});
     } catch (e) {
-      // Fallback
       setThreadDetails({
         id: t.id,
         subject: t.subject,
-        messages: [
-          { id: 1, sender_name: t.sender_name || 'Contact', body: t.last_message || 'Good day, please find the required document attached.', sent_at: '2026-03-24T09:15:00' },
-          { id: 2, sender_name: user?.name || 'Me', body: 'Received with thanks. I have reviewed the requirements.', sent_at: '2026-03-24T09:40:00', is_me: true }
-        ]
+        messages: t.last_message ? [{ id: 1, sender_name: t.sender_name || 'Contact', body: t.last_message, sent_at: t.updated_at || t.created_at }] : []
       });
     }
   };
@@ -169,6 +185,32 @@ export default function Messages() {
         subtitle="Internal messaging, school-wide broadcast announcements, and priority system alerts."
         actions={
           <div className="flex items-center gap-2">
+            {/* Theme Switcher Toggle */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-surface border border-line shadow-2xs">
+              <button
+                type="button"
+                onClick={() => toggleTheme('light')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                  currentTheme === 'light' ? 'bg-brand-50 text-brand-700 font-bold shadow-2xs' : 'text-muted hover:text-ink'
+                }`}
+                title="Switch to Light Mode"
+              >
+                <Sun className="w-3.5 h-3.5" />
+                <span>Light</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleTheme('dark')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition ${
+                  currentTheme === 'dark' ? 'bg-brand-900/40 text-brand-300 font-bold shadow-2xs' : 'text-muted hover:text-ink'
+                }`}
+                title="Switch to Dark Mode"
+              >
+                <Moon className="w-3.5 h-3.5" />
+                <span>Dark</span>
+              </button>
+            </div>
+
             {activeTab === 'announcements' && ['school_admin', 'super_admin'].includes(user?.role) && (
               <button
                 onClick={() => setShowBroadcastModal(true)}
@@ -250,12 +292,24 @@ export default function Messages() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
-              {(threads.length > 0 ? threads : [
-                { id: 1, subject: 'Term 1 Progress & Assessment', sender_name: 'Mrs. R. Choto (HOD)', last_message: 'Please review the science lab practical scores by 3 PM.', unread_count: 1, updated_at: '2026-03-24' },
-                { id: 2, subject: 'Farai Sibanda Sick Leave', sender_name: 'Mr. T. Sibanda (Parent)', last_message: 'Doctor confirmed he will resume on Monday.', unread_count: 0, updated_at: '2026-03-23' },
-                { id: 3, subject: 'Stanbic Bank POP Deposit Inquiry', sender_name: 'Bursary Office', last_message: 'The electronic receipt has been credited to pupil balance.', unread_count: 0, updated_at: '2026-03-21' },
-              ]).map(th => {
+            {/* Conversation Search Bar */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-muted absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search conversations..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-line bg-canvas text-ink text-xs focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 max-h-[520px]">
+              {filteredThreads.length === 0 ? (
+                <div className="py-8 text-center text-xs text-muted">
+                  No conversations match your search.
+                </div>
+              ) : filteredThreads.map(th => {
                 const isSelected = selectedThread?.id === th.id;
                 return (
                   <button
@@ -277,7 +331,7 @@ export default function Messages() {
                       )}
                     </div>
                     <div className="text-xs font-semibold text-ink mt-1.5 truncate">{th.subject}</div>
-                    <p className="text-[11px] text-muted truncate mt-0.5">{th.last_message}</p>
+                    <p className="text-[11px] text-muted truncate mt-0.5">{th.last_message || 'No messages yet'}</p>
                   </button>
                 );
               })}
@@ -294,39 +348,43 @@ export default function Messages() {
                     <Avatar name={selectedThread?.sender_name || selectedThread?.subject || 'Contact'} size="md" />
                     <div>
                       <h3 className="font-bold text-sm text-ink">{selectedThread?.subject}</h3>
-                      <p className="text-[11px] text-muted">{selectedThread?.sender_name || 'Secure Conversation'}</p>
+                      <p className="text-[11px] text-muted">{selectedThread?.sender_name || 'Direct Conversation'}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Message Bubbles Area */}
-                <div className="flex-1 p-5 overflow-y-auto space-y-3 bg-canvas/20 min-h-[360px]">
-                  {(threadDetails?.messages || [
-                    { id: 1, sender_name: selectedThread?.sender_name || 'Contact', body: selectedThread?.last_message || 'Good day, please find the required document attached.', sent_at: '2026-03-24T09:15:00', is_me: false },
-                    { id: 2, sender_name: 'Me', body: 'Received with thanks. I have verified the records and updated the register.', sent_at: '2026-03-24T09:40:00', is_me: true }
-                  ]).map(msg => {
-                    const isMe = msg.is_me || msg.sender_id === user?.id;
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex flex-col max-w-[75%] ${isMe ? 'ml-auto items-end' : 'mr-auto items-start'}`}
-                      >
+                <div className="flex-1 p-5 overflow-y-auto space-y-3 bg-canvas/20 min-h-[360px] max-h-[520px]">
+                  {(!threadDetails?.messages || threadDetails.messages.length === 0) ? (
+                    <div className="py-16 text-center text-xs text-muted">
+                      No message history found for this conversation. Type a message below to start chatting.
+                    </div>
+                  ) : (
+                    threadDetails.messages.map(msg => {
+                      const isMe = msg.is_me || msg.sender_id === user?.id;
+                      return (
                         <div
-                          className={`p-3.5 rounded-2xl text-xs leading-relaxed ${
-                            isMe
-                              ? 'bg-brand-700 text-white rounded-br-xs shadow-xs'
-                              : 'bg-surface border border-line text-ink rounded-bl-xs shadow-xs'
-                          }`}
+                          key={msg.id}
+                          className={`flex flex-col max-w-[75%] ${isMe ? 'ml-auto items-end' : 'mr-auto items-start'}`}
                         >
-                          {!isMe && <div className="text-[10px] font-bold opacity-75 mb-1">{msg.sender_name}</div>}
-                          <p className="whitespace-pre-wrap">{msg.body}</p>
+                          <div
+                            className={`p-3.5 rounded-2xl text-xs leading-relaxed ${
+                              isMe
+                                ? 'bg-brand-700 text-white rounded-br-xs shadow-xs'
+                                : 'bg-surface border border-line text-ink rounded-bl-xs shadow-xs'
+                            }`}
+                          >
+                            {!isMe && <div className="text-[10px] font-bold opacity-75 mb-1">{msg.sender_name}</div>}
+                            <p className="whitespace-pre-wrap">{msg.body}</p>
+                          </div>
+                          <span className="text-[9px] text-muted font-mono mt-1 px-1">
+                            {new Date(msg.sent_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                         </div>
-                        <span className="text-[9px] text-muted font-mono mt-1 px-1">
-                          {new Date(msg.sent_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
+                  <div ref={messagesEndRef} />
                 </div>
 
                 {/* Chat Input Bar */}
@@ -408,33 +466,41 @@ export default function Messages() {
           }
         >
           <div className="space-y-2">
-            {alerts.map(alt => (
-              <div
-                key={alt.id}
-                className={`p-4 rounded-xl border flex items-start justify-between gap-4 transition ${
-                  alt.read ? 'bg-canvas/30 border-line text-muted' : 'bg-surface border-brand-500/30 shadow-xs'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-                    alt.read ? 'bg-canvas text-muted' : 'bg-brand-500/10 text-brand-700 dark:text-brand-300'
-                  }`}>
-                    <Bell className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-bold ${alt.read ? 'text-muted' : 'text-ink'}`}>{alt.title}</span>
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-canvas border border-line font-mono uppercase">{alt.category}</span>
+            {alerts.length > 0 ? (
+              alerts.map(alt => (
+                <div
+                  key={alt.id}
+                  className={`p-4 rounded-xl border flex items-start justify-between gap-4 transition ${
+                    alt.read || alt.is_read ? 'bg-canvas/30 border-line text-muted' : 'bg-surface border-brand-500/30 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                      alt.read || alt.is_read ? 'bg-canvas text-muted' : 'bg-brand-500/10 text-brand-700 dark:text-brand-300'
+                    }`}>
+                      <Bell className="w-4 h-4" />
                     </div>
-                    <p className="text-xs text-muted mt-1 leading-relaxed">{alt.message}</p>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold ${alt.read || alt.is_read ? 'text-muted' : 'text-ink'}`}>{alt.title}</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-canvas border border-line font-mono uppercase">{alt.category || alt.type || 'System'}</span>
+                      </div>
+                      <p className="text-xs text-muted mt-1 leading-relaxed">{alt.message || alt.body}</p>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] font-mono text-muted whitespace-nowrap">
+                    {alt.created_at ? new Date(alt.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                   </div>
                 </div>
-
-                <div className="text-[10px] font-mono text-muted whitespace-nowrap">
-                  {new Date(alt.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
-              </div>
-            ))}
+              ))
+            ) : (
+              <EmptyState
+                title="No Operational Alerts"
+                description="All system channels are clear. No pending financial or administrative alerts."
+                compact={true}
+              />
+            )}
           </div>
         </Card>
       )}

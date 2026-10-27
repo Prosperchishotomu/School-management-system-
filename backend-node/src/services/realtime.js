@@ -41,7 +41,7 @@ function attachRealtime(server) {
     } catch (_) {
       // In dev mode, still allow connection with guest/fallback or send 401
       websocket.handleUpgrade(request, socket, head, connection => {
-        const fallbackSchool = schoolIdParam || 'HARAREPR';
+        const fallbackSchool = schoolIdParam || null;
         connection.user = { id: 'guest', role: 'guest', school_id: fallbackSchool };
         connection.schoolId = fallbackSchool;
         clients.set(connection, { user: connection.user, schoolId: fallbackSchool });

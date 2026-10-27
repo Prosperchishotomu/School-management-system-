@@ -19,7 +19,7 @@ export default function Exams() {
   const { activeSchoolId, user } = useAuth();
   const toast = useToast();
 
-  const [term, setTerm] = useState('2026-T1');
+  const [term, setTerm] = useState('Term 1');
   const [showModal, setShowModal] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -28,17 +28,24 @@ export default function Exams() {
     id: '',
     class_id: '',
     subject: '',
-    exam_date: '2026-03-24',
+    exam_date: new Date().toISOString().split('T')[0],
     start_time: '08:30',
     duration_minutes: '120',
-    room: 'Great Hall',
+    room: '',
     invigilator: ''
   });
+
+  // Fetch school terms
+  const { data: termsData } = useApi(
+    `terms_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/terms`).then(r => r.data?.data || r.data || []).catch(() => []),
+    { deps: [activeSchoolId] }
+  );
 
   // Fetch exams, classes, and academic analytics for pass rates
   const { data: examsData, loading: loadingExams } = useApi(
     `exams_${activeSchoolId}_${term}`,
-    () => api.get(`/schools/${activeSchoolId}/exams?term=${term}`).then(r => r.data || []),
+    () => api.get(`/schools/${activeSchoolId}/exams?term=${encodeURIComponent(term)}`).then(r => r.data || []),
     { deps: [activeSchoolId, term] }
   );
 
@@ -48,14 +55,22 @@ export default function Exams() {
     { deps: [activeSchoolId] }
   );
 
+  const { data: subjectsData } = useApi(
+    `subjects_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/subjects`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
+
   const { data: academicAnalytics } = useApi(
     `academics_analytics_${activeSchoolId}`,
     () => api.get(`/schools/${activeSchoolId}/analytics/academics?group=subject`).then(r => r.data?.data || []).catch(() => []),
     { deps: [activeSchoolId] }
   );
 
+  const terms = Array.isArray(termsData) ? termsData : [];
   const exams = Array.isArray(examsData) ? examsData : [];
   const classes = Array.isArray(classesData) ? classesData : [];
+  const subjects = Array.isArray(subjectsData) ? subjectsData : [];
   const subjectPassRates = Array.isArray(academicAnalytics) ? academicAnalytics : [];
 
   // Clash Detection: Same room, same date, overlapping time window
@@ -136,9 +151,17 @@ export default function Exams() {
               onChange={e => setTerm(e.target.value)}
               className="px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold focus:ring-2 focus:ring-brand-500"
             >
-              <option value="2026-T1">Term 1 2026</option>
-              <option value="2026-T2">Term 2 2026</option>
-              <option value="2026-T3">Term 3 2026</option>
+              {terms.length > 0 ? (
+                terms.map(t => (
+                  <option key={t.id} value={t.name}>{t.name}</option>
+                ))
+              ) : (
+                <>
+                  <option value="Term 1">Term 1</option>
+                  <option value="Term 2">Term 2</option>
+                  <option value="Term 3">Term 3</option>
+                </>
+              )}
             </select>
 
             {['school_admin', 'super_admin'].includes(user?.role) && (
@@ -147,11 +170,11 @@ export default function Exams() {
                   setForm({
                     id: '',
                     class_id: classes[0]?.id || '',
-                    subject: 'Mathematics',
-                    exam_date: '2026-03-24',
+                    subject: '',
+                    exam_date: new Date().toISOString().split('T')[0],
                     start_time: '08:30',
                     duration_minutes: '120',
-                    room: 'Great Hall',
+                    room: '',
                     invigilator: ''
                   });
                   setShowModal(true);
@@ -307,32 +330,34 @@ export default function Exams() {
             title="Subject Pass Rate Benchmark"
             subtitle="Percentage of learners attaining Grade C (50%+) or higher across subjects."
           >
-            <div className="h-64 mt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={subjectPassRates.length > 0 ? subjectPassRates : [
-                    { subject: 'Math', pass_rate: 78 },
-                    { subject: 'English', pass_rate: 85 },
-                    { subject: 'Science', pass_rate: 71 },
-                    { subject: 'History', pass_rate: 92 },
-                    { subject: 'Heritage', pass_rate: 88 },
-                    { subject: 'Shona', pass_rate: 95 },
-                    { subject: 'Accounts', pass_rate: 68 },
-                  ]}
-                  layout="vertical"
-                  margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
-                >
-                  <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-                  <YAxis dataKey="subject" type="category" tick={{ fontSize: 11 }} width={70} />
-                  <Tooltip formatter={v => [`${v}%`, 'Pass Rate']} />
-                  <ReferenceLine x={50} stroke="#D64545" strokeDasharray="3 3" label={{ value: 'Target 50%', fill: '#D64545', fontSize: 10 }} />
-                  <Bar dataKey="pass_rate" fill="#2E8B63" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <p className="text-[11px] text-muted mt-2 text-center">
-              Dashed red line denotes the 50% ministry credit cutoff.
-            </p>
+            {subjectPassRates.length === 0 ? (
+              <EmptyState
+                title="No Exam Results Recorded"
+                subtitle="Pass rate benchmarks by subject will appear here once exam marks are captured in the gradebook."
+                compact={true}
+              />
+            ) : (
+              <>
+                <div className="h-64 mt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={subjectPassRates}
+                      layout="vertical"
+                      margin={{ top: 5, right: 20, left: 20, bottom: 5 }}
+                    >
+                      <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
+                      <YAxis dataKey="subject" type="category" tick={{ fontSize: 11 }} width={70} />
+                      <Tooltip formatter={v => [`${v}%`, 'Pass Rate']} />
+                      <ReferenceLine x={50} stroke="#D64545" strokeDasharray="3 3" label={{ value: 'Target 50%', fill: '#D64545', fontSize: 10 }} />
+                      <Bar dataKey="pass_rate" fill="#2E8B63" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className="text-[11px] text-muted mt-2 text-center">
+                  Dashed red line denotes the 50% ministry credit cutoff.
+                </p>
+              </>
+            )}
           </Card>
 
           <Card
@@ -383,14 +408,17 @@ export default function Exams() {
 
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Subject Title *</label>
-              <input
-                type="text"
+              <select
                 required
-                placeholder="e.g. Mathematics Paper 1"
                 value={form.subject}
                 onChange={e => setForm({ ...form, subject: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-              />
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                <option value="">Select Curriculum Subject...</option>
+                {subjects.map(s => (
+                  <option key={s.id} value={s.name}>{s.name} {s.code ? `(${s.code})` : ''}</option>
+                ))}
+              </select>
             </div>
           </div>
 

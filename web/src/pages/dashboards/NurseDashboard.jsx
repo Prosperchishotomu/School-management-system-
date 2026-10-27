@@ -1,6 +1,8 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useApi } from '../../data/apiHooks';
+import { api } from '../../utils/api';
 import {
   StatCard,
   KpiStrip,
@@ -9,19 +11,21 @@ import {
   EmptyState
 } from '../../components/ui';
 import {
-  HeartPulse, AlertTriangle, ShieldCheck, Users,
-  Activity, Plus, ArrowRight
+  HeartPulse, AlertTriangle, ShieldCheck,
+  Activity, Plus
 } from 'lucide-react';
 
 export default function NurseDashboard() {
-  const { user } = useAuth();
+  const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
+  const schoolId = activeSchoolId || user?.school_id || '';
 
-  const chronicBoarders = [
-    { name: 'Tatenda Dube', class: 'Form 3 Gamma', condition: 'Type 1 Diabetes', hostel: 'Chitepo Hall', alerts: 'Insulin stored in clinic' },
-    { name: 'Rudo Chiwenga', class: 'Form 2 Beta', condition: 'Severe Asthma', hostel: 'Kaguvi Hall', alerts: 'Inhaler protocol active' },
-    { name: 'Kudzai Moyo', class: 'Grade 7 Diamond', condition: 'Peanut & Nut Allergy', hostel: 'Day Scholar', alerts: 'EpiPen registered' }
-  ];
+  const { data: summaryData } = useApi(
+    `nurse_summary_${schoolId}`,
+    () => api.get(`/schools/${schoolId}/dashboard/summary?role=nurse`)
+  );
+
+  const nurseData = summaryData?.data?.role_specific || {};
 
   return (
     <div className="space-y-6">
@@ -35,7 +39,7 @@ export default function NurseDashboard() {
             Clinic Desk
           </h1>
           <p className="text-xs md:text-sm text-muted mt-1 max-w-xl">
-            8 student consultations recorded today. All chronic medical registries are up to date.
+            {nurseData.visits_today ?? 0} student consultations recorded today. Review chronic medical alerts and medical history.
           </p>
         </div>
 
@@ -52,8 +56,8 @@ export default function NurseDashboard() {
       <KpiStrip>
         <StatCard
           title="Visits Today"
-          value="8 Consults"
-          sublabel="5 treated & returned"
+          value={`${nurseData.visits_today ?? 0} Consults`}
+          sublabel="Today's consultations"
           icon={HeartPulse}
           iconColor="brand"
           to="/health-records"
@@ -61,7 +65,7 @@ export default function NurseDashboard() {
 
         <StatCard
           title="Chronic Registry"
-          value="19 Learners"
+          value={`${nurseData.chronic_conditions_count ?? 0} Learners`}
           sublabel="Care plans monitored"
           icon={AlertTriangle}
           iconColor="accent"
@@ -70,7 +74,7 @@ export default function NurseDashboard() {
 
         <StatCard
           title="Allergy Flags"
-          value="34 Flags"
+          value={`${nurseData.allergies_count ?? 0} Flags`}
           sublabel="Refectory notified"
           icon={ShieldCheck}
           iconColor="info"
@@ -79,7 +83,7 @@ export default function NurseDashboard() {
 
         <StatCard
           title="External Referrals"
-          value="3 Patients"
+          value={`${nurseData.referrals_this_term ?? 0} Patients`}
           sublabel="Hospital consultations"
           icon={Activity}
           iconColor="violet"
@@ -101,17 +105,8 @@ export default function NurseDashboard() {
             </button>
           }
         >
-          <div className="divide-y divide-line/60">
-            {chronicBoarders.map(b => (
-              <div key={b.name} className="py-3 flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-xs text-ink">{b.name}</div>
-                  <div className="text-[11px] text-muted">{b.class} • {b.hostel}</div>
-                  <div className="text-[11px] text-accent mt-0.5 font-medium">{b.alerts}</div>
-                </div>
-                <StatusPill status="open" label={b.condition} />
-              </div>
-            ))}
+          <div className="p-8 text-center text-xs text-muted">
+            No active chronic medical or allergy alerts logged for this cohort.
           </div>
         </Card>
 
@@ -119,23 +114,8 @@ export default function NurseDashboard() {
           title="Common Health Complaints (This Term)"
           subtitle="Aggregated consultation diagnoses"
         >
-          <div className="space-y-3 py-1">
-            {[
-              { complaint: 'Mild viral headache / fatigue', count: 42, pct: 44 },
-              { complaint: 'Sports strain / minor contusion', count: 28, pct: 29 },
-              { complaint: 'Seasonal allergic rhinitis', count: 16, pct: 17 },
-              { complaint: 'Abdominal pain / upset', count: 10, pct: 10 }
-            ].map(c => (
-              <div key={c.complaint} className="text-xs space-y-1">
-                <div className="flex justify-between">
-                  <span className="font-medium text-ink">{c.complaint}</span>
-                  <span className="font-mono text-muted">{c.count} visits ({c.pct}%)</span>
-                </div>
-                <div className="w-full bg-line/60 h-2 rounded-full overflow-hidden">
-                  <div className="bg-brand-500 h-full rounded-full" style={{ width: `${c.pct}%` }} />
-                </div>
-              </div>
-            ))}
+          <div className="p-8 text-center text-xs text-muted">
+            No clinic visits recorded for this term yet.
           </div>
         </Card>
       </div>

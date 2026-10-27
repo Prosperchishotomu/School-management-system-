@@ -24,7 +24,7 @@ import {
 export default function BursarDashboard() {
   const { user, activeSchoolId } = useAuth();
   const navigate = useNavigate();
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
 
   // 1. Summary
   const { data: summary } = useApi(

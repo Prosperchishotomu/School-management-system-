@@ -50,9 +50,9 @@ export default function Expenses() {
     { deps: [activeSchoolId] }
   );
 
-  const rawExpenses = expenseData?.expenses || (Array.isArray(expenseData) ? expenseData : []);
-  const summary = expenseData?.summary || {};
-  const categoryBreakdown = expenseData?.category_breakdown || [];
+  const rawExpenses = expenseData?.expenses || expenseData?.data?.expenses || (Array.isArray(expenseData?.data) ? expenseData.data : (Array.isArray(expenseData) ? expenseData : []));
+  const summary = expenseData?.summary || expenseData?.data?.summary || {};
+  const categoryBreakdown = expenseData?.category_breakdown || expenseData?.data?.category_breakdown || [];
 
   // Filtered expenses
   const expenses = useMemo(() => {
@@ -139,7 +139,8 @@ export default function Expenses() {
       <KpiStrip>
         <StatCard
           label="Total Term Expenditure"
-          value={<Money amount={totalSpent} currency="USD" />}
+          value={totalSpent}
+          currency="USD"
           icon={DollarSign}
           color="brand"
           subtext="Approved cash outflows"
@@ -281,13 +282,7 @@ export default function Expenses() {
               render: v => <StatusPill status={v || 'approved'} />
             }
           ]}
-          data={expenses.length > 0 ? expenses : [
-            { id: 1, title: 'ZESA Commercial Power Token', category: 'utilities', amount: 850, currency: 'USD', expense_date: '2026-03-12', vendor_name: 'ZETDC Harare', receipt_ref: 'RCP-ZETDC-991' },
-            { id: 2, title: 'Diesel 50ppm for Backup Generator (500L)', category: 'fuel_generator', amount: 775, currency: 'USD', expense_date: '2026-03-15', vendor_name: 'TotalEnergies Samora', receipt_ref: 'RCP-DSL-042' },
-            { id: 3, title: 'Fibre Internet Dedicated Bandwidth', category: 'internet_ict', amount: 450, currency: 'USD', expense_date: '2026-03-01', vendor_name: 'Liquid Intelligent Tech', receipt_ref: 'INV-LIQ-331' },
-            { id: 4, title: 'Fresh Produce & Meal Rations for Boarders', category: 'boarding_rations', amount: 1420, currency: 'USD', expense_date: '2026-03-18', vendor_name: 'Freshmark Mbare', receipt_ref: 'RCP-HST-109' },
-            { id: 5, title: 'Science Laboratory Reagents & Chemicals', category: 'teaching_supplies', amount: 380, currency: 'USD', expense_date: '2026-03-08', vendor_name: 'MedTech Scientific', receipt_ref: 'RCP-SCI-551' },
-          ]}
+          data={expenses}
           emptyTitle="No Expenses Logged"
           emptyMessage="Record operating disbursements to audit school expenditures."
         />

@@ -76,9 +76,66 @@ export default function Staff() {
     { deps: [activeSchoolId] }
   );
 
+  const { data: subjectsData } = useApi(
+    `subjects_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/subjects`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
+
   const rawStaff = Array.isArray(staffData) ? staffData : [];
   const classes = Array.isArray(classesData) ? classesData : [];
   const assignments = Array.isArray(assignmentsData) ? assignmentsData : [];
+  const subjects = Array.isArray(subjectsData) ? subjectsData : [];
+
+  // Teaching Assignment State for Staff Drawer
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignForm, setAssignForm] = useState({ class_id: '', subject_id: '' });
+  const [assignSubmitting, setAssignSubmitting] = useState(false);
+
+  const staffAssignments = useMemo(() => {
+    if (!selectedStaff) return [];
+    const sId = selectedStaff.id;
+    const uId = selectedStaff.user_id;
+    return assignments.filter(a =>
+      a.teacher_id === sId ||
+      a.teacher_id === uId ||
+      a.teacher_name === selectedStaff.name
+    );
+  }, [selectedStaff, assignments]);
+
+  const handleCreateAssignment = async (e) => {
+    e.preventDefault();
+    if (!selectedStaff || !assignForm.class_id || !assignForm.subject_id) {
+      toast.error('Please select both a class and a subject.');
+      return;
+    }
+    setAssignSubmitting(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/staff/${selectedStaff.id || selectedStaff.user_id}/teaching-assignments`, {
+        teacher_id: selectedStaff.id || selectedStaff.user_id,
+        class_id: assignForm.class_id,
+        subject_id: assignForm.subject_id
+      });
+      toast.success('Teaching allocation assigned.');
+      setShowAssignModal(false);
+      setAssignForm({ class_id: '', subject_id: '' });
+      invalidate([`teaching_assignments_${activeSchoolId}`]);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to save teaching allocation.');
+    } finally {
+      setAssignSubmitting(false);
+    }
+  };
+
+  const handleRemoveAssignment = async (id) => {
+    try {
+      await api.delete(`/schools/${activeSchoolId}/teaching-assignments/${id}`);
+      toast.success('Allocation removed.');
+      invalidate([`teaching_assignments_${activeSchoolId}`]);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to remove allocation.');
+    }
+  };
 
   // Filtered staff
   const staff = useMemo(() => {
@@ -117,7 +174,7 @@ export default function Staff() {
         employment_type: 'permanent',
         department: 'sciences',
         class_id: '',
-        teaching_load: 24,
+        teaching_load: '',
         username: '',
         password: ''
       });
@@ -493,7 +550,7 @@ export default function Staff() {
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-muted">EC / Civil Service No:</span>
+                  <span className="text-muted">EC/Civil Service No:</span>
                   <span className="font-mono text-ink font-semibold">{selectedStaff.ec_number || 'N/A'}</span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -515,18 +572,65 @@ export default function Staff() {
                   <span className="font-mono text-ink font-semibold">{selectedStaff.phone || 'N/A'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted">EC / Staff Number:</span>
-                  <span className="font-mono text-ink font-semibold">{selectedStaff.ec_number || 'EC-883921'}</span>
+                  <span className="text-muted">EC/Staff Number:</span>
+                  <span className="font-mono text-ink font-semibold">{selectedStaff.ec_number || selectedStaff.employee_number || 'Not Assigned'}</span>
                 </div>
               </div>
             </div>
 
             <div className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-muted">Teaching Allocations</h4>
-              <div className="p-3 rounded-xl bg-canvas border border-line text-xs">
-                <div className="font-bold text-ink">Form 1 & Form 2 Mathematics</div>
-                <div className="text-muted mt-0.5">24 total periods scheduled across 4 streams.</div>
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted">Teaching Allocations</h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAssignForm({ class_id: '', subject_id: '' });
+                    setShowAssignModal(true);
+                  }}
+                  className="text-xs font-bold text-brand-700 hover:text-brand-900 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Assign Subject</span>
+                </button>
               </div>
+
+              {staffAssignments.length === 0 ? (
+                <div className="p-4 rounded-xl bg-canvas border border-line text-xs text-muted flex flex-col items-center justify-center text-center">
+                  <BookOpen className="w-6 h-6 text-muted/40 mb-1" />
+                  <span>No teaching assignments allocated yet.</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignForm({ class_id: '', subject_id: '' });
+                      setShowAssignModal(true);
+                    }}
+                    className="mt-2 text-xs font-bold text-brand-700 hover:underline cursor-pointer"
+                  >
+                    + Allocate Class & Subject
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {staffAssignments.map(asgn => (
+                    <div key={asgn.id} className="p-3 rounded-xl bg-canvas border border-line text-xs flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-ink">{asgn.class_name || 'Class'} — {asgn.subject_name || 'Subject'}</div>
+                        <div className="text-muted text-[11px] mt-0.5">
+                          Code: {asgn.subject_code || '—'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAssignment(asgn.id)}
+                        className="p-1.5 rounded-lg text-danger hover:bg-danger/10 transition cursor-pointer"
+                        title="Remove Assignment"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button
@@ -621,14 +725,25 @@ export default function Staff() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">Role Title</label>
-              <input
-                type="text"
-                placeholder="Senior Mathematics Teacher"
+              <label className="block text-xs font-bold text-ink mb-1">Role Title / Designation *</label>
+              <select
                 value={form.role_title}
                 onChange={e => setForm({ ...form, role_title: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-              />
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                <option value="Senior Teacher">Senior Teacher</option>
+                <option value="Subject Teacher">Subject Teacher</option>
+                <option value="Class Teacher">Class Teacher</option>
+                <option value="Head of Department">Head of Department (HOD)</option>
+                <option value="Deputy Head">Deputy Head</option>
+                <option value="Principal">Principal / Headmaster</option>
+                <option value="Bursar">Cashier</option>
+                <option value="Accountant">Accountant</option>
+                <option value="Boarding Master">Boarding Master</option>
+                <option value="School Nurse">School Nurse</option>
+                <option value="Librarian">Librarian</option>
+                <option value="Administrator">Administrator</option>
+              </select>
             </div>
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Department</label>
@@ -659,7 +774,7 @@ export default function Staff() {
               />
             </div>
             <div>
-              <label className="block text-xs font-bold text-ink mb-1">EC / Civil Service Number</label>
+              <label className="block text-xs font-bold text-ink mb-1">EC/Civil Service Number</label>
               <input
                 type="text"
                 placeholder="EC-993810"
@@ -809,6 +924,63 @@ export default function Staff() {
         title="Import Teachers & Staff Members"
         invalidateKeys={[`staff_${activeSchoolId}`]}
       />
+
+      {/* Assign Teaching Allocation Modal */}
+      <Modal
+        isOpen={showAssignModal}
+        onClose={() => setShowAssignModal(false)}
+        title={`Assign Teaching Allocation: ${selectedStaff?.name || 'Staff'}`}
+        description="Allocate a curriculum subject and class stream to this educator."
+      >
+        <form onSubmit={handleCreateAssignment} className="space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Target Class Stream *</label>
+            <select
+              required
+              value={assignForm.class_id}
+              onChange={e => setAssignForm({ ...assignForm, class_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+            >
+              <option value="">Select Class / Stream...</option>
+              {classes.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-ink mb-1">Curriculum Subject *</label>
+            <select
+              required
+              value={assignForm.subject_id}
+              onChange={e => setAssignForm({ ...assignForm, subject_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+            >
+              <option value="">Select Accredited Subject...</option>
+              {subjects.map(s => (
+                <option key={s.id} value={s.id}>{s.name} {s.code ? `(${s.code})` : ''}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-4 border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowAssignModal(false)}
+              className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={assignSubmitting}
+              className="px-5 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 shadow-xs disabled:opacity-50"
+            >
+              {assignSubmitting ? 'Saving...' : 'Save Teaching Allocation'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -731,8 +731,7 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
       const isSecondary = name.toLowerCase().includes('form') || name.toLowerCase().includes('secondary');
       const level = (r.level || (isSecondary ? 'Secondary' : 'Primary')).trim();
       const gradeLevel = (r.grade_level || r.grade || r.form || name).trim();
-      const stream = (r.stream || r.arm || '').trim() || null;
-      const capacity = parseInt(r.capacity || 45, 10) || 45;
+      const capacity = (r.capacity !== undefined && r.capacity !== '' && !isNaN(parseInt(r.capacity, 10))) ? parseInt(r.capacity, 10) : null;
       const classId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
 
       try {

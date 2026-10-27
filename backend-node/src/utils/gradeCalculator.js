@@ -119,8 +119,23 @@ function determineLevelCategory(className = '', levelValue = null, schoolType = 
 function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7') {
   if (!Array.isArray(rawSubjects)) rawSubjects = [];
 
-  let totalMarkSum = 0;
   const count = rawSubjects.length;
+  if (count === 0) {
+    return {
+      formattedSubjects: [],
+      countedSubjects: [],
+      overallPercentage: 0,
+      totalUnits: 0,
+      totalPoints: 0,
+      totalMarks: 0,
+      passesCount: 0,
+      grade: '—',
+      grade_symbol: '—',
+      passStatus: 'ungraded'
+    };
+  }
+
+  let totalMarkSum = 0;
 
   const formattedSubjects = rawSubjects.map(sub => {
     const avg = parseFloat(sub.subject_avg ?? sub.average ?? sub.mark ?? 0);
@@ -173,7 +188,7 @@ function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7
     }
   });
 
-  const overallPercentage = count > 0 ? parseFloat((totalMarkSum / count).toFixed(1)) : 0;
+  const overallPercentage = parseFloat((totalMarkSum / count).toFixed(1));
 
   if (levelCategory === 'primary_g4_g7' || levelCategory === 'ecd_to_g3' || levelCategory === 'primary') {
     // Sort subjects by units ascending (1 is best, 9 is worst)
@@ -223,16 +238,22 @@ function processStudentSubjects(rawSubjects = [], levelCategory = 'primary_g4_g7
   }
 }
 
-/**
- * Universal Ranking:
- * - Best student in every grade/class/form is ranked Position 1.
- * - Primary G4-G7: Ascending by totalUnits (6 units = Rank 1, 54 = lowest), tie-break higher overallPercentage.
- * - ECD to G3: Descending by totalMarks (highest marks = Rank 1), tie-break higher overallPercentage.
- * - O-Level: Descending by overallPercentage (highest = Rank 1), tie-break passesCount.
- * - A-Level: Descending by totalPoints (highest points = Rank 1), tie-break higher overallPercentage.
- */
+
 function rankStudentResults(studentList = [], levelCategory = 'primary_g4_g7') {
-  const sorted = [...studentList].sort((a, b) => {
+  const graded = [];
+  const ungraded = [];
+
+  studentList.forEach(st => {
+    const hasSubjects = Array.isArray(st.subjects) && st.subjects.length > 0;
+    const hasMarks = (st.total_marks !== undefined && st.total_marks > 0) || (st.overall_percentage !== undefined && st.overall_percentage > 0);
+    if (hasSubjects || hasMarks) {
+      graded.push(st);
+    } else {
+      ungraded.push(st);
+    }
+  });
+
+  const sortedGraded = [...graded].sort((a, b) => {
     if (levelCategory === 'primary_g4_g7' || levelCategory === 'primary' || levelCategory === 'ecd_to_g3') {
       if (a.total_units !== b.total_units && a.total_units !== undefined && b.total_units !== undefined) {
         return a.total_units - b.total_units; // Ascending: 6 units is best!
@@ -252,16 +273,24 @@ function rankStudentResults(studentList = [], levelCategory = 'primary_g4_g7') {
     }
   });
 
-  const total = sorted.length;
-  sorted.forEach((item, idx) => {
+  const totalGraded = sortedGraded.length;
+  sortedGraded.forEach((item, idx) => {
     item.rank = idx + 1;
     item.position = idx + 1;
-    item.class_total = total;
+    item.class_total = totalGraded;
     item.form_rank = idx + 1;
-    item.form_total = total;
+    item.form_total = totalGraded;
   });
 
-  return sorted;
+  ungraded.forEach(item => {
+    item.rank = null;
+    item.position = '—';
+    item.class_total = totalGraded;
+    item.form_rank = null;
+    item.form_total = totalGraded;
+  });
+
+  return [...sortedGraded, ...ungraded];
 }
 
 /**

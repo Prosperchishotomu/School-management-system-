@@ -1,7 +1,3 @@
-/**
- * app.js — Express application factory (no listen call)
- * Imported by both server.js and the Jest test suite.
- */
 const express = require('express');
 const cors = require('cors');
 const requestContext = require('./middleware/requestContext');

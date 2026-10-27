@@ -28,15 +28,17 @@ import {
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import ImportModal from '../components/ImportModal';
+import { isSchoolBoarding } from '../utils/modules';
 
 export default function Students() {
-  const { user, activeSchoolId } = useAuth();
+  const { user, activeSchoolId, activeSchool } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const isAdmin = user?.role === 'school_admin' || user?.role === 'super_admin';
+  const hasBoarding = isSchoolBoarding(activeSchool);
 
   // Strict privacy rule: Parents only have access to their linked children via Parent Portal
   useEffect(() => {
@@ -281,14 +283,16 @@ export default function Students() {
       label: 'Fee Balance',
       sortable: true,
       align: 'right',
-      render: (val) => {
+      render: (val, row) => {
         const bal = parseFloat(val || 0);
+        const billed = parseFloat(row?.fee_due || row?.total_due || row?.total_billed || 0);
+        const isUnbilled = billed === 0 && bal === 0;
         return (
           <div className="flex flex-col items-end">
             <Money amount={bal} />
             <StatusPill
-              status={bal === 0 ? 'paid' : 'partial'}
-              label={bal === 0 ? 'Cleared' : 'Due'}
+              status={isUnbilled ? 'neutral' : (bal === 0 ? 'paid' : 'partial')}
+              label={isUnbilled ? 'Unbilled' : (bal === 0 ? 'Cleared' : 'Due')}
               size="sm"
               className="mt-0.5"
             />
@@ -363,13 +367,23 @@ export default function Students() {
           iconColor="brand"
         />
 
-        <StatCard
-          title="Boarding Population"
-          value={boardersCount}
-          sublabel="Residing in hostels"
-          icon={Building2}
-          iconColor="violet"
-        />
+        {hasBoarding ? (
+          <StatCard
+            title="Boarding Population"
+            value={boardersCount}
+            sublabel="Residing in hostels"
+            icon={Building2}
+            iconColor="violet"
+          />
+        ) : (
+          <StatCard
+            title="Day Scholars"
+            value={totalEnrolled}
+            sublabel="Commuter student body"
+            icon={Building2}
+            iconColor="emerald"
+          />
+        )}
 
         <StatCard
           title="Gender Breakdown"
@@ -381,8 +395,20 @@ export default function Students() {
 
         <StatCard
           title="Fee Status Rate"
-          value={`${Math.round((students.filter(s => parseFloat(s.fee_balance || 0) === 0).length / (totalEnrolled || 1)) * 100)}%`}
-          sublabel="Cleared all term dues"
+          value={
+            (() => {
+              const billedStudents = students.filter(s => parseFloat(s.fee_due || s.total_billed || s.total_due || 0) > 0);
+              if (billedStudents.length === 0) return '0%';
+              const clearedCount = billedStudents.filter(s => parseFloat(s.fee_balance || 0) === 0).length;
+              return `${Math.round((clearedCount / billedStudents.length) * 100)}%`;
+            })()
+          }
+          sublabel={
+            (() => {
+              const billedStudents = students.filter(s => parseFloat(s.fee_due || s.total_billed || s.total_due || 0) > 0);
+              return billedStudents.length === 0 ? '0 billed accounts' : 'Billed term dues cleared';
+            })()
+          }
           icon={ShieldCheck}
           iconColor="accent"
           to="/fees"
@@ -716,35 +742,37 @@ export default function Students() {
                 </select>
               </div>
 
-              <div>
-                <label className="font-semibold text-ink block mb-1">Boarding & Residence Type</label>
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <label className={`p-3 rounded-xl border cursor-pointer transition flex items-center gap-3 ${Number(formData.is_boarding) === 0 ? 'bg-brand-50 border-brand-500 text-brand-900 font-semibold' : 'bg-surface border-line text-muted'}`}>
-                    <input
-                      type="radio"
-                      name="is_boarding"
-                      checked={Number(formData.is_boarding) === 0}
-                      onChange={() => setFormData({ ...formData, is_boarding: 0 })}
-                    />
-                    <div>
-                      <div className="text-xs">Day Scholar</div>
-                      <div className="text-[10px] text-muted font-normal">Commuter student</div>
-                    </div>
-                  </label>
-                  <label className={`p-3 rounded-xl border cursor-pointer transition flex items-center gap-3 ${Number(formData.is_boarding) === 1 ? 'bg-brand-50 border-brand-500 text-brand-900 font-semibold' : 'bg-surface border-line text-muted'}`}>
-                    <input
-                      type="radio"
-                      name="is_boarding"
-                      checked={Number(formData.is_boarding) === 1}
-                      onChange={() => setFormData({ ...formData, is_boarding: 1 })}
-                    />
-                    <div>
-                      <div className="text-xs">Boarder</div>
-                      <div className="text-[10px] text-muted font-normal">Hostel residence allocated</div>
-                    </div>
-                  </label>
+              {hasBoarding ? (
+                <div>
+                  <label className="font-semibold text-ink block mb-1">Boarding & Residence Type</label>
+                  <div className="grid grid-cols-2 gap-3 pt-1">
+                    <label className={`p-3 rounded-xl border cursor-pointer transition flex items-center gap-3 ${Number(formData.is_boarding) === 0 ? 'bg-brand-50 border-brand-500 text-brand-900 font-semibold' : 'bg-surface border-line text-muted'}`}>
+                      <input
+                        type="radio"
+                        name="is_boarding"
+                        checked={Number(formData.is_boarding) === 0}
+                        onChange={() => setFormData({ ...formData, is_boarding: 0 })}
+                      />
+                      <div>
+                        <div className="text-xs">Day Scholar</div>
+                        <div className="text-[10px] text-muted font-normal">Commuter student</div>
+                      </div>
+                    </label>
+                    <label className={`p-3 rounded-xl border cursor-pointer transition flex items-center gap-3 ${Number(formData.is_boarding) === 1 ? 'bg-brand-50 border-brand-500 text-brand-900 font-semibold' : 'bg-surface border-line text-muted'}`}>
+                      <input
+                        type="radio"
+                        name="is_boarding"
+                        checked={Number(formData.is_boarding) === 1}
+                        onChange={() => setFormData({ ...formData, is_boarding: 1 })}
+                      />
+                      <div>
+                        <div className="text-xs">Boarder</div>
+                        <div className="text-[10px] text-muted font-normal">Hostel residence allocated</div>
+                      </div>
+                    </label>
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
               <div>
                 <label className="font-semibold text-ink block mb-1">Previous School Attended</label>

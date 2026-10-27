@@ -23,11 +23,11 @@ export default function Tasks() {
   // Form state
   const [taskForm, setTaskForm] = useState({
     class_id: '',
-    subject: 'Mathematics',
+    subject: '',
     title: '',
     description: '',
     priority: 'medium', // 'low' | 'medium' | 'high'
-    due_date: '2026-03-30',
+    due_date: '',
     status: 'pending' // 'pending' | 'in_progress' | 'completed'
   });
 
@@ -43,18 +43,16 @@ export default function Tasks() {
     { deps: [activeSchoolId] }
   );
 
+  const { data: subjectsData } = useApi(
+    `subjects_${activeSchoolId}`,
+    () => api.get(`/schools/${activeSchoolId}/subjects`).then(r => r.data || []),
+    { deps: [activeSchoolId] }
+  );
+
   const rawTasks = Array.isArray(tasksData) ? tasksData : [];
   const classes = Array.isArray(classesData) ? classesData : [];
-
-  // Fallback demo tasks if backend table is empty
-  const sampleTasks = [
-    { id: 1, title: 'CALA Task 2: Linear Programming Project', subject: 'Mathematics', class_name: 'Form 3 North', due_date: '2026-03-27', priority: 'high', status: 'pending', description: 'Formulate real-world boundary inequalities for poultry feed formulation.' },
-    { id: 2, title: 'Heritage Studies Essay: The Great Zimbabwe Architecture', subject: 'Heritage Studies', class_name: 'Form 2 West', due_date: '2026-03-29', priority: 'medium', status: 'pending', description: '500-word analysis of dry-stone wall construction.' },
-    { id: 3, title: 'Science Lab Report: Titration of Hydrochloric Acid', subject: 'Physical Science', class_name: 'Form 4 East', due_date: '2026-03-24', priority: 'high', status: 'in_progress', description: 'Submit experimental write-up and indicator observation table.' },
-    { id: 4, title: 'English Literature Character Analysis: Animal Farm', subject: 'English Language', class_name: 'Form 1 South', due_date: '2026-03-20', priority: 'low', status: 'completed', description: 'Comprehension exercise pages 45 to 48.' },
-  ];
-
-  const tasks = rawTasks.length > 0 ? rawTasks : sampleTasks;
+  const subjects = Array.isArray(subjectsData) ? subjectsData : [];
+  const tasks = rawTasks;
 
   // KPIs
   const totalTasks = tasks.length;
@@ -336,13 +334,16 @@ export default function Tasks() {
 
             <div>
               <label className="block text-xs font-bold text-ink mb-1">Subject</label>
-              <input
-                type="text"
-                placeholder="Mathematics, Heritage, etc."
+              <select
                 value={taskForm.subject}
                 onChange={e => setTaskForm({ ...taskForm, subject: e.target.value })}
-                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500"
-              />
+                className="w-full px-3 py-2 rounded-xl border border-line bg-surface text-ink text-xs focus:ring-2 focus:ring-brand-500 font-medium"
+              >
+                <option value="">General / All Subjects</option>
+                {subjects.map(s => (
+                  <option key={s.id} value={s.name}>{s.name} {s.code ? `(${s.code})` : ''}</option>
+                ))}
+              </select>
             </div>
           </div>
 

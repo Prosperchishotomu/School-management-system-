@@ -7,26 +7,31 @@ import {
   StatCard,
   KpiStrip,
   Card,
-  ProgressRing,
   StatusPill,
   EmptyState
 } from '../../components/ui';
 import {
-  BookOpen, CalendarCheck, Clock, Award, FileText,
-  Calendar, CheckCircle, ArrowRight
+  BookOpen, CalendarCheck, Clock, Award,
+  CheckCircle, ArrowRight
 } from 'lucide-react';
 
 export default function StudentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const schoolId = user?.school_id || '';
 
-  const subjects = [
-    { name: 'Mathematics', teacher: 'Mr. Chikomo', grade: 'A', score: 82 },
-    { name: 'Physics', teacher: 'Mrs. Dube', grade: 'B', score: 74 },
-    { name: 'Chemistry', teacher: 'Dr. Moyo', grade: 'A', score: 80 },
-    { name: 'English Language', teacher: 'Ms. Sibanda', grade: 'A', score: 86 },
-    { name: 'Computer Science', teacher: 'Mr. Mutasa', grade: 'A*', score: 91 }
-  ];
+  const { data: summaryData } = useApi(
+    `student_dashboard_${schoolId}_${user?.id}`,
+    () => api.get(`/schools/${schoolId}/dashboard/summary?role=student`)
+  );
+
+  const { data: resultsData } = useApi(
+    `student_results_${schoolId}_${user?.id}`,
+    () => api.get(`/schools/${schoolId}/results`)
+  );
+
+  const studentData = summaryData?.data?.role_specific || {};
+  const subjects = resultsData?.data?.results?.[0]?.subjects || resultsData?.results?.[0]?.subjects || [];
 
   return (
     <div className="space-y-6">
@@ -39,16 +44,16 @@ export default function StudentDashboard() {
           Hello, {user?.name || user?.username || 'Student'}
         </h1>
         <p className="text-xs md:text-sm text-muted mt-1 max-w-xl">
-          Welcome to your learning portal. 3 assignments are active and mid-term results are published.
+          Welcome to your student learning portal. Review your enrolled subjects, continuous assessment marks, and attendance.
         </p>
       </div>
 
       {/* KPI Strip */}
       <KpiStrip>
         <StatCard
-          title="Attendance"
-          value="95%"
-          sublabel="41 of 43 days present"
+          title="Attendance Rate"
+          value={`${studentData.attendance_pct ?? 0}%`}
+          sublabel="Current term attendance"
           icon={CalendarCheck}
           iconColor="brand"
           to="/attendance"
@@ -56,8 +61,8 @@ export default function StudentDashboard() {
 
         <StatCard
           title="Overall Average"
-          value="82.6%"
-          sublabel="Top 5% in Form 3"
+          value={`${studentData.term_average ?? 0}%`}
+          sublabel="Terminal performance average"
           icon={Award}
           iconColor="brand"
           to="/results"
@@ -65,8 +70,8 @@ export default function StudentDashboard() {
 
         <StatCard
           title="Active Subjects"
-          value="5 Syllabi"
-          sublabel="Full ZIMSEC science cohort"
+          value={`${studentData.subjects_count ?? subjects.length} Syllabi`}
+          sublabel="Enrolled subject courses"
           icon={BookOpen}
           iconColor="info"
           to="/classes"
@@ -74,8 +79,8 @@ export default function StudentDashboard() {
 
         <StatCard
           title="Pending Tasks"
-          value="2 Projects"
-          sublabel="CALA coursework components"
+          value={`${studentData.upcoming_tasks ?? 0} Tasks`}
+          sublabel="Coursework components"
           icon={Clock}
           iconColor="accent"
           to="/tasks"
@@ -96,25 +101,31 @@ export default function StudentDashboard() {
             </button>
           }
         >
-          <div className="divide-y divide-line/60">
-            {subjects.map(s => (
-              <div 
-                key={s.name} 
-                onClick={() => navigate('/results')}
-                className="py-2.5 flex items-center justify-between cursor-pointer hover:bg-canvas/50 px-2 rounded-lg transition-colors"
-                title="Click to drill down to Results & Gradebook"
-              >
-                <div>
-                  <div className="font-semibold text-xs text-ink">{s.name}</div>
-                  <div className="text-[11px] text-muted">{s.teacher} • Drill down →</div>
+          {subjects.length === 0 ? (
+            <div className="p-8 text-center text-xs text-muted">
+              No continuous assessment marks recorded yet for this term.
+            </div>
+          ) : (
+            <div className="divide-y divide-line/60">
+              {subjects.map(s => (
+                <div 
+                  key={s.subject_id || s.subject_name} 
+                  onClick={() => navigate('/results')}
+                  className="py-2.5 flex items-center justify-between cursor-pointer hover:bg-canvas/50 px-2 rounded-lg transition-colors"
+                  title="Click to drill down to Results & Gradebook"
+                >
+                  <div>
+                    <div className="font-semibold text-xs text-ink">{s.subject_name}</div>
+                    <div className="text-[11px] text-muted">Syllabus component • View details →</div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono font-bold text-xs text-ink tabular-nums">{s.average || 0}%</span>
+                    <StatusPill status={s.is_pass ? "present" : "neutral"} label={s.grade_symbol || s.grade || '—'} />
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono font-bold text-xs text-ink tabular-nums">{s.score}%</span>
-                  <StatusPill status="present" label={s.grade} />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         <Card
@@ -129,26 +140,8 @@ export default function StudentDashboard() {
             </button>
           }
         >
-          <div className="space-y-2.5">
-            {[
-              { period: '1', time: '08:00 - 08:45', name: 'Mathematics', room: 'Lab 2' },
-              { period: '2', time: '08:50 - 09:35', name: 'Computer Science', room: 'IT Lab A' },
-              { period: '3', time: '09:40 - 10:25', name: 'Physics', room: 'Science Block' },
-              { period: '4', time: '10:45 - 11:30', name: 'Chemistry', room: 'Lab 1' }
-            ].map(t => (
-              <div 
-                key={t.period} 
-                onClick={() => navigate('/timetable')}
-                className="p-3 rounded-xl bg-canvas border border-line flex items-center justify-between text-xs cursor-pointer hover:border-brand-500/50 hover:shadow-sm transition-all hover:-translate-y-0.5"
-                title="Click to drill down to Full Timetable"
-              >
-                <div>
-                  <span className="font-bold text-ink">{t.name}</span>
-                  <div className="text-[11px] text-muted">{t.room} • Period {t.period} • Drill down →</div>
-                </div>
-                <span className="font-mono text-[11px] text-muted">{t.time}</span>
-              </div>
-            ))}
+          <div className="p-8 text-center text-xs text-muted">
+            No class timetable sessions active for today.
           </div>
         </Card>
       </div>

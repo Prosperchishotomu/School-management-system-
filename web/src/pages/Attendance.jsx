@@ -27,7 +27,7 @@ export default function Attendance() {
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const schoolId = activeSchoolId || user?.school_id || 'HARAREPR';
+  const schoolId = activeSchoolId || user?.school_id || '';
   const today = new Date().toISOString().slice(0, 10);
 
   const activeTab = searchParams.get('tab') || 'register';
@@ -115,7 +115,7 @@ export default function Attendance() {
   const excusedCount = Object.values(records).filter(r => r === 'excused').length;
   const markedCount = presentCount + absentCount + lateCount + excusedCount;
   const unmarkedCount = Math.max(0, totalStudents - markedCount);
-  const presentPct = totalStudents > 0 ? Math.round((presentCount / totalStudents) * 100) : 0;
+  const presentPct = totalStudents > 0 ? Math.round(((presentCount + lateCount) / totalStudents) * 100) : 0;
 
   // Toggle single student status
   const setStatus = (studentId, status) => {
@@ -547,7 +547,9 @@ export default function Attendance() {
                 </div>
                 <div className="flex justify-between border-b border-line pb-2">
                   <span className="text-muted">Capacity Status:</span>
-                  <span className="font-mono font-bold text-ink">{students.length} / {currentClassObj?.capacity || 40} Learners</span>
+                  <span className="font-mono font-bold text-ink">
+                    {students.length} {currentClassObj?.capacity ? `/ ${currentClassObj.capacity} Learners` : 'Enrolled Learners'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted">Register Sign-off:</span>

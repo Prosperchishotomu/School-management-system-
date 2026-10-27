@@ -244,15 +244,7 @@ export default function Discipline() {
               render: v => <span className="font-mono text-xs text-muted">{v ? new Date(v).toLocaleDateString() : 'N/A'}</span>
             }
           ]}
-          data={(activeTab === 'repeat_offenders' ? repeatOffenders : rawIncidents).length > 0
-            ? (activeTab === 'repeat_offenders' ? repeatOffenders : rawIncidents)
-            : [
-              { id: 1, student_first_name: 'Farai', student_last_name: 'Sibanda', class_name: 'Form 3 North', incident_type: 'Uniform Non-Compliance', severity: 'minor', description: 'Wearing unauthorized sports shoes with formal blazer.', action_taken: 'Parent letter issued', incident_date: '2026-03-21', student_id: 101 },
-              { id: 2, student_first_name: 'Farai', student_last_name: 'Sibanda', class_name: 'Form 3 North', incident_type: 'Hostel Curfew Breach', severity: 'moderate', description: 'Late return from exeat weekend by 3 hours.', action_taken: 'Grounded for 1 weekend', incident_date: '2026-03-14', student_id: 101 },
-              { id: 3, student_first_name: 'Tendai', student_last_name: 'Moyo', class_name: 'Form 2 West', incident_type: 'Classroom Disruption', severity: 'minor', description: 'Repeated phone use in science laboratory.', action_taken: 'Phone confiscated till term end', incident_date: '2026-03-18', student_id: 102 },
-              { id: 4, student_first_name: 'Blessing', student_last_name: 'Musarurwa', class_name: 'Form 1 South', incident_type: 'Smoking / Substance Contraband', severity: 'serious', description: 'Caught in possession of tobacco products behind dining hall.', action_taken: 'Referred to Headmaster & disciplinary hearing', incident_date: '2026-03-10', student_id: 103 },
-            ]
-          }
+          data={activeTab === 'repeat_offenders' ? repeatOffenders : rawIncidents}
           emptyTitle="No Disciplinary Records Found"
           emptyMessage="No infractions logged for this period."
         />

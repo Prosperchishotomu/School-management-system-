@@ -185,7 +185,7 @@ router.get('/schools/:schoolId/students/:id/ledger', authenticateToken, async (r
     });
 
     const netBalance = parseFloat((totalBilled - totalPaid).toFixed(2));
-    const ledgerStatus = netBalance <= 0 ? 'cleared' : (totalPaid > 0 ? 'partial' : 'unpaid');
+    const ledgerStatus = totalBilled === 0 ? 'no_invoices' : (netBalance <= 0 ? 'cleared' : (totalPaid > 0 ? 'partial' : 'unpaid'));
 
     return res.json({
       data: {

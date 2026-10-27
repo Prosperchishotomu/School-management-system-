@@ -8,13 +8,17 @@ import {
   FileLock, Globe, Settings, ChevronRight, TrendingUp, Users,
   BookOpen, CheckCircle, ShieldAlert, Trash2, Edit3, Save,
   Loader2, Activity, Bell, LayoutDashboard, Calendar, Grid3X3,
-  Clock, Mail, MessageSquare, Send, Info, CreditCard, Eye, EyeOff
+  Clock, Mail, MessageSquare, Send, Info, CreditCard, Eye, EyeOff,
+  Sliders
 } from 'lucide-react';
 import { MiniBarChart } from '../components/charts/MiniBarChart';
 import { MiniDonutChart } from '../components/charts/MiniDonutChart';
 import { MiniLineChart } from '../components/charts/MiniLineChart';
 import StatCard from '../components/ui/StatCard';
 import KpiStrip from '../components/ui/KpiStrip';
+import { STANDARD_SUBJECTS, STANDARD_GRADE_LEVELS } from '../data/standardSubjects';
+import SchoolCreationWizard from '../components/schools/SchoolCreationWizard';
+import SchoolModuleConfigModal from '../components/schools/SchoolModuleConfigModal';
 
 const TABS = [
   { id: 'overview',    label: 'Platform Overview',   icon: LayoutDashboard },
@@ -388,9 +392,11 @@ const ColorCodedAlert = ({ type = 'info', text, onClose }) => {
 
 // ─── Tab: School Management ───────────────────────────────────────────────────
 const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
-  const { activeSchoolId, changeActiveSchool, user } = useAuth();
+  const { activeSchoolId, changeActiveSchool, user, refreshSchools } = useAuth();
+  const toast = useToast();
   const displaySchools = activeSchoolId ? schools.filter(s => s.id === activeSchoolId) : schools;
   const [showCreate, setShowCreate] = useState(false);
+  const [configSchool, setConfigSchool] = useState(null);
   const [form, setForm]   = useState({ 
     name: '', 
     code: '', 
@@ -404,6 +410,19 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr]     = useState('');
+
+  const handleWizardSchoolCreated = async (payload) => {
+    try {
+      await api.post('/schools', payload);
+      toast.success(`School '${payload.name}' provisioned successfully.`);
+      setShowCreate(false);
+      onRefresh();
+      if (refreshSchools) refreshSchools();
+    } catch (err) {
+      toast.error(err.message || 'Failed to create school.');
+      throw err;
+    }
+  };
 
   // School edit states
   const [showEdit, setShowEdit]   = useState(false);
@@ -999,13 +1018,23 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
             <p className="text-[10px] text-ink/50 font-mono">School Code: <span className="font-bold">{selectedManageSchool.code}</span> | Plan: <span className="font-bold">{activeLic?.plan || '-'}</span></p>
           </div>
           
-          <button
-            onClick={() => { changeActiveSchool(selectedManageSchool.id); window.location.href = '/school-admin/dashboard'; }}
-            className="flex items-center space-x-1.5 px-4 py-2.5 bg-teal-primary text-paper hover:bg-teal-dark text-xs font-semibold rounded-xl shadow-md transition-all cursor-pointer"
-          >
-            <span>Drill-In to School Admin Portal</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setConfigSchool(selectedManageSchool)}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-paper border border-line-border hover:bg-sage/10 text-ink text-xs font-semibold rounded-xl transition-all cursor-pointer shadow-xs"
+              title="Configure Pages, Modules & Operational Architecture"
+            >
+              <Sliders className="w-3.5 h-3.5 text-teal-primary" />
+              <span>Pages & Setup</span>
+            </button>
+            <button
+              onClick={() => { changeActiveSchool(selectedManageSchool.id); window.location.href = '/school-admin/dashboard'; }}
+              className="flex items-center space-x-1.5 px-4 py-2.5 bg-teal-primary text-paper hover:bg-teal-dark text-xs font-semibold rounded-xl shadow-md transition-all cursor-pointer"
+            >
+              <span>Drill-In to School Admin Portal</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {subError && <ColorCodedAlert type="error" text={subError} onClose={() => setSubError('')} />}
@@ -1701,7 +1730,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[11px] font-bold text-ink/70 mb-1">Email Address</label>
-                    <input type="email" placeholder="grace@harareprimary.ac.zw" className="w-full glass-input rounded-xl text-xs" value={staffForm.email} onChange={e => setStaffForm({...staffForm, email: e.target.value})} />
+                    <input type="email" placeholder="teacher@school.ac.zw" className="w-full glass-input rounded-xl text-xs" value={staffForm.email} onChange={e => setStaffForm({...staffForm, email: e.target.value})} />
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-ink/70 mb-1">Phone Number</label>
@@ -1709,8 +1738,25 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-ink/70 mb-1">Academic Role Title *</label>
-                  <input required type="text" placeholder="e.g. Teacher, Grade 3 Assistant" className="w-full glass-input rounded-xl text-xs font-bold text-teal-dark" value={staffForm.role_title} onChange={e => setStaffForm({...staffForm, role_title: e.target.value})} />
+                  <label className="block text-[11px] font-bold text-ink/70 mb-1">Academic Designation *</label>
+                  <select
+                    required
+                    className="w-full glass-input rounded-xl text-xs font-bold text-teal-dark p-2.5"
+                    value={staffForm.role_title}
+                    onChange={e => setStaffForm({...staffForm, role_title: e.target.value})}
+                  >
+                    <option value="Teacher">Teacher</option>
+                    <option value="Senior Teacher">Senior Teacher</option>
+                    <option value="Head of Department">Head of Department (HOD)</option>
+                    <option value="Deputy Head">Deputy Head</option>
+                    <option value="Principal">Principal / Headmaster</option>
+                    <option value="Bursar">Cashier</option>
+                    <option value="Accountant">Accountant</option>
+                    <option value="Boarding Master">Boarding Master</option>
+                    <option value="School Nurse">School Nurse</option>
+                    <option value="Librarian">Librarian</option>
+                    <option value="Administrator">Administrator</option>
+                  </select>
                 </div>
 
                 {/* Optional system login */}
@@ -1871,12 +1917,20 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                     </span>
                   </td>
                   <td className="px-5 py-3.5 text-right">
-                    <div className="inline-flex items-center space-x-2">
+                    <div className="inline-flex items-center space-x-1.5">
+                      <button
+                        onClick={() => setConfigSchool(s)}
+                        className="px-2.5 py-1.5 bg-teal-primary/10 hover:bg-teal-primary text-teal-primary hover:text-paper text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center space-x-1 border border-teal-primary/20"
+                        title="Configure Enabled Pages & Boarding Model"
+                      >
+                        <Sliders className="w-3 h-3" />
+                        <span>Pages & Setup</span>
+                      </button>
                       <button
                         onClick={() => setSelectedManageSchool(s)}
-                        className="px-2.5 py-1.5 bg-teal-primary/10 hover:bg-teal-primary text-teal-primary hover:text-paper text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center space-x-1 border border-teal-primary/20"
+                        className="px-2.5 py-1.5 bg-paper hover:bg-sage/10 text-ink border border-line-border/30 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center space-x-1"
                       >
-                        <span>Configure Portal</span><Settings className="w-3 h-3" />
+                        <span>Portal</span><Settings className="w-3 h-3" />
                       </button>
                       <button
                         onClick={() => { changeActiveSchool(s.id); window.location.href = '/school-admin/dashboard'; }}
@@ -1913,76 +1967,23 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
       </div>
 
 
-      {/* Create School Modal */}
-      {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/55 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-paper rounded-2xl shadow-2xl border border-line-border/30 p-6">
-            <div className="flex justify-between items-center mb-5">
-              <h3 className="text-xl font-display font-bold text-ink">Add New School</h3>
-              <button onClick={() => setShowCreate(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
-            </div>
-            {err && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 border border-brick-critical/20 text-brick-critical text-xs">{err}</div>}
-            <form onSubmit={handleCreate} className="space-y-4 text-sm font-sans">
-              <div>
-                <label className="block text-xs font-semibold text-ink/70 mb-1">School Name</label>
-                <input required className="w-full glass-input rounded-xl text-sm" placeholder="e.g. Bulawayo Primary School" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-              </div>
-              <div className="grid grid-cols-4 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Tenant Code *</label>
-                  <input required className="w-full glass-input rounded-xl text-sm font-mono uppercase" placeholder="e.g. BYO-PREP-01" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">School Type *</label>
-                  <select required className="w-full glass-input rounded-xl text-xs bg-paper font-semibold" value={form.school_type} onChange={e => setForm({...form, school_type: e.target.value})}>
-                    <option value="primary">Primary School (ECD - Grade 7)</option>
-                    <option value="secondary">Secondary School (Form 1 - 4 / O-Level)</option>
-                    <option value="high_school">High School (Ordinary & Advanced Level)</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Head Title *</label>
-                  <select required className="w-full glass-input rounded-xl text-xs bg-paper font-semibold" value={form.head_title} onChange={e => setForm({...form, head_title: e.target.value})}>
-                    <option value="Headmaster">Headmaster</option>
-                    <option value="Principal">Principal</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Fees Benchmark ($)</label>
-                  <input required type="number" min="0" step="0.01" className="w-full glass-input rounded-xl text-sm numeric-data" placeholder="Enter benchmark" value={form.tuition_fee_benchmark} onChange={e => setForm({...form, tuition_fee_benchmark: e.target.value})} />
-                </div>
-              </div>
+      {/* Multi-Step School Creation Wizard */}
+      <SchoolCreationWizard
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSchoolCreated={handleWizardSchoolCreated}
+      />
 
-              {/* Default Administrator Login details */}
-              <div className="border-t border-line-border/30 pt-4 space-y-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-teal-dark">Default Administrator Login</h4>
-                <div>
-                  <label className="block text-xs font-semibold text-ink/70 mb-1">Admin Username *</label>
-                  <input required className="w-full glass-input rounded-xl text-sm font-mono" placeholder="e.g. bulawayoadmin" value={form.admin_username} onChange={e => setForm({...form, admin_username: e.target.value.toLowerCase()})} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-ink/70 mb-1">Admin Email *</label>
-                    <input required type="email" className="w-full glass-input rounded-xl text-sm" placeholder="e.g. admin@school.ac.zw" value={form.admin_email} onChange={e => setForm({...form, admin_email: e.target.value})} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-ink/70 mb-1">Admin Password *</label>
-                    <input required type="password" placeholder="••••••••" className="w-full glass-input rounded-xl text-sm" value={form.admin_password} onChange={e => setForm({...form, admin_password: e.target.value})} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end space-x-2 pt-2">
-                <button type="button" onClick={() => setShowCreate(false)} className="px-4 py-2 border border-line-border rounded-xl text-sm text-ink/70 hover:bg-sage/10 cursor-pointer font-semibold">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-sm font-semibold cursor-pointer flex items-center space-x-2">
-                  {saving && <Loader2 className="w-3.5 h-3.5 animate-spin"/>}
-                  <span>{saving ? 'Creating...' : 'Create School'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Existing School Pages & Module Configuration Modal */}
+      <SchoolModuleConfigModal
+        school={configSchool}
+        isOpen={Boolean(configSchool)}
+        onClose={() => setConfigSchool(null)}
+        onUpdated={() => {
+          onRefresh();
+          if (refreshSchools) refreshSchools();
+        }}
+      />
 
       {/* Edit School Modal */}
       {showEdit && (
@@ -2417,14 +2418,39 @@ const ConfigTab = ({ schools = [] }) => {
         {/* Add subject form */}
         {err && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 text-brick-critical text-xs border border-brick-critical/20">{err}</div>}
         <form onSubmit={handleAdd} className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
-          <input required placeholder="Subject Name" className="glass-input rounded-xl text-sm" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-          <input required placeholder="Code (e.g. ENG)" className="glass-input rounded-xl text-sm font-mono uppercase" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} />
+          <select
+            required
+            className="glass-input rounded-xl text-sm bg-paper text-ink font-sans cursor-pointer"
+            value={form.name}
+            onChange={e => {
+              const selected = STANDARD_SUBJECTS.find(s => s.name === e.target.value);
+              if (selected) {
+                const mappedLevel = selected.level === 'primary' ? 'primary' : selected.level === 'all' ? 'all' : 'secondary';
+                setForm({ ...form, name: selected.name, level: mappedLevel });
+              } else {
+                setForm({ ...form, name: e.target.value });
+              }
+            }}
+          >
+            <option value="">-- Choose Accredited Subject --</option>
+            {STANDARD_SUBJECTS.map((sub, idx) => (
+              <option key={idx} value={sub.name}>
+                {sub.name} — {sub.department}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="Code (Optional)"
+            className="glass-input rounded-xl text-sm font-mono uppercase"
+            value={form.code}
+            onChange={e => setForm({...form, code: e.target.value.toUpperCase()})}
+          />
           <select className="glass-input rounded-xl text-sm" value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
             <option value="primary">Primary</option>
             <option value="secondary">Secondary</option>
             <option value="all">All Levels</option>
           </select>
-          <button type="submit" disabled={saving} className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-sm font-semibold cursor-pointer flex items-center justify-center space-x-2">
+          <button type="submit" disabled={saving || !form.name} className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-sm font-semibold cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50">
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin"/> : <Plus className="w-3.5 h-3.5"/>}
             <span>Add Subject</span>
           </button>
@@ -2584,18 +2610,55 @@ const ConfigTab = ({ schools = [] }) => {
                   {classErr && <div className="p-2.5 bg-brick-critical/10 text-brick-critical text-[11px] rounded-lg border border-brick-critical/20">{classErr}</div>}
                   
                   <div>
-                    <label className="block text-[11px] font-semibold text-ink/65 mb-0.5">Class Name *</label>
-                    <input required placeholder="e.g. Grade 4 Yellow" className="w-full glass-input rounded-lg text-xs" value={classForm.name} onChange={e => setClassForm({...classForm, name: e.target.value})} />
+                    <label className="block text-[11px] font-semibold text-ink/65 mb-0.5">Grade Level *</label>
+                    <select
+                      required
+                      className="w-full glass-input rounded-lg text-xs bg-paper text-ink cursor-pointer"
+                      value={classForm.grade_level}
+                      onChange={e => {
+                        const gl = e.target.value;
+                        const stream = classForm.stream || '';
+                        setClassForm({
+                          ...classForm,
+                          grade_level: gl,
+                          name: gl && stream ? `${gl} ${stream}` : gl || classForm.name
+                        });
+                      }}
+                    >
+                      <option value="">-- Choose Grade / Form Level --</option>
+                      {STANDARD_GRADE_LEVELS.map(g => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[11px] font-semibold text-ink/65 mb-0.5">Grade Level *</label>
-                      <input required placeholder="e.g. Grade 4" className="w-full glass-input rounded-lg text-xs" value={classForm.grade_level} onChange={e => setClassForm({...classForm, grade_level: e.target.value})} />
+                      <label className="block text-[11px] font-semibold text-ink/65 mb-0.5">Stream <span className="text-[10px] text-ink/40 font-normal">(Optional)</span></label>
+                      <input
+                        placeholder="e.g. A, Blue, or leave blank"
+                        className="w-full glass-input rounded-lg text-xs"
+                        value={classForm.stream}
+                        onChange={e => {
+                          const st = e.target.value;
+                          const gl = classForm.grade_level || '';
+                          setClassForm({
+                            ...classForm,
+                            stream: st,
+                            name: gl && st ? `${gl} ${st}` : gl || classForm.name
+                          });
+                        }}
+                      />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-semibold text-ink/65 mb-0.5">Stream</label>
-                      <input placeholder="e.g. Yellow" className="w-full glass-input rounded-lg text-xs" value={classForm.stream} onChange={e => setClassForm({...classForm, stream: e.target.value})} />
+                      <label className="block text-[11px] font-semibold text-ink/65 mb-0.5">Class Name *</label>
+                      <input
+                        required
+                        placeholder="e.g. Form 1 or Grade 4"
+                        className="w-full glass-input rounded-lg text-xs"
+                        value={classForm.name}
+                        onChange={e => setClassForm({...classForm, name: e.target.value})}
+                      />
                     </div>
                   </div>
 
