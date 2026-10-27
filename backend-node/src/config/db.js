@@ -56,6 +56,8 @@ async function ensureTables() {
   try {
     // 1. Collations & Column expansions (fix ER_CANT_AGGREGATE_2COLLATIONS & ER_DUP_ENTRY from truncation)
     try { await query(`ALTER TABLE \`notifications\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`); } catch(e) {}
+    try { await query(`ALTER TABLE \`subjects\` DROP INDEX \`name\``); } catch(e) {}
+    try { await query(`ALTER TABLE \`subjects\` DROP INDEX \`code\``); } catch(e) {}
     try { await query(`ALTER TABLE \`subjects\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`classes\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`timetable\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}

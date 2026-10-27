@@ -124,17 +124,27 @@ export function useApi(key, fetcher, options = {}) {
   const queryString = params ? JSON.stringify(params) : '';
   const fullKey = key ? (queryString ? `${key}:${queryString}` : key) : null;
 
+  const isKeyIncomplete = Boolean(
+    key && (
+      key.endsWith('_') ||
+      key.includes('__') ||
+      key.includes('_undefined') ||
+      key.includes('_null')
+    )
+  );
+  const isCurrentlyEnabled = Boolean(enabled && !isKeyIncomplete && fullKey);
+
   const cached = fullKey ? cache.get(fullKey) : null;
   const isFresh = cached && (Date.now() - cached.timestamp < ttl);
 
   const [data, setData] = useState(cached ? cached.data : null);
-  const [loading, setLoading] = useState(Boolean(!isFresh && enabled && fullKey));
+  const [loading, setLoading] = useState(Boolean(!isFresh && isCurrentlyEnabled));
   const [error, setError] = useState(null);
 
   const abortControllerRef = useRef(null);
 
   const executeFetch = useCallback(async (isBackground = false) => {
-    if (!fullKey || !enabled) return;
+    if (!fullKey || !isCurrentlyEnabled) return;
 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -173,7 +183,7 @@ export function useApi(key, fetcher, options = {}) {
 
   // Initial fetch and dependency trigger
   useEffect(() => {
-    if (!fullKey || !enabled) return;
+    if (!fullKey || !isCurrentlyEnabled) return;
 
     const currentCached = cache.get(fullKey);
     const fresh = currentCached && (Date.now() - currentCached.timestamp < ttl);

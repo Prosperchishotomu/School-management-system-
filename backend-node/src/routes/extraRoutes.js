@@ -2126,7 +2126,7 @@ async function seedDefaultGradeThresholds(schoolId, schoolType) {
   }
 }
 
-async function provisionSchoolDefaults(schoolId, schoolType, headTitle, adminUsername, adminEmail, adminPassword, superAdminUserId) {
+async function provisionSchoolDefaults(schoolId, schoolType, headTitle, adminUsername, adminEmail, adminPassword, superAdminUserId, customClasses, customSubjects) {
   try {
     // 1. Seed default grading system matching school type
     await seedDefaultGradeThresholds(schoolId, schoolType);

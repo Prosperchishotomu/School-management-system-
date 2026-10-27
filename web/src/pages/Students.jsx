@@ -62,6 +62,9 @@ export default function Students() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardSaving, setWizardSaving] = useState(false);
+  const [isCustomClass, setIsCustomClass] = useState(false);
+  const [newClassName, setNewClassName] = useState('');
+  const [newClassLevel, setNewClassLevel] = useState('');
   const [formData, setFormData] = useState({
     admission_number: '',
     first_name: '',
@@ -81,14 +84,16 @@ export default function Students() {
 
   // 1. Fetch Students
   const { data: studentsData, loading: studentsLoading, refetch } = useApi(
-    `students_list_${schoolId}`,
-    () => api.get(`/schools/${schoolId}/students?per_page=1000`)
+    schoolId ? `students_list_${schoolId}` : null,
+    () => api.get(`/schools/${schoolId}/students?per_page=1000`),
+    { enabled: Boolean(schoolId) }
   );
 
   // 2. Fetch Classes
-  const { data: classesData } = useApi(
-    `classes_${schoolId}`,
-    () => api.get(`/schools/${schoolId}/classes`)
+  const { data: classesData, refetch: refetchClasses } = useApi(
+    schoolId ? `classes_${schoolId}` : null,
+    () => api.get(`/schools/${schoolId}/classes`),
+    { enabled: Boolean(schoolId) }
   );
   const classes = classesData || [];
 
@@ -173,6 +178,10 @@ export default function Students() {
   ];
 
   const handleOpenWizard = () => {
+    const hasExistingClasses = Array.isArray(classes) && classes.length > 0;
+    setIsCustomClass(!hasExistingClasses);
+    setNewClassName('');
+    setNewClassLevel('');
     setFormData({
       admission_number: `ADM-2026-${Math.floor(1000 + Math.random() * 9000)}`,
       first_name: '',
@@ -183,7 +192,7 @@ export default function Students() {
       national_id: '',
       nationality: 'Zimbabwean',
       home_address: '',
-      class_id: classes[0]?.id || '',
+      class_id: hasExistingClasses ? (classes[0]?.id || '') : '',
       is_boarding: 0,
       previous_school: '',
       medical_notes: '',
@@ -200,14 +209,72 @@ export default function Students() {
     setWizardOpen(true);
   };
 
+  const handleNextStep = () => {
+    if (wizardStep === 0) {
+      if (!formData.first_name.trim()) {
+        toast.warning('Please enter the student\'s first name.');
+        return;
+      }
+      if (!formData.last_name.trim()) {
+        toast.warning('Please enter the student\'s last name / surname.');
+        return;
+      }
+    }
+    if (wizardStep === 1) {
+      const hasClass = (isCustomClass || classes.length === 0)
+        ? Boolean(newClassName.trim())
+        : Boolean(formData.class_id);
+      if (!hasClass) {
+        toast.warning('Please select an existing class stream or type a new class name.');
+        return;
+      }
+    }
+    if (wizardStep === 3) {
+      if (!formData.guardian_name.trim()) {
+        toast.warning('Please enter the primary guardian\'s name.');
+        return;
+      }
+      if (!formData.guardian_phone.trim()) {
+        toast.warning('Please enter a contact phone number for the guardian.');
+        return;
+      }
+    }
+    setWizardStep(s => Math.min(4, s + 1));
+  };
+
   const handleSaveWizard = async () => {
     setWizardSaving(true);
     try {
-      await api.post(`/schools/${schoolId}/students`, formData);
+      let finalClassId = formData.class_id;
+
+      // If user typed a custom class name or no classes existed yet
+      if ((isCustomClass || classes.length === 0 || !finalClassId) && newClassName.trim()) {
+        const createRes = await api.post(`/schools/${schoolId}/classes`, {
+          name: newClassName.trim(),
+          grade_level: newClassLevel.trim() || newClassName.trim(),
+          level: newClassName.toLowerCase().includes('form') ? 'Secondary' : 'Primary'
+        });
+        const createdCls = createRes?.data || createRes;
+        finalClassId = createdCls.id;
+        if (refetchClasses) refetchClasses();
+      }
+
+      if (!finalClassId) {
+        toast.error('A class assignment is required. Please select or type a class.');
+        setWizardStep(1);
+        setWizardSaving(false);
+        return;
+      }
+
+      await api.post(`/schools/${schoolId}/students`, {
+        ...formData,
+        class_id: finalClassId
+      });
       toast.success('Student successfully enrolled.');
       setWizardOpen(false);
-      invalidate([`students_list_${schoolId}`, `summary_${schoolId}`, `enrolment_${schoolId}`]);
+      invalidate([`students_list_${schoolId}`, `classes_${schoolId}`, `summary_${schoolId}`, `enrolment_${schoolId}`]);
       refetch();
+      if (refetchClasses) refetchClasses();
     } catch (err) {
       toast.error(err?.message || 'Failed to enroll student.');
     } finally {
@@ -595,7 +662,7 @@ export default function Students() {
             {wizardStep < 4 ? (
               <button
                 type="button"
-                onClick={() => setWizardStep(s => Math.min(4, s + 1))}
+                onClick={handleNextStep}
                 className="btn-primary"
               >
                 Next Step →
@@ -729,17 +796,73 @@ export default function Students() {
           {wizardStep === 1 && (
             <div className="space-y-4 text-xs">
               <div>
-                <label className="font-semibold text-ink block mb-1">Class Stream Assignment *</label>
-                <select
-                  value={formData.class_id}
-                  onChange={e => setFormData({ ...formData, class_id: e.target.value })}
-                  className="glass-input w-full"
-                >
-                  <option value="">Select class stream…</option>
-                  {classes.map(c => (
-                    <option key={c.id} value={c.id}>{c.name} {c.grade_level ? `(${c.grade_level})` : ''}</option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="font-semibold text-ink block">Class Stream Assignment *</label>
+                  {classes.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isCustomClass;
+                        setIsCustomClass(next);
+                        if (next) setFormData(prev => ({ ...prev, class_id: '' }));
+                        else setFormData(prev => ({ ...prev, class_id: classes[0]?.id || '' }));
+                      }}
+                      className="text-[11px] text-teal-primary hover:text-teal-dark font-semibold cursor-pointer underline flex items-center gap-1"
+                    >
+                      {isCustomClass ? "← Choose existing class" : "+ Type / Create New Class"}
+                    </button>
+                  )}
+                </div>
+
+                {isCustomClass || classes.length === 0 ? (
+                  <div className="p-3.5 bg-brand-50/50 rounded-xl border border-brand-200/80 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-brand-900">
+                        {classes.length === 0 ? "No classes registered yet for this school" : "Create New Class Stream"}
+                      </span>
+                      <span className="text-[10px] bg-brand-100 text-brand-800 px-2 py-0.5 rounded-full font-medium">Auto-Created</span>
+                    </div>
+                    <p className="text-[11px] text-muted">
+                      Type the class name below. It will be immediately registered in the school curriculum and assigned to this learner.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2.5 pt-1">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink/75 mb-1">Class Name *</label>
+                        <input
+                          type="text"
+                          required
+                          value={newClassName}
+                          onChange={e => setNewClassName(e.target.value)}
+                          placeholder="e.g. Grade 1 or Form 1 Blue"
+                          className="glass-input w-full font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-ink/75 mb-1">Grade / Form Level</label>
+                        <input
+                          type="text"
+                          value={newClassLevel}
+                          onChange={e => setNewClassLevel(e.target.value)}
+                          placeholder="e.g. Grade 1 or Form 1"
+                          className="glass-input w-full"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <select
+                      value={formData.class_id}
+                      onChange={e => setFormData({ ...formData, class_id: e.target.value })}
+                      className="glass-input w-full text-xs font-semibold"
+                    >
+                      <option value="">-- Choose Assigned Class Stream --</option>
+                      {classes.map(c => (
+                        <option key={c.id} value={c.id}>{c.name} {c.grade_level ? `(${c.grade_level})` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
 
               {hasBoarding ? (
@@ -927,7 +1050,7 @@ export default function Students() {
                 <div>System ADM: <strong className="text-ink font-mono">{formData.admission_number}</strong></div>
                 <div>Gender / DOB: <strong className="text-ink capitalize">{formData.gender} • {formData.date_of_birth}</strong></div>
                 <div>National ID: <strong className="text-ink font-mono">{formData.national_id || 'Not provided'}</strong></div>
-                <div>Class Stream: <strong className="text-ink">{classes.find(c => c.id === formData.class_id)?.name || 'Stream assigned'}</strong></div>
+                <div>Class Stream: <strong className="text-ink">{(isCustomClass || classes.length === 0) ? (newClassName || 'Pending input') : (classes.find(c => c.id === formData.class_id)?.name || 'Stream assigned')}</strong></div>
                 <div>Residence: <strong className="text-ink">{Number(formData.is_boarding) === 1 ? 'Boarder (Hostel)' : 'Day Scholar'}</strong></div>
                 <div>Primary Guardian: <strong className="text-ink">{formData.guardian_name} ({formData.guardian_relation})</strong></div>
                 <div>Guardian Phone: <strong className="text-ink font-mono">{formData.guardian_phone}</strong></div>

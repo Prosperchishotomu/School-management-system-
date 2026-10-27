@@ -79,6 +79,12 @@ async function request(path, options = {}) {
     headers,
   };
 
+  if (path.includes('//')) {
+    const err = new Error(`Request to ${path} aborted: missing URL segment.`);
+    err.status = 400;
+    throw err;
+  }
+
   try {
     const response = await fetch(`${API_URL}${path}`, config);
 
