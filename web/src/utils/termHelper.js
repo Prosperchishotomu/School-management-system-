@@ -15,7 +15,7 @@ export function getCurrentTerm(terms = [], currentDate = new Date()) {
 
   // 1. Check exact match: currentDate is between start_date and end_date
   for (const term of terms) {
-    if (!term.start_date || !term.end_date) continue;
+    if (!term.start_date || !term.end_date) continue; 
     const start = new Date(term.start_date).getTime();
     const end = new Date(term.end_date).getTime();
     // Allow end date until 23:59:59

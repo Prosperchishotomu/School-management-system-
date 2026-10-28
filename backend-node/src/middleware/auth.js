@@ -3,18 +3,14 @@ const { queryOne } = require('../config/db');
 
 const crypto = require('crypto');
 
-let JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY;
-let JWT_PUBLIC_KEY = process.env.JWT_PUBLIC_KEY;
+let JWT_PRIVATE_KEY = process.env.JWT_PRIVATE_KEY ? process.env.JWT_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
+let JWT_PUBLIC_KEY = process.env.JWT_PUBLIC_KEY ? process.env.JWT_PUBLIC_KEY.replace(/\\n/g, '\n') : null;
+
 if (!JWT_PRIVATE_KEY || !JWT_PUBLIC_KEY) {
-  if (process.env.NODE_ENV === 'production') {
-    console.error('CRITICAL CONFIGURATION ERROR: JWT_PRIVATE_KEY and JWT_PUBLIC_KEY are required in production. Application will exit.');
-    process.exit(1);
-  } else {
-    console.warn('WARNING: JWT key pair is missing in development. Generating an ephemeral RS256 key pair.');
-    const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
-    JWT_PRIVATE_KEY = pair.privateKey.export({ type: 'pkcs8', format: 'pem' });
-    JWT_PUBLIC_KEY = pair.publicKey.export({ type: 'spki', format: 'pem' });
-  }
+  console.warn('NOTICE: JWT_PRIVATE_KEY and/or JWT_PUBLIC_KEY not specified. Generating a secure ephemeral RS256 key pair.');
+  const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  JWT_PRIVATE_KEY = pair.privateKey.export({ type: 'pkcs8', format: 'pem' });
+  JWT_PUBLIC_KEY = pair.publicKey.export({ type: 'spki', format: 'pem' });
 }
 
 
