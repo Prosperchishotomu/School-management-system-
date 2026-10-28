@@ -11,8 +11,8 @@ export default function Login() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  // If already authenticated in this tab, present active session dashboard gateway
-  if (user) {
+  // If already authenticated in this tab, present active session dashboard gateway unless session timed out
+  if (user && !window.location.search.includes('expired=1')) {
     return (
       <div className="min-h-screen w-full bg-[#0a0f1d] text-slate-100 flex items-center justify-center p-4 relative overflow-hidden font-sans">
         <div className="absolute inset-0 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px] opacity-40 pointer-events-none" />

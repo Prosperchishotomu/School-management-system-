@@ -155,7 +155,8 @@ export default function SchoolModuleConfigModal({ school, isOpen, onClose, onUpd
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full hover:bg-ink/10 flex items-center justify-center text-ink/50 hover:text-ink cursor-pointer"
+            aria-label="Close configuration modal"
+            className="btn-close"
           >
             <X className="w-4 h-4" />
           </button>
@@ -448,7 +449,7 @@ export default function SchoolModuleConfigModal({ school, isOpen, onClose, onUpd
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/70 hover:bg-paper cursor-pointer"
+            className="btn btn-secondary btn-md"
           >
             Cancel
           </button>
@@ -456,7 +457,7 @@ export default function SchoolModuleConfigModal({ school, isOpen, onClose, onUpd
             type="button"
             disabled={saving}
             onClick={handleSave}
-            className="px-5 py-2 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-bold shadow cursor-pointer flex items-center space-x-2"
+            className="btn btn-primary btn-md shadow-md"
           >
             {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             <span>{saving ? 'Saving Changes...' : 'Save Configuration'}</span>

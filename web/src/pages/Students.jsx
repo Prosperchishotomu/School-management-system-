@@ -134,7 +134,14 @@ export default function Students() {
   const filteredStudents = useMemo(() => {
     return students.filter(st => {
       if (classFilter !== 'all' && st.class_name !== classFilter && st.class_id !== classFilter) return false;
-      if (statusFilter !== 'all' && st.status !== statusFilter) return false;
+      if (statusFilter !== 'all') {
+        const s = (st.status || '').toLowerCase();
+        if (statusFilter === 'active' && !['active', 'enrolled'].includes(s)) return false;
+        if (statusFilter === 'transferred' && s !== 'transferred') return false;
+        if (statusFilter === 'finished' && !['finished', 'graduated'].includes(s)) return false;
+        if (statusFilter === 'dropped' && !['dropped', 'dropped_out', 'withdrawn', 'suspended'].includes(s)) return false;
+        if (!['active', 'transferred', 'finished', 'dropped'].includes(statusFilter) && s !== statusFilter) return false;
+      }
       if (genderFilter !== 'all' && st.gender !== genderFilter) return false;
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
@@ -147,11 +154,23 @@ export default function Students() {
     });
   }, [students, classFilter, statusFilter, genderFilter, searchQuery]);
 
-  // Derived counts for KPI strip
-  const totalEnrolled = studentsData?.meta?.total ?? students.length;
-  const boardersCount = students.filter(s => s.is_boarding).length;
-  const femaleCount = students.filter(s => s.gender === 'female').length;
-  const maleCount = students.filter(s => s.gender === 'male').length;
+  // Derived counts for KPI strip: Transferred, Finished, and Dropped students are strictly excluded from the active total
+  const lifecycleCounts = useMemo(() => {
+    let active = 0, transferred = 0, finished = 0, dropped = 0, total = students.length;
+    students.forEach(st => {
+      const s = (st.status || '').toLowerCase();
+      if (s === 'active' || s === 'enrolled') active++;
+      else if (s === 'transferred') transferred++;
+      else if (s === 'finished' || s === 'graduated') finished++;
+      else if (['dropped', 'dropped_out', 'withdrawn', 'suspended'].includes(s)) dropped++;
+    });
+    return { active, transferred, finished, dropped, total };
+  }, [students]);
+
+  const activeEnrolledCount = studentsData?.meta?.counts?.active ?? lifecycleCounts.active;
+  const boardersCount = students.filter(s => s.is_boarding && ['active', 'enrolled'].includes((s.status || '').toLowerCase())).length;
+  const femaleCount = students.filter(s => s.gender === 'female' && ['active', 'enrolled'].includes((s.status || '').toLowerCase())).length;
+  const maleCount = students.filter(s => s.gender === 'male' && ['active', 'enrolled'].includes((s.status || '').toLowerCase())).length;
 
   // Mini Chart: Enrolment by Class
   const classChartData = useMemo(() => {
@@ -406,17 +425,17 @@ export default function Students() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setImportModalOpen(true)}
-                  className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs"
+                  className="btn btn-secondary btn-md shadow-xs"
                 >
                   <Upload className="w-4 h-4 text-muted" />
-                  Import CSV/Excel
+                  <span>Import CSV/Excel</span>
                 </button>
                 <button
                   onClick={handleOpenWizard}
-                  className="btn-primary"
+                  className="btn btn-primary btn-md shadow-xs"
                 >
-                  <UserPlus className="w-4 h-4 mr-1.5" />
-                  Enrol Student
+                  <UserPlus className="w-4 h-4" />
+                  <span>Enrol Student</span>
                 </button>
               </div>
             )}
@@ -427,9 +446,9 @@ export default function Students() {
       {/* KPI Strip */}
       <KpiStrip>
         <StatCard
-          title="Total Enrolled"
-          value={totalEnrolled}
-          sublabel="Active student body"
+          title="Active Enrolled"
+          value={activeEnrolledCount}
+          sublabel="Strict active roll (excludes transferred/dropped)"
           icon={Users}
           iconColor="brand"
         />
@@ -445,8 +464,8 @@ export default function Students() {
         ) : (
           <StatCard
             title="Day Scholars"
-            value={totalEnrolled}
-            sublabel="Commuter student body"
+            value={Math.max(0, activeEnrolledCount - boardersCount)}
+            sublabel="Active commuter learners"
             icon={Building2}
             iconColor="emerald"
           />
@@ -455,9 +474,17 @@ export default function Students() {
         <StatCard
           title="Gender Breakdown"
           value={`${femaleCount}F / ${maleCount}M`}
-          sublabel={`${Math.round((femaleCount / (totalEnrolled || 1)) * 100)}% Female ratio`}
+          sublabel={`${Math.round((femaleCount / (activeEnrolledCount || 1)) * 100)}% Female ratio`}
           icon={GraduationCap}
           iconColor="info"
+        />
+
+        <StatCard
+          title="Transferred & Alumni"
+          value={`${lifecycleCounts.transferred} Tr / ${lifecycleCounts.finished} Al`}
+          sublabel="Excluded from active roll"
+          icon={ShieldCheck}
+          iconColor="accent"
         />
 
         <StatCard
@@ -515,23 +542,44 @@ export default function Students() {
         </div>
 
         {/* Filter Toolbar */}
-        <div className="pt-3 border-t border-line flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="pt-3 border-t border-line space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-muted">Streams:</span>
+            <span className="text-xs font-semibold text-muted">Lifecycle:</span>
             <FilterChips
-              value={classFilter}
+              value={statusFilter}
               onChange={(val) => {
                 const next = new URLSearchParams(searchParams);
-                if (val === 'all') next.delete('class');
-                else next.set('class', val);
+                if (val === 'all') next.delete('status');
+                else next.set('status', val);
                 setSearchParams(next);
               }}
               options={[
-                { value: 'all', label: 'All Streams' },
-                ...Array.from(new Set(classes.map(c => c.name).filter(Boolean))).map(name => ({ value: name, label: name }))
+                { value: 'all', label: `All Records (${lifecycleCounts.total})` },
+                { value: 'active', label: `Active Enrolled (${lifecycleCounts.active})` },
+                { value: 'transferred', label: `Transferred (${lifecycleCounts.transferred})` },
+                { value: 'finished', label: `Finished / Alumni (${lifecycleCounts.finished})` },
+                { value: 'dropped', label: `Dropped (${lifecycleCounts.dropped})` }
               ]}
             />
           </div>
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-muted">Streams:</span>
+              <FilterChips
+                value={classFilter}
+                onChange={(val) => {
+                  const next = new URLSearchParams(searchParams);
+                  if (val === 'all') next.delete('class');
+                  else next.set('class', val);
+                  setSearchParams(next);
+                }}
+                options={[
+                  { value: 'all', label: 'All Streams' },
+                  ...Array.from(new Set(classes.map(c => c.name).filter(Boolean))).map(name => ({ value: name, label: name }))
+                ]}
+              />
+            </div>
 
           <div className="relative min-w-[240px]">
             <Search className="w-4 h-4 text-muted absolute left-3 top-1/2 -translate-y-1/2" />
@@ -549,6 +597,7 @@ export default function Students() {
             />
           </div>
         </div>
+        </div>
       </Card>
 
       {/* Main Students DataTable */}
@@ -562,26 +611,31 @@ export default function Students() {
         csvExportName="students_directory"
       />
 
-      {/* Quick Record Inspection Drawer */}
-      <Drawer
+      {/* Quick Record Inspection Modal (Centered, properly sized without vertical void) */}
+      <Modal
         isOpen={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        title={selectedStudent ? `${selectedStudent.first_name} ${selectedStudent.last_name}` : 'Student'}
-        subtitle={selectedStudent?.admission_number}
+        title={selectedStudent ? `${selectedStudent.first_name} ${selectedStudent.last_name}` : 'Student Quick File'}
+        subtitle={selectedStudent?.admission_number ? `Admission #${selectedStudent.admission_number}` : ''}
+        maxWidth="max-w-lg"
         footer={
           <div className="flex items-center justify-between w-full">
             <button
+              type="button"
               onClick={() => setDrawerOpen(false)}
-              className="btn-secondary"
+              className="btn btn-secondary btn-sm"
             >
               Close
             </button>
             <button
+              type="button"
               onClick={() => {
                 setDrawerOpen(false);
-                navigate(`/students/${selectedStudent.id}`);
+                if (selectedStudent) {
+                  navigate(`/students/${selectedStudent.id}`);
+                }
               }}
-              className="btn-primary"
+              className="btn btn-primary btn-sm flex items-center gap-1.5 shadow-xs"
             >
               <span>Open 360 Profile</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -590,7 +644,7 @@ export default function Students() {
         }
       >
         {selectedStudent && (
-          <div className="space-y-6 text-xs">
+          <div className="space-y-5 text-xs">
             <div className="flex items-center gap-4 p-4 rounded-xl bg-canvas border border-line">
               <Avatar name={`${selectedStudent.first_name} ${selectedStudent.last_name}`} size="lg" />
               <div>
@@ -600,8 +654,8 @@ export default function Students() {
                 <div className="text-muted font-mono">{selectedStudent.admission_number}</div>
                 <div className="mt-1 flex items-center gap-2">
                   <StatusPill status={selectedStudent.status || 'enrolled'} />
-                  {selectedStudent.is_boarding ? (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+                  {Number(selectedStudent.is_boarding) === 1 ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300">
                       Boarder
                     </span>
                   ) : null}
@@ -609,37 +663,37 @@ export default function Students() {
               </div>
             </div>
 
-            <div className="space-y-3">
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Class Stream:</span>
+            <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-canvas/50 border border-line">
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-muted block">Class Stream:</span>
                 <span className="font-semibold text-ink">{selectedStudent.class_name || 'Unassigned'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Gender:</span>
-                <span className="font-semibold text-ink capitalize">{selectedStudent.gender || '-'}</span>
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-muted block">Gender:</span>
+                <span className="font-semibold text-ink capitalize">{selectedStudent.gender || '—'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Date of Birth:</span>
-                <span className="font-semibold text-ink font-mono">{selectedStudent.date_of_birth || '-'}</span>
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-muted block">Date of Birth:</span>
+                <span className="font-semibold text-ink font-mono">{selectedStudent.date_of_birth || '—'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Fee Balance:</span>
-                <span className="font-semibold text-danger font-mono">
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-muted block">Fee Balance:</span>
+                <span className={`font-semibold font-mono ${Number(selectedStudent.fee_balance || 0) > 0 ? 'text-danger' : 'text-emerald-600'}`}>
                   {money(selectedStudent.fee_balance || 0)}
                 </span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Primary Guardian:</span>
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-muted block">Primary Guardian:</span>
                 <span className="font-semibold text-ink">{selectedStudent.guardian_name || 'None listed'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-line text-muted">
-                <span>Guardian Phone:</span>
+              <div className="space-y-0.5">
+                <span className="text-[11px] text-muted block">Guardian Phone:</span>
                 <span className="font-semibold text-ink font-mono">{selectedStudent.guardian_phone || 'None'}</span>
               </div>
             </div>
           </div>
         )}
-      </Drawer>
+      </Modal>
 
       {/* 5-Step Enrolment Stepper Wizard Modal */}
       <Modal
@@ -654,7 +708,7 @@ export default function Students() {
               type="button"
               disabled={wizardStep === 0}
               onClick={() => setWizardStep(s => Math.max(0, s - 1))}
-              className="btn-secondary disabled:opacity-30"
+              className="btn btn-secondary btn-md disabled:opacity-30"
             >
               Previous
             </button>
@@ -663,16 +717,17 @@ export default function Students() {
               <button
                 type="button"
                 onClick={handleNextStep}
-                className="btn-primary"
+                className="btn btn-primary btn-md shadow-sm"
               >
-                Next Step →
+                <span>Next Step</span>
+                <span>→</span>
               </button>
             ) : (
               <button
                 type="button"
                 disabled={wizardSaving}
                 onClick={handleSaveWizard}
-                className="btn-primary"
+                className="btn btn-primary btn-md shadow-md"
               >
                 {wizardSaving ? 'Enrolling…' : 'Complete Enrolment'}
               </button>

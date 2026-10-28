@@ -24,12 +24,16 @@ const STATUS_CONFIG = {
   excused:   { label: 'Excused', color: 'bg-blue-100 text-info dark:bg-blue-950/40 dark:text-blue-400' },
 
   // People / Accounts
-  active:    { label: 'Active', color: 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-500' },
-  enrolled:  { label: 'Enrolled', color: 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-500' },
-  inactive:  { label: 'Inactive', color: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400' },
-  suspended: { label: 'Suspended', color: 'bg-red-100 text-danger dark:bg-red-950/40 dark:text-red-400' },
-  withdrawn: { label: 'Withdrawn', color: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400' },
-  graduated: { label: 'Graduated', color: 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-400' },
+  active:      { label: 'Active', color: 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-500' },
+  enrolled:    { label: 'Enrolled', color: 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-500' },
+  transferred: { label: 'Transferred', color: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' },
+  finished:    { label: 'Finished', color: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' },
+  graduated:   { label: 'Graduated', color: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' },
+  dropped:     { label: 'Dropped', color: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
+  dropped_out: { label: 'Dropped Out', color: 'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300' },
+  inactive:    { label: 'Inactive', color: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400' },
+  suspended:   { label: 'Suspended', color: 'bg-red-100 text-danger dark:bg-red-950/40 dark:text-red-400' },
+  withdrawn:   { label: 'Withdrawn', color: 'bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400' },
 
   // Workflow / Exeat / Approvals
   pending:   { label: 'Pending', color: 'bg-amber-100 text-accent dark:bg-amber-950/40 dark:text-amber-400' },

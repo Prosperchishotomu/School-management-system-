@@ -97,9 +97,34 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
 
     // Common counts for school staff / administrators
     let totalStudents = 0, totalStaff = 0, totalClasses = 0;
+    let studentBreakdown = {
+      active_students: 0,
+      transferred_students: 0,
+      finished_students: 0,
+      dropped_students: 0,
+      total_records: 0
+    };
     try {
-      const [st] = await query("SELECT COUNT(*) as c FROM students WHERE school_id = ? AND status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')", [schoolId]);
-      totalStudents = Number(st?.c || 0);
+      const statusRows = await query(
+        `SELECT status, COUNT(*) as cnt FROM students WHERE school_id = ? GROUP BY status`,
+        [schoolId]
+      );
+      statusRows.forEach(r => {
+        const s = (r.status || '').toLowerCase();
+        const cnt = Number(r.cnt || 0);
+        studentBreakdown.total_records += cnt;
+        if (s === 'active' || s === 'enrolled') {
+          studentBreakdown.active_students += cnt;
+        } else if (s === 'transferred') {
+          studentBreakdown.transferred_students += cnt;
+        } else if (s === 'finished' || s === 'graduated') {
+          studentBreakdown.finished_students += cnt;
+        } else if (s === 'dropped' || s === 'dropped_out' || s === 'withdrawn' || s === 'suspended') {
+          studentBreakdown.dropped_students += cnt;
+        }
+      });
+      // Active total strictly includes only enrolled/active students
+      totalStudents = studentBreakdown.active_students;
     } catch (_) {}
 
     try {
@@ -398,6 +423,12 @@ router.get('/schools/:schoolId/dashboard/summary', authenticateToken, async (req
           attendance_today_pct: attendanceTodayPct,
           attendance_delta: 0,
           total_students: totalStudents,
+          active_students: studentBreakdown.active_students,
+          transferred_students: studentBreakdown.transferred_students,
+          finished_students: studentBreakdown.finished_students,
+          dropped_students: studentBreakdown.dropped_students,
+          total_student_records: studentBreakdown.total_records,
+          student_breakdown: studentBreakdown,
           total_staff: totalStaff,
           total_classes: totalClasses,
           fees_billed: totalBilled,
@@ -897,14 +928,32 @@ router.get('/schools/:schoolId/analytics/enrolment', authenticateToken, requireR
          COUNT(*) as total_count
        FROM students st
        LEFT JOIN classes c ON st.class_id = c.id
-       WHERE st.school_id = ? AND st.status NOT IN ('withdrawn', 'graduated', 'transferred', 'dropped_out')
+       WHERE st.school_id = ? AND st.status IN ('active', 'enrolled')
        GROUP BY c.grade_level
        ORDER BY c.grade_level ASC`,
       [schoolId]
     );
 
+    let lifecycle = { active: 0, transferred: 0, finished: 0, dropped: 0, total: 0 };
+    try {
+      const rows = await query(
+        `SELECT status, COUNT(*) as cnt FROM students WHERE school_id = ? GROUP BY status`,
+        [schoolId]
+      );
+      rows.forEach(r => {
+        const s = (r.status || '').toLowerCase();
+        const c = Number(r.cnt || 0);
+        lifecycle.total += c;
+        if (s === 'active' || s === 'enrolled') lifecycle.active += c;
+        else if (s === 'transferred') lifecycle.transferred += c;
+        else if (s === 'finished' || s === 'graduated') lifecycle.finished += c;
+        else if (s === 'dropped' || s === 'dropped_out' || s === 'withdrawn' || s === 'suspended') lifecycle.dropped += c;
+      });
+    } catch (_) {}
+
     return res.json({
       data: byFormAndGender,
+      lifecycle,
       meta: defaultMeta()
     });
   } catch (err) {

@@ -13,6 +13,8 @@ const {
   normalizeText
 } = require('../utils/normalizer');
 
+const { validateClassForSchool } = require('../utils/classValidator');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. PREVIEW IMPORT DATA
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +57,9 @@ router.post('/students', authenticateToken, requireRoles('school_admin', 'super_
     if (!Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'No student rows provided for import.' } });
     }
+
+    // Fetch school settings to enforce institutional level & stream policies
+    const school = await queryOne('SELECT id, name, school_type, has_alevel, has_streams FROM schools WHERE id = ?', [schoolId]);
 
     // Cache existing classes for quick lookup
     const existingClasses = await query('SELECT id, name, level FROM classes WHERE school_id = ?', [schoolId]);
@@ -134,29 +139,37 @@ router.post('/students', authenticateToken, requireRoles('school_admin', 'super_
         continue;
       }
 
-      // Resolve Class stream
+      // Resolve Class stream with institutional validation
       let classId = null;
       const rawClass = normalizeText(r.class_name || r.class || r.grade || r.form || '');
-      if (rawClass) {
-        classId = classMap.get(rawClass.toLowerCase()) || null;
-        if (!classId) {
-          // Auto-create class if it doesn't exist
-          try {
-            const newClassId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-            const isSecondary = rawClass.toLowerCase().includes('form') || rawClass.toLowerCase().includes('secondary');
-            const levelVal = isSecondary ? 'Secondary' : 'Primary';
-            await query(
-              'INSERT INTO classes (id, school_id, name, level, grade_level, capacity, status) VALUES (?, ?, ?, ?, ?, 45, "active")',
-              [newClassId, schoolId, rawClass, levelVal, rawClass]
-            );
-            classId = newClassId;
-            classMap.set(rawClass.toLowerCase(), classId);
-          } catch (_) {
-            classId = existingClasses[0]?.id || null;
-          }
+      if (!rawClass) {
+        errors.push({ row: rowNum, error: 'Class stream is required for student enrollment.' });
+        skipped++;
+        continue;
+      }
+
+      const classValidation = validateClassForSchool(rawClass, school);
+      if (!classValidation.valid) {
+        errors.push({ row: rowNum, error: classValidation.error });
+        skipped++;
+        continue;
+      }
+
+      classId = classMap.get(classValidation.cleanName.toLowerCase()) || null;
+      if (!classId) {
+        // Auto-create validated class matching school type & stream settings
+        try {
+          const newClassId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+          const levelVal = classValidation.isSecondary ? 'Secondary' : 'Primary';
+          await query(
+            'INSERT INTO classes (id, school_id, name, level, grade_level, stream, capacity, status) VALUES (?, ?, ?, ?, ?, ?, 45, "active")',
+            [newClassId, schoolId, classValidation.cleanName, levelVal, classValidation.gradeLevel, classValidation.stream]
+          );
+          classId = newClassId;
+          classMap.set(classValidation.cleanName.toLowerCase(), classId);
+        } catch (_) {
+          classId = existingClasses[0]?.id || null;
         }
-      } else {
-        classId = existingClasses[0]?.id || null;
       }
 
       // Resolve Admission Number
@@ -349,21 +362,24 @@ router.post('/staff', authenticateToken, requireRoles('school_admin', 'super_adm
       let classId = null;
       const rawClass = normalizeText(r.class_name || r.class || r.assigned_class || r.grade || r.form || '');
       if (rawClass) {
-        classId = classMap.get(rawClass.toLowerCase()) || null;
-        if (!classId) {
-          // Auto-create class if specified but not yet in the school roster
-          try {
-            const newClassId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-            const isSecondary = rawClass.toLowerCase().includes('form') || rawClass.toLowerCase().includes('secondary');
-            const levelVal = isSecondary ? 'Secondary' : 'Primary';
-            await query(
-              'INSERT INTO classes (id, school_id, name, level, grade_level, capacity, status) VALUES (?, ?, ?, ?, ?, 45, "active")',
-              [newClassId, schoolId, rawClass, levelVal, rawClass]
-            );
-            classId = newClassId;
-            classMap.set(rawClass.toLowerCase(), classId);
-          } catch (_) {
-            classId = existingClasses[0]?.id || null;
+        const classValidation = validateClassForSchool(rawClass, school);
+        if (!classValidation.valid) {
+          errors.push({ row: rowNum, error: `Assigned class warning: ${classValidation.error}` });
+        } else {
+          classId = classMap.get(classValidation.cleanName.toLowerCase()) || null;
+          if (!classId) {
+            try {
+              const newClassId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+              const levelVal = classValidation.isSecondary ? 'Secondary' : 'Primary';
+              await query(
+                'INSERT INTO classes (id, school_id, name, level, grade_level, stream, capacity, status) VALUES (?, ?, ?, ?, ?, ?, 45, "active")',
+                [newClassId, schoolId, classValidation.cleanName, levelVal, classValidation.gradeLevel, classValidation.stream]
+              );
+              classId = newClassId;
+              classMap.set(classValidation.cleanName.toLowerCase(), classId);
+            } catch (_) {
+              classId = existingClasses[0]?.id || null;
+            }
           }
         }
       }
@@ -717,6 +733,8 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
     let skipped = 0;
     const errors = [];
 
+    const school = await queryOne('SELECT id, name, school_type, has_alevel, has_streams FROM schools WHERE id = ?', [schoolId]);
+
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const rowNum = i + 1;
@@ -728,10 +746,17 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
         continue;
       }
 
-      const isSecondary = name.toLowerCase().includes('form') || name.toLowerCase().includes('secondary');
-      const level = (r.level || (isSecondary ? 'Secondary' : 'Primary')).trim();
-      const gradeLevel = (r.grade_level || r.grade || r.form || name).trim();
-      const capacity = (r.capacity !== undefined && r.capacity !== '' && !isNaN(parseInt(r.capacity, 10))) ? parseInt(r.capacity, 10) : null;
+      const classValidation = validateClassForSchool(name, school);
+      if (!classValidation.valid) {
+        errors.push({ row: rowNum, error: classValidation.error });
+        skipped++;
+        continue;
+      }
+
+      const level = (r.level || (classValidation.isSecondary ? 'Secondary' : 'Primary')).trim();
+      const gradeLevel = (r.grade_level || r.grade || r.form || classValidation.gradeLevel).trim();
+      const stream = (r.stream || classValidation.stream || null);
+      const capacity = (r.capacity !== undefined && r.capacity !== '' && !isNaN(parseInt(r.capacity, 10))) ? parseInt(r.capacity, 10) : 45;
       const classId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
 
       try {
@@ -739,7 +764,7 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
           `INSERT INTO classes (id, school_id, name, level, grade_level, stream, capacity, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
            ON DUPLICATE KEY UPDATE level = VALUES(level), grade_level = VALUES(grade_level), stream = VALUES(stream), capacity = VALUES(capacity)`,
-          [classId, schoolId, name, level, gradeLevel, stream, capacity]
+          [classId, schoolId, classValidation.cleanName, level, gradeLevel, stream, capacity]
         );
         imported++;
       } catch (insertErr) {
@@ -916,34 +941,85 @@ router.post('/fees', authenticateToken, requireRoles('school_admin', 'super_admi
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. DOWNLOAD SAMPLE CSV TEMPLATES
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/templates/:entity', authenticateToken, (req, res) => {
-  const { entity } = req.params;
+router.get('/templates/:entity', authenticateToken, async (req, res) => {
+  const { schoolId, entity } = req.params;
+  const school = await queryOne('SELECT id, name, school_type, has_alevel, has_streams FROM schools WHERE id = ?', [schoolId]);
+  const schoolType = (school?.school_type || 'secondary').toLowerCase();
+  const hasAlevel = Boolean(school?.has_alevel || schoolType === 'high_school' || schoolType === 'a_level');
+  const hasStreams = school?.has_streams !== 0 && school?.has_streams !== false;
 
   let headers = '';
   let sampleRows = '';
 
   if (entity === 'students') {
     headers = 'admission_number,first_name,last_name,gender,date_of_birth,class_name,guardian_name,guardian_phone,guardian_email\n';
-    sampleRows =
-      'ADM2026-001,Tendai,Mutasa,male,2013-05-12,Grade 6 Red,Mr. C. Mutasa,+263771234567,cmutasa@gmail.com\n' +
-      'ADM2026-002,Ruvimbo,Chirandu,female,2012-08-24,Grade 7 Blue,Mrs. S. Chirandu,+263772345678,chirandu@yahoo.com\n' +
-      'ADM2026-003,Farai,Moyo,male,2010-02-15,Form 2 East,Dr. P. Moyo,+263773456789,pmoyo@health.gov.zw\n';
+    if (schoolType === 'primary') {
+      sampleRows = hasStreams
+        ? 'ADM2026-001,Tendai,Mutasa,male,2017-05-12,Grade 1 East,Mr. C. Mutasa,+263771234567,cmutasa@gmail.com\n' +
+          'ADM2026-002,Ruvimbo,Chirandu,female,2015-08-24,Grade 3 Blue,Mrs. S. Chirandu,+263772345678,chirandu@yahoo.com\n' +
+          'ADM2026-003,Farai,Moyo,male,2012-02-15,Grade 7 Gold,Dr. P. Moyo,+263773456789,pmoyo@health.gov.zw\n'
+        : 'ADM2026-001,Tendai,Mutasa,male,2017-05-12,Grade 1,Mr. C. Mutasa,+263771234567,cmutasa@gmail.com\n' +
+          'ADM2026-002,Ruvimbo,Chirandu,female,2015-08-24,Grade 3,Mrs. S. Chirandu,+263772345678,chirandu@yahoo.com\n' +
+          'ADM2026-003,Farai,Moyo,male,2012-02-15,Grade 7,Dr. P. Moyo,+263773456789,pmoyo@health.gov.zw\n';
+    } else if (schoolType === 'combined' || schoolType === 'mixed') {
+      sampleRows = hasStreams
+        ? 'ADM2026-001,Tendai,Mutasa,male,2015-05-12,Grade 3 Blue,Mr. C. Mutasa,+263771234567,cmutasa@gmail.com\n' +
+          'ADM2026-002,Kudakwashe,Ncube,male,2012-03-14,Form 1A,Mr. T. Ncube,+263772345678,kncube@gmail.com\n' +
+          'ADM2026-003,Tafadzwa,Ndlovu,male,2010-11-05,Form 3 Commercials,Dr. S. Ndlovu,+263773456789,sndlovu@zim.gov.zw\n'
+        : 'ADM2026-001,Tendai,Mutasa,male,2015-05-12,Grade 3,Mr. C. Mutasa,+263771234567,cmutasa@gmail.com\n' +
+          'ADM2026-002,Kudakwashe,Ncube,male,2012-03-14,Form 1,Mr. T. Ncube,+263772345678,kncube@gmail.com\n' +
+          'ADM2026-003,Tafadzwa,Ndlovu,male,2010-11-05,Form 3,Dr. S. Ndlovu,+263773456789,sndlovu@zim.gov.zw\n';
+    } else {
+      sampleRows = hasStreams
+        ? 'ADM2026-001,Kudakwashe,Ncube,male,2012-03-14,Form 1A,Mr. T. Ncube,+263771234567,kncube@gmail.com\n' +
+          'ADM2026-002,Chiedza,Musarurwa,female,2011-07-22,Form 2 East,Mrs. E. Musarurwa,+263772345678,emusarurwa@yahoo.com\n' +
+          'ADM2026-003,Tafadzwa,Ndlovu,male,2010-11-05,Form 3 Commercials,Dr. S. Ndlovu,+263773456789,sndlovu@zim.gov.zw\n' +
+          (hasAlevel ? 'ADM2026-004,Nyasha,Moyo,female,2008-04-18,Lower 6 Sciences,Mr. P. Moyo,+263774567890,pmoyo@health.gov.zw\n' : '')
+        : 'ADM2026-001,Kudakwashe,Ncube,male,2012-03-14,Form 1,Mr. T. Ncube,+263771234567,kncube@gmail.com\n' +
+          'ADM2026-002,Chiedza,Musarurwa,female,2011-07-22,Form 2,Mrs. E. Musarurwa,+263772345678,emusarurwa@yahoo.com\n' +
+          'ADM2026-003,Tafadzwa,Ndlovu,male,2010-11-05,Form 3,Dr. S. Ndlovu,+263773456789,sndlovu@zim.gov.zw\n' +
+          'ADM2026-004,Tatenda,Moyo,female,2009-09-12,Form 4,Mr. P. Moyo,+263774567890,pmoyo@health.gov.zw\n';
+    }
   } else if (entity === 'staff') {
     headers = 'name,email,phone,role_title,class_name,subjects\n';
-    sampleRows =
-      'Mr. Blessmore Sibanda,bsibanda@harareacademy.ac.zw,+263774567890,Senior Teacher,Grade 5 Gold,All Primary Subjects\n' +
-      'Ms. Tariro Moyo,tmoyo@harareacademy.ac.zw,+263775678901,Subject Teacher,Form 1A,Shona; Heritage Studies\n' +
-      'Mr. Tawanda Dube,tdube@harareacademy.ac.zw,+263776789012,HOD Sciences,Form 3B,Mathematics; Physical Science\n' +
-      'Mrs. Grace Sithole,gsithole@harareacademy.ac.zw,+263777890123,Head Librarian,None,None\n';
+    if (schoolType === 'primary') {
+      sampleRows = hasStreams
+        ? 'Mr. Blessmore Sibanda,bsibanda@school.ac.zw,+263774567890,Senior Teacher,Grade 3 Blue,All Primary Subjects\n' +
+          'Mrs. Susan Ncube,sncube@school.ac.zw,+263775678901,Deputy Head,Grade 7 Gold,English; Mathematics\n' +
+          'Mrs. Grace Sithole,gsithole@school.ac.zw,+263777890123,Head Librarian,None,None\n'
+        : 'Mr. Blessmore Sibanda,bsibanda@school.ac.zw,+263774567890,Senior Teacher,Grade 3,All Primary Subjects\n' +
+          'Mrs. Susan Ncube,sncube@school.ac.zw,+263775678901,Deputy Head,Grade 7,English; Mathematics\n' +
+          'Mrs. Grace Sithole,gsithole@school.ac.zw,+263777890123,Head Librarian,None,None\n';
+    } else {
+      sampleRows = hasStreams
+        ? 'Ms. Tariro Moyo,tmoyo@school.ac.zw,+263775678901,Subject Teacher,Form 1A,Shona; Heritage Studies\n' +
+          'Mr. Tawanda Dube,tdube@school.ac.zw,+263776789012,HOD Sciences,Form 3 Commercials,Mathematics; Physical Science\n' +
+          'Mrs. Grace Sithole,gsithole@school.ac.zw,+263777890123,Head Librarian,None,None\n'
+        : 'Ms. Tariro Moyo,tmoyo@school.ac.zw,+263775678901,Subject Teacher,Form 1,Shona; Heritage Studies\n' +
+          'Mr. Tawanda Dube,tdube@school.ac.zw,+263776789012,HOD Sciences,Form 3,Mathematics; Physical Science\n' +
+          'Mrs. Grace Sithole,gsithole@school.ac.zw,+263777890123,Head Librarian,None,None\n';
+    }
   } else if (entity === 'subjects') {
     headers = 'code,name,category,level\n';
-    sampleRows =
-      'MATH,Mathematics,Sciences,Primary & Secondary\n' +
-      'ENG,English Language,Languages,All Levels\n' +
-      'SHON,Shona,Indigenous Languages,All Levels\n' +
-      'SCIE,Science and Technology,Sciences,Primary\n' +
-      'PHYS,Physics,Pure Sciences,Form 3-6\n' +
-      'AGRI,Agriculture,Vocational,All Levels\n';
+    if (schoolType === 'primary') {
+      sampleRows =
+        'ENG,English Language,Languages,Primary\n' +
+        'MATH,Mathematics,Sciences,Primary\n' +
+        'SHON,Indigenous Language (Shona),Languages,Primary\n' +
+        'SCIE,Science and Technology,Sciences,Primary\n' +
+        'GENP,General Paper,Social Sciences,Primary\n' +
+        'AGRI,Agriculture,Vocational,Primary\n';
+    } else {
+      sampleRows =
+        'ENG,English Language,Languages,Secondary\n' +
+        'MATH,Mathematics,Sciences,Secondary\n' +
+        'GEOG,Geography,Humanities,Secondary\n' +
+        'HIST,History,Humanities,Secondary\n' +
+        'COMM,Commerce,Commercials,Secondary\n' +
+        'ACCS,Principles of Accounts,Commercials,Secondary\n' +
+        'PHYS,Physical Science,Sciences,Secondary\n' +
+        (hasAlevel ? 'CHEM,Chemistry,Pure Sciences,Form 3-6\n' : '');
+    }
   } else if (entity === 'assets') {
     headers = 'name,category,code,serial_number,value,location\n';
     sampleRows =
@@ -959,11 +1035,21 @@ router.get('/templates/:entity', authenticateToken, (req, res) => {
       'Things Fall Apart,Chinua Achebe,978-0-3854-7454-2,Bay 4 Shelf B,fiction\n' +
       'ZIMSEC Science Past Papers Vol 1,ZIMSEC Editorial,978-1-9982-1111-0,Reference Bay,past_paper\n';
   } else if (entity === 'classes') {
-    headers = 'name,level,capacity,stream\n';
-    sampleRows =
-      'Form 1A,Secondary,45,A\n' +
-      'Grade 7 East,Primary,40,East\n' +
-      'Lower 6 Sciences,Secondary,35,Sciences\n';
+    headers = hasStreams ? 'name,level,capacity,stream\n' : 'name,level,capacity\n';
+    if (schoolType === 'primary') {
+      sampleRows = hasStreams
+        ? 'Grade 1 East,Primary,40,East\nGrade 2 Blue,Primary,40,Blue\nGrade 7 Gold,Primary,45,Gold\n'
+        : 'Grade 1,Primary,40\nGrade 2,Primary,40\nGrade 7,Primary,45\n';
+    } else if (schoolType === 'combined' || schoolType === 'mixed') {
+      sampleRows = hasStreams
+        ? 'Grade 7 Blue,Primary,40,Blue\nForm 1A,Secondary,45,A\nForm 3 Commercials,Secondary,40,Commercials\n'
+        : 'Grade 7,Primary,40\nForm 1,Secondary,45\nForm 3,Secondary,40\n';
+    } else {
+      sampleRows = hasStreams
+        ? 'Form 1A,Secondary,45,A\nForm 2 East,Secondary,45,East\nForm 3 Commercials,Secondary,40,Commercials\n' +
+          (hasAlevel ? 'Lower 6 Sciences,High School,35,Sciences\n' : '')
+        : 'Form 1,Secondary,45\nForm 2,Secondary,45\nForm 3,Secondary,40\nForm 4,Secondary,40\n';
+    }
   } else if (entity === 'fees') {
     headers = 'admission_number,term,amount_due,amount_paid,due_date\n';
     sampleRows =
@@ -982,8 +1068,16 @@ router.get('/templates/:entity', authenticateToken, (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. DETAILED DATA FORMAT SPECIFICATIONS & VALIDATION SCHEMA
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/specifications/:entity', authenticateToken, (req, res) => {
-  const { entity } = req.params;
+router.get('/specifications/:entity', authenticateToken, async (req, res) => {
+  const { schoolId, entity } = req.params;
+  const school = await queryOne('SELECT id, name, school_type, has_alevel, has_streams FROM schools WHERE id = ?', [schoolId]);
+  const schoolType = (school?.school_type || 'secondary').toLowerCase();
+  const hasAlevel = Boolean(school?.has_alevel || schoolType === 'high_school' || schoolType === 'a_level');
+  const hasStreams = school?.has_streams !== 0 && school?.has_streams !== false;
+
+  const sampleClassName = schoolType === 'primary'
+    ? (hasStreams ? 'Grade 3 Blue' : 'Grade 3')
+    : (hasStreams ? 'Form 2 East' : 'Form 2');
 
   const specifications = {
     students: {
@@ -1017,8 +1111,8 @@ router.get('/specifications/:entity', authenticateToken, (req, res) => {
           name: 'class_name',
           required: true,
           type: 'text',
-          description: 'Class stream allocation. If the class does not exist yet, the system creates it automatically.',
-          example: 'Form 1A'
+          description: `Class cohort allocation. Must follow ${schoolType === 'primary' ? 'Primary (ECD/Grade 1-7)' : 'Secondary (Form 1-4/6)'} guidelines.${hasStreams ? ' Streams permitted.' : ' No streams allowed (single cohort).' }`,
+          example: sampleClassName
         },
         {
           name: 'admission_number',
@@ -1057,7 +1151,8 @@ router.get('/specifications/:entity', authenticateToken, (req, res) => {
         }
       ],
       linkingRules: [
-        'Automatic Class Assignment: Matches existing classes case-insensitively or creates new class streams instantly.',
+        `Institutional Guidelines: Enforces ${schoolType.toUpperCase()} cohort policies. ${schoolType === 'primary' ? 'Only ECD and Grade 1-7 allowed.' : 'Only Form 1 to Form 4/6 allowed. Primary grades are strictly blocked.'}`,
+        `Stream Guidelines: ${hasStreams ? 'Streams are enabled for this institution.' : 'Single cohort only — streams will be rejected.'}`,
         'Guardian Account Provisioning: Automatically links parent records with student IDs so unlinked parents can NEVER view other students.',
         'Zero Collision Guarantee: Automatically verifies and deduplicates admission numbers across the school dataset.'
       ]
@@ -1080,7 +1175,7 @@ router.get('/specifications/:entity', authenticateToken, (req, res) => {
           required: true,
           type: 'email',
           description: 'Unique institutional email address used for login and notifications.',
-          example: 'tdube@harareacademy.ac.zw'
+          example: 'tdube@school.ac.zw'
         },
         {
           name: 'role_title',
@@ -1101,14 +1196,14 @@ router.get('/specifications/:entity', authenticateToken, (req, res) => {
           required: false,
           type: 'text',
           description: 'Assigned class for Form Master / Class Teacher responsibilities. Links teacher as the class head.',
-          example: 'Form 3B'
+          example: sampleClassName
         },
         {
           name: 'subjects',
           required: false,
           type: 'list',
           description: 'Semicolon or comma-separated list of subjects taught. Links teaching assignments automatically.',
-          example: 'Mathematics; Physical Science'
+          example: schoolType === 'primary' ? 'All Primary Subjects' : 'Mathematics; Physical Science'
         }
       ],
       linkingRules: [
@@ -1123,10 +1218,10 @@ router.get('/specifications/:entity', authenticateToken, (req, res) => {
       description: 'Ingests academic curriculum subject codes and descriptions.',
       mandatoryColumns: ['name'],
       fields: [
-        { name: 'name', required: true, type: 'text', description: 'Full subject title.', example: 'Physical Science' },
-        { name: 'code', required: false, type: 'text', description: 'Subject abbreviation code.', example: 'PHYS' },
+        { name: 'name', required: true, type: 'text', description: 'Full subject title.', example: schoolType === 'primary' ? 'Science and Technology' : 'Physical Science' },
+        { name: 'code', required: false, type: 'text', description: 'Subject abbreviation code.', example: schoolType === 'primary' ? 'SCIE' : 'PHYS' },
         { name: 'category', required: false, type: 'text', description: 'Subject faculty or department.', example: 'Sciences' },
-        { name: 'level', required: false, type: 'text', description: 'Academic phase or level.', example: 'Form 3-6' }
+        { name: 'level', required: false, type: 'text', description: 'Academic phase or level.', example: schoolType === 'primary' ? 'Primary' : 'Secondary' }
       ],
       linkingRules: [
         'Unique Subject Codes: Automatically assigns 4-letter uppercase code if omitted.',
@@ -1139,12 +1234,13 @@ router.get('/specifications/:entity', authenticateToken, (req, res) => {
       description: 'Creates stream cohorts, grades, forms, and seating capacity quotas.',
       mandatoryColumns: ['name', 'level'],
       fields: [
-        { name: 'name', required: true, type: 'text', description: 'Class name or stream.', example: 'Form 2 East' },
-        { name: 'level', required: true, type: 'text', description: 'Academic level: Primary or Secondary.', example: 'Secondary' },
+        { name: 'name', required: true, type: 'text', description: 'Class name or stream.', example: sampleClassName },
+        { name: 'level', required: true, type: 'text', description: 'Academic level: Primary, Secondary, or High School.', example: schoolType === 'primary' ? 'Primary' : 'Secondary' },
         { name: 'capacity', required: false, type: 'number', description: 'Maximum student enrolment.', example: '45' }
       ],
       linkingRules: [
-        'Stream Categorization: Establishes base student groupings for attendance, timetabling, and broadsheet reports.'
+        `Strict Institutional Validation: Only accepts ${schoolType === 'primary' ? 'Primary grades (ECD, Grade 1-7)' : 'Secondary forms (Form 1-4/6)'}.`,
+        `Stream Policy: ${hasStreams ? 'Streams are permitted.' : 'Single-cohort only; stream suffixes are rejected.'}`
       ]
     },
     assets: {

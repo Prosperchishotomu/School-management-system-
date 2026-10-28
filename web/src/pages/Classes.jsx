@@ -36,6 +36,11 @@ export default function Classes() {
   const [assignForm, setAssignForm] = useState({ class_id: '', subject_id: '', teacher_id: '' });
   const [submitting, setSubmitting] = useState(false);
 
+  // Bulk subject enrollment state
+  const [showBulkSubjectModal, setShowBulkSubjectModal] = useState(false);
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
+  const [enrollingSubjects, setEnrollingSubjects] = useState(false);
+
   // Promotion state
   const [promoFromClass, setPromoFromClass] = useState('');
   const [promoToClass, setPromoToClass] = useState('');
@@ -246,14 +251,39 @@ export default function Classes() {
     }
   };
 
-  const schoolType = (schoolInfo?.school_type || 'primary').toLowerCase();
+  const handleBulkEnrollSubjects = async () => {
+    if (!activeClass || selectedSubjectIds.length === 0 || classStudents.length === 0) {
+      toast.error('Please select at least one subject and ensure the class has students.');
+      return;
+    }
+    setEnrollingSubjects(true);
+    try {
+      await api.post(`/schools/${activeSchoolId}/classes/${activeClass.id}/bulk-assign-subjects`, {
+        student_ids: classStudents.map(s => s.id),
+        subject_ids: selectedSubjectIds
+      });
+      toast.success(`Successfully enrolled ${classStudents.length} students into ${selectedSubjectIds.length} subjects!`);
+      setShowBulkSubjectModal(false);
+      setSelectedSubjectIds([]);
+      invalidate([`class_students_${activeClass.id}`, `classes_${activeSchoolId}`]);
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || 'Failed to bulk assign subjects.');
+    } finally {
+      setEnrollingSubjects(false);
+    }
+  };
+
+  const schoolType = (schoolInfo?.school_type || 'secondary').toLowerCase();
   const hasAlevel = Boolean(schoolInfo?.has_alevel || schoolType === 'high_school' || schoolType === 'combined' || schoolType === 'a_level');
+  const hasStreams = schoolInfo?.has_streams !== 0 && schoolInfo?.has_streams !== false;
   const isOrdinaryLevel = (schoolType === 'secondary' || schoolType === 'o_level' || schoolType === 'secondary_o_level') && !hasAlevel;
-  const gradeLevels = hasAlevel
+  const gradeLevels = (schoolType === 'combined' || schoolType === 'mixed')
+    ? ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7', 'Form 1', 'Form 2', 'Form 3', 'Form 4', ...(hasAlevel ? ['Lower 6', 'Upper 6'] : [])]
+    : schoolType === 'primary'
+    ? ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7']
+    : hasAlevel
     ? ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6']
-    : isOrdinaryLevel
-    ? ['Form 1', 'Form 2', 'Form 3', 'Form 4']
-    : ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7'];
+    : ['Form 1', 'Form 2', 'Form 3', 'Form 4'];
 
   return (
     <div className="space-y-6">
@@ -266,24 +296,24 @@ export default function Classes() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setImportSubjectsModal(true)}
-              className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition shadow-xs flex items-center gap-1.5"
+              className="btn btn-secondary btn-md shadow-xs"
             >
               <Upload className="w-4 h-4 text-muted" />
-              Import Subjects
+              <span>Import Subjects</span>
             </button>
             <button
               onClick={() => setShowSubjectModal(true)}
-              className="px-4 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition shadow-xs flex items-center gap-1.5"
+              className="btn btn-secondary btn-md shadow-xs"
             >
               <BookOpen className="w-4 h-4 text-brand-500" />
-              New Subject
+              <span>New Subject</span>
             </button>
             <button
               onClick={() => setShowClassModal(true)}
-              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition shadow-xs flex items-center gap-1.5"
+              className="btn btn-primary btn-md shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              New Class
+              <span>New Class</span>
             </button>
           </div>
         }
@@ -534,7 +564,23 @@ export default function Classes() {
                   </div>
 
                   {/* Student Roll Table */}
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted mb-3">Enrolled Students ({classStudents.length})</h4>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted">
+                      Enrolled Students ({classStudents.length})
+                    </h4>
+                    {classStudents.length > 0 && (
+                      <button
+                        onClick={() => {
+                          setSelectedSubjectIds([]);
+                          setShowBulkSubjectModal(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-xs font-semibold hover:bg-emerald-600/25 transition cursor-pointer"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        <span>Enroll Class to Subjects</span>
+                      </button>
+                    )}
+                  </div>
                   <DataTable
                     columns={[
                       {
@@ -1108,12 +1154,12 @@ export default function Classes() {
       </Modal>
 
       {/* MODAL: Teaching Assignment */}
-      <Modal
+      <Modal/>
         isOpen={showAssignModal}
         onClose={() => setShowAssignModal(false)}
         title="Assign Teacher to Subject & Class"
         description="Allocate an educator to deliver a curriculum subject for a specific stream."
-      >
+      
         <form onSubmit={handleAssignTeacher} className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-ink mb-1">Target Class *</label>
@@ -1177,6 +1223,100 @@ export default function Classes() {
             </button>
           </div>
         </form>
+      {/* MODAL: Bulk Enroll Class to Subjects */}
+      <Modal
+        isOpen={showBulkSubjectModal}
+        onClose={() => setShowBulkSubjectModal(false)}
+        title={`Enroll ${activeClass?.name || 'Class'} to Subjects`}
+        description={`Select curriculum subjects to assign to all ${classStudents.length} enrolled learners.`}
+      >
+        <div className="space-y-4">
+          <div className="p-3 bg-brand-50/60 dark:bg-brand-950/30 border border-brand-500/20 rounded-xl text-xs flex items-center justify-between">
+            <span className="text-muted">
+              Target Cohort: <strong className="text-ink">{activeClass?.name}</strong> ({classStudents.length} students)
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedSubjectIds.length === subjects.length) {
+                    setSelectedSubjectIds([]);
+                  } else {
+                    setSelectedSubjectIds(subjects.map(s => s.id));
+                  }
+                }}
+                className="text-xs font-semibold text-brand-700 dark:text-brand-300 hover:underline cursor-pointer"
+              >
+                {selectedSubjectIds.length === subjects.length ? 'Deselect All' : 'Select All Subjects'}
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
+            {subjects.length === 0 ? (
+              <div className="p-4 text-center text-xs text-muted">
+                No subjects registered in this school yet. Add subjects in the Curriculum tab first.
+              </div>
+            ) : (
+              subjects.map(sub => {
+                const isChecked = selectedSubjectIds.includes(sub.id);
+                return (
+                  <label
+                    key={sub.id}
+                    className={`flex items-center justify-between p-2.5 rounded-lg border text-xs cursor-pointer transition ${
+                      isChecked
+                        ? 'bg-brand-500/10 border-brand-500 text-ink font-semibold'
+                        : 'bg-surface border-line text-muted hover:bg-canvas'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {
+                          setSelectedSubjectIds(prev =>
+                            prev.includes(sub.id) ? prev.filter(id => id !== sub.id) : [...prev, sub.id]
+                          );
+                        }}
+                        className="rounded border-line text-brand-700 focus:ring-brand-500"
+                      />
+                      <div>
+                        <span className="text-ink font-medium">{sub.name}</span>
+                        {sub.code && <span className="text-[10px] text-muted font-mono ml-2">({sub.code})</span>}
+                      </div>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-canvas border border-line text-muted">
+                      {sub.category || 'General'}
+                    </span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-3 border-t border-line">
+            <span className="text-xs text-muted">
+              {selectedSubjectIds.length} of {subjects.length} subjects selected
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowBulkSubjectModal(false)}
+                className="px-4 py-2 rounded-xl border border-line text-xs font-semibold hover:bg-canvas"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={selectedSubjectIds.length === 0 || enrollingSubjects || classStudents.length === 0}
+                onClick={handleBulkEnrollSubjects}
+                className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-bold hover:bg-brand-900 transition disabled:opacity-50 flex items-center gap-1.5 shadow-xs"
+              >
+                {enrollingSubjects ? 'Enrolling...' : `Confirm & Enroll (${selectedSubjectIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
       </Modal>
 
       {/* Confirm Delete Dialog */}

@@ -21,7 +21,7 @@ import {
 import {
   CreditCard, DollarSign, TrendingUp, AlertTriangle, FileText,
   Search, CheckCircle2, XCircle, Printer, Eye, ArrowRight,
-  ShieldCheck, RefreshCw, Upload, Download, Landmark, Plus
+  ShieldCheck, RefreshCw, Upload, Download, Landmark, Plus, Lock
 } from 'lucide-react';
 import ImportModal from '../components/ImportModal';
 import { getCurrentTerm } from '../utils/dateTerms';
@@ -226,6 +226,36 @@ export default function Fees() {
     }
   };
 
+  const handleRejectRemote = async (id) => {
+    try {
+      await api.post(`/schools/${schoolId}/remote-payments/${id}/reject`, { reason: 'Proof of payment declined' });
+      toast.success('Remote payment declined.');
+      invalidate([`remote_payments_${schoolId}`, `summary_${schoolId}`]);
+      refetchRemote();
+    } catch (err) {
+      toast.error('Failed to decline payment.');
+    }
+  };
+
+  const handleReversePayment = async (id) => {
+    if (user?.role !== 'super_admin') {
+      toast.error('Only Super Administrators can reverse an approved payment.');
+      return;
+    }
+    const reason = window.prompt('Super Admin: Please enter the official reason for reversing this approved payment:');
+    if (!reason) return;
+
+    try {
+      await api.post(`/schools/${schoolId}/remote-payments/${id}/reverse`, { reason });
+      toast.success('Approved payment successfully reversed.');
+      invalidate([`remote_payments_${schoolId}`, `fees_ledger_${schoolId}`, `fees_summary_${schoolId}`]);
+      refetchRemote();
+      refetchFees();
+    } catch (err) {
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to reverse payment.');
+    }
+  };
+
   const handlePrintReceipt = () => {
     window.print();
   };
@@ -282,24 +312,24 @@ export default function Fees() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setBillModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-brand-700 bg-surface border border-brand-500/30 rounded-lg shadow-2xs hover:bg-brand-50 dark:hover:bg-brand-950/50 transition cursor-pointer"
+              className="btn btn-secondary btn-md shadow-xs"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-4 h-4 text-brand-600" />
               <span>Bill Student Fee</span>
             </button>
             <button
               onClick={() => setImportModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-ink bg-surface border border-line rounded-lg shadow-2xs hover:bg-canvas transition cursor-pointer"
+              className="btn btn-secondary btn-md shadow-xs"
             >
-              <Upload className="w-3.5 h-3.5" />
+              <Upload className="w-4 h-4 text-muted" />
               <span>Import Fees</span>
             </button>
             <button
               onClick={() => handleTabChange('cashier')}
-              className="btn-primary"
+              className="btn btn-primary btn-md shadow-xs"
             >
-              <CreditCard className="w-4 h-4 mr-1.5" />
-              Cashier POS
+              <CreditCard className="w-4 h-4" />
+              <span>Cashier POS</span>
             </button>
           </div>
         }
@@ -510,13 +540,14 @@ export default function Fees() {
                 />
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 flex justify-end">
                 <button
                   type="submit"
                   disabled={cashierLoading || !selectedStudentFee}
-                  className="btn-primary w-full py-3 text-sm shadow-md"
+                  className="btn btn-primary btn-md shadow-sm"
                 >
-                  {cashierLoading ? 'Recording Transaction…' : 'Issue Official Receipt & Update Ledger'}
+                  <FileText className="w-4 h-4" />
+                  <span>{cashierLoading ? 'Recording Transaction…' : 'Issue Official Receipt & Update Ledger'}</span>
                 </button>
               </div>
             </form>
@@ -661,12 +692,40 @@ export default function Fees() {
                         <StatusPill status={p.status || 'pending'} />
                       </td>
                       <td className="py-3 text-right">
-                        <button
-                          onClick={() => handleApproveRemote(p.id)}
-                          className="px-3 py-1 rounded-lg bg-brand-700 text-white font-semibold text-xs hover:bg-brand-900 transition-colors cursor-pointer"
-                        >
-                          Approve POP
-                        </button>
+                        {p.status === 'approved' || p.status === 'success' ? (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800">
+                              <Lock className="w-3 h-3" />
+                              <span>Approved &amp; Immutable</span>
+                            </span>
+                            {user?.role === 'super_admin' && (
+                              <button
+                                onClick={() => handleReversePayment(p.id)}
+                                className="px-2 py-1 rounded-lg text-[10px] font-bold text-danger hover:bg-red-50 dark:hover:bg-red-950/40 border border-red-200 transition cursor-pointer"
+                                title="Super Admin Override: Reverse this approved payment"
+                              >
+                                Reverse
+                              </button>
+                            )}
+                          </div>
+                        ) : p.status === 'rejected' ? (
+                          <span className="text-[11px] text-muted font-mono">Declined</span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleApproveRemote(p.id)}
+                              className="px-3 py-1 rounded-lg bg-brand-700 text-white font-semibold text-xs hover:bg-brand-900 transition-colors cursor-pointer"
+                            >
+                              Approve POP
+                            </button>
+                            <button
+                              onClick={() => handleRejectRemote(p.id)}
+                              className="px-2.5 py-1 rounded-lg bg-surface border border-line text-muted hover:text-danger font-semibold text-xs transition cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

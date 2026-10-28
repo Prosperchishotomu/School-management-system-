@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
  */
 export default function Modal({
   isOpen,
+  open,
   onClose,
   title = null,
   subtitle = null,
@@ -15,9 +16,10 @@ export default function Modal({
   className = ''
 }) {
   const modalRef = useRef(null);
+  const isModalOpen = Boolean(isOpen ?? open);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isModalOpen) return;
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -33,24 +35,25 @@ export default function Modal({
       window.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = '';
     };
-  }, [isOpen, onClose]);
+  }, [isModalOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isModalOpen) return null;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? 'modal-title' : undefined}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-xs animate-fadeIn"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-xs animate-fadeIn overflow-y-auto"
+      onClick={onClose}
     >
       <div
         ref={modalRef}
         onClick={(e) => e.stopPropagation()}
-        className={`w-full ${maxWidth} bg-surface text-ink border border-line rounded-2xl shadow-xl flex flex-col max-h-[90vh] animate-slideUp ${className}`}
+        className={`w-full ${maxWidth} bg-surface text-ink border border-line rounded-2xl shadow-2xl flex flex-col my-auto max-h-[90vh] animate-slideUp overflow-hidden ${className}`}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-line flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-line flex items-center justify-between shrink-0 bg-surface">
           <div>
             {title && (
               <h3 id="modal-title" className="font-display font-bold text-lg text-ink tracking-tight">
@@ -67,20 +70,20 @@ export default function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close modal"
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-muted hover:text-ink hover:bg-canvas transition-colors cursor-pointer"
+            className="btn-close"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Content body */}
-        <div className="p-6 overflow-y-auto flex-1">
+        <div className="p-5 sm:p-6 overflow-y-auto flex-1 overscroll-contain">
           {children}
         </div>
 
         {/* Footer */}
         {footer && (
-          <div className="px-6 py-3.5 border-t border-line bg-canvas/30 shrink-0 flex items-center justify-end gap-2.5">
+          <div className="px-6 py-3.5 border-t border-line bg-canvas/40 shrink-0 flex items-center justify-end gap-2.5">
             {footer}
           </div>
         )}

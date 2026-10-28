@@ -9,6 +9,7 @@ const {
   normalizeCode,
   normalizeText
 } = require('../utils/normalizer');
+const { validateClassForSchool } = require('../utils/classValidator');
 
 // GET /schools/:schoolId/classes
 router.get('/classes', authenticateToken, async (req, res) => {
@@ -114,26 +115,19 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class name is required.' } });
     }
 
-    const school = await queryOne('SELECT school_type, has_alevel FROM schools WHERE id = ?', [schoolId]);
-    const schoolType = (school?.school_type || 'primary').toLowerCase();
-    const hasAlevel = Boolean(school?.has_alevel || schoolType === 'high_school' || schoolType === 'combined' || schoolType === 'a_level');
-    const isOrdinaryLevel = (schoolType === 'secondary' || schoolType === 'o_level' || schoolType === 'secondary_o_level') && !hasAlevel;
-
-    if (isOrdinaryLevel && (/form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(cleanName) || /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b/i.test(grade_level || ''))) {
-      return res.status(400).json({
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Ordinary level secondary schools offer Form 1 to Form 4 only. Form 5 and Form 6 (Advanced Level) are not available for Ordinary Level institutions.'
-        }
-      });
+    const school = await queryOne('SELECT id, name, school_type, has_alevel, has_streams FROM schools WHERE id = ?', [schoolId]);
+    const validation = validateClassForSchool(cleanName, school, stream);
+    if (!validation.valid) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: validation.error } });
     }
 
-    const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, cleanName]);
-    if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${cleanName}' already exists in this school.` } });
+    const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, validation.cleanName]);
+    if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${validation.cleanName}' already exists in this school.` } });
 
     const classId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-    const resolvedLevel = level || (cleanName.toLowerCase().includes('form') ? 'Secondary' : 'Primary');
-    const resolvedGradeLevel = grade_level || (cleanName.toLowerCase().includes('form') ? cleanName.split(' ')[0] : 'Primary');
+    const resolvedLevel = level || validation.level;
+    const resolvedGradeLevel = grade_level || validation.gradeLevel;
+    const resolvedStream = validation.stream || (stream ? normalizeText(stream) : null);
 
     const parsedCapacity = (capacity !== undefined && capacity !== '' && capacity !== null && !isNaN(parseInt(capacity))) 
       ? parseInt(capacity) 
@@ -141,7 +135,7 @@ router.post('/classes', authenticateToken, requireRoles('school_admin', 'super_a
 
     await query(
       `INSERT INTO classes (id, school_id, name, level, grade_level, stream, capacity, form_master_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [classId, schoolId, cleanName, resolvedLevel, resolvedGradeLevel, stream ? normalizeText(stream) : null, parsedCapacity, form_master_id || null]
+      [classId, schoolId, validation.cleanName, resolvedLevel, resolvedGradeLevel, resolvedStream, parsedCapacity, form_master_id || null]
     );
 
     broadcastInvalidation(schoolId, ['classes', 'academics', 'dashboard', 'summary'], 'class_created');
@@ -170,7 +164,7 @@ router.delete('/classes/:id', authenticateToken, requireRoles('school_admin', 's
 router.patch('/classes/:id', authenticateToken, requireRoles('school_admin', 'super_admin'), async (req, res) => {
   try {
     const { schoolId, id } = req.params;
-    const { name, level, capacity, form_master_id } = req.body;
+    const { name, level, capacity, form_master_id, stream } = req.body;
 
     // Check if class exists
     const existing = await queryOne('SELECT * FROM classes WHERE id = ? AND school_id = ?', [id, schoolId]);
@@ -178,29 +172,27 @@ router.patch('/classes/:id', authenticateToken, requireRoles('school_admin', 'su
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Class not found.' } });
     }
 
-    const updatedName = name !== undefined ? name.trim() : existing.name;
-    const updatedLevel = level !== undefined ? level : existing.level;
-    const updatedCapacity = capacity !== undefined ? parseInt(capacity) : existing.capacity;
-    const updatedFormMaster = form_master_id !== undefined ? (form_master_id || null) : existing.form_master_id;
+    let updatedName = existing.name;
+    let updatedLevel = level !== undefined ? level : existing.level;
+    let updatedStream = stream !== undefined ? (stream ? normalizeText(stream) : null) : existing.stream;
 
     if (name !== undefined && name.trim().toLowerCase() !== existing.name.toLowerCase()) {
-      const school = await queryOne('SELECT school_type, has_alevel FROM schools WHERE id = ?', [schoolId]);
-      const schoolType = (school?.school_type || 'primary').toLowerCase();
-      const hasAlevel = Boolean(school?.has_alevel || schoolType === 'high_school' || schoolType === 'combined' || schoolType === 'a_level');
-      const isOrdinaryLevel = (schoolType === 'secondary' || schoolType === 'o_level' || schoolType === 'secondary_o_level') && !hasAlevel;
-
-      if (isOrdinaryLevel && (/form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b|advanced/i.test(name.trim()) || /form\s*[5-6]|lower\s*6|upper\s*6|\bl6\b|\bu6\b/i.test(level || ''))) {
-        return res.status(400).json({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'Ordinary level secondary schools offer Form 1 to Form 4 only. Form 5 and Form 6 (Advanced Level) are not available for Ordinary Level institutions.'
-          }
-        });
+      const school = await queryOne('SELECT id, name, school_type, has_alevel, has_streams FROM schools WHERE id = ?', [schoolId]);
+      const validation = validateClassForSchool(name, school, stream !== undefined ? stream : existing.stream);
+      if (!validation.valid) {
+        return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: validation.error } });
       }
 
-      const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?)', [schoolId, name.trim()]);
-      if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${name.trim()}' already exists.` } });
+      const dupClass = await queryOne('SELECT id FROM classes WHERE school_id = ? AND LOWER(name) = LOWER(?) AND id != ?', [schoolId, validation.cleanName, id]);
+      if (dupClass) return res.status(409).json({ error: { code: 'DUPLICATE', message: `Class '${validation.cleanName}' already exists.` } });
+
+      updatedName = validation.cleanName;
+      if (level === undefined) updatedLevel = validation.level;
+      if (stream === undefined) updatedStream = validation.stream;
     }
+
+    const updatedCapacity = capacity !== undefined ? parseInt(capacity) : existing.capacity;
+    const updatedFormMaster = form_master_id !== undefined ? (form_master_id || null) : existing.form_master_id;
 
     await query(
       `UPDATE classes SET name = ?, level = ?, capacity = ?, form_master_id = ? WHERE id = ? AND school_id = ?`,
@@ -1257,9 +1249,9 @@ router.get('/students/:studentId/subjects', authenticateToken, async (req, res) 
       `SELECT ss.id as assignment_id, ss.subject_id, sub.name as subject_name, sub.code as subject_code, ss.status
        FROM student_subjects ss
        JOIN subjects sub ON ss.subject_id = sub.id
-       WHERE ss.school_id = ? AND ss.student_id = ? AND (ss.status = 'active' OR ss.status IS NULL)
+       WHERE ss.student_id = ? AND (ss.status = 'active' OR ss.status IS NULL)
        ORDER BY sub.name ASC`,
-      [schoolId, studentId]
+      [studentId]
     );
 
     const allSubjects = await query(
@@ -1280,8 +1272,8 @@ router.get('/students/:studentId/subjects', authenticateToken, async (req, res) 
   }
 });
 
-// PUT /schools/:schoolId/students/:studentId/subjects (Update student's assigned subjects)
-router.put('/students/:studentId/subjects', authenticateToken, requireRoles('teacher', 'head', 'school_admin', 'super_admin'), async (req, res) => {
+// PUT /schools/:schoolId/students/:studentId/subjects (Update student's assigned/chosen subjects)
+router.put('/students/:studentId/subjects', authenticateToken, async (req, res) => {
   try {
     const { schoolId, studentId } = req.params;
     const { subject_ids, class_id } = req.body;
@@ -1289,11 +1281,35 @@ router.put('/students/:studentId/subjects', authenticateToken, requireRoles('tea
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'subject_ids must be an array of subject IDs.' } });
     }
 
-    const student = await queryOne('SELECT id, class_id FROM students WHERE id = ? AND school_id = ?', [studentId, schoolId]);
+    const student = await queryOne('SELECT id, user_id, class_id, first_name, last_name FROM students WHERE id = ? AND school_id = ?', [studentId, schoolId]);
+    if (!student) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Student record not found.' } });
+    }
+
+    // Authorization: School Staff/Admins, or Student choosing their own electives, or linked Guardian
+    const userRole = (req.user?.role || '').toLowerCase();
+    const isStaff = ['teacher', 'head', 'school_admin', 'super_admin'].includes(userRole);
+    const isSelfStudent = (userRole === 'student' && (req.user.student_id === studentId || req.user.id === student.user_id || req.user.id === studentId));
+    
+    let isParentOfStudent = false;
+    if (userRole === 'parent') {
+      const parentLink = await queryOne(
+        `SELECT sg.id FROM student_guardians sg
+         JOIN guardians g ON sg.guardian_id = g.id
+         WHERE sg.student_id = ? AND g.school_id = ? AND (g.user_id = ? OR g.email = ? OR g.phone = ?)`,
+        [studentId, schoolId, req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      if (parentLink) isParentOfStudent = true;
+    }
+
+    if (!isStaff && !isSelfStudent && !isParentOfStudent) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You do not have permission to choose elective subjects for this student.' } });
+    }
+
     const targetClassId = class_id || student?.class_id || null;
 
-    // Reset student subjects
-    await query('DELETE FROM student_subjects WHERE school_id = ? AND student_id = ?', [schoolId, studentId]);
+    // Reset and assign elective subjects
+    await query('DELETE FROM student_subjects WHERE student_id = ?', [studentId]);
 
     for (const sId of subject_ids) {
       if (sId) {
@@ -1307,7 +1323,7 @@ router.put('/students/:studentId/subjects', authenticateToken, requireRoles('tea
     }
 
     broadcastInvalidation(schoolId, ['results', 'students', 'classes'], 'student_subjects_updated');
-    return res.json({ success: true, message: `Updated elective subject enrollment for ${student?.first_name || 'student'}.` });
+    return res.json({ success: true, message: `Elective subject choices successfully saved for ${student?.first_name || 'student'}.` });
   } catch (err) {
     console.error('Update student subjects error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update student subjects.' } });

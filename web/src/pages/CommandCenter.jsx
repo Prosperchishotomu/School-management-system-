@@ -231,7 +231,7 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
                   <p className="text-xs text-ink/50 font-sans">Live telemetry data audit</p>
                 </div>
               </div>
-              <button onClick={() => setCardModal(null)} className="p-1.5 hover:bg-sage/10 rounded-lg text-ink/50 hover:text-ink cursor-pointer">
+              <button onClick={() => setCardModal(null)} className="btn-close" aria-label="Close telemetry modal">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -306,7 +306,7 @@ const OverviewTab = ({ stats, onRefresh, schools = [] }) => {
             </div>
 
             <div className="flex justify-end pt-2 border-t border-line-border/20">
-              <button onClick={() => setCardModal(null)} className="px-4 py-2 bg-teal-primary text-paper text-xs font-bold font-sans rounded-xl hover:bg-teal-dark transition-colors cursor-pointer">
+              <button onClick={() => setCardModal(null)} className="btn btn-secondary btn-sm">
                 Close Telemetry
               </button>
             </div>
@@ -364,16 +364,16 @@ const InteractiveLoader = ({ message = 'Synchronizing' }) => {
 const ColorCodedAlert = ({ type = 'info', text, onClose }) => {
   if (!text) return null;
   const styles = {
-    success: 'bg-emerald-50 text-emerald-900 border-emerald-300 shadow-[0_4px_12px_rgba(16,185,129,0.1)]',
-    warning: 'bg-amber-50 text-amber-950 border-amber-300 shadow-[0_4px_12px_rgba(245,158,11,0.1)]',
-    error: 'bg-rose-50 text-rose-950 border-rose-300 shadow-[0_4px_12px_rgba(244,63,94,0.1)]',
-    info: 'bg-sky-50 text-sky-950 border-sky-300 shadow-[0_4px_12px_rgba(56,189,248,0.1)]'
+    success: 'bg-emerald-500/10 text-emerald-950 dark:text-emerald-100 border-emerald-500/30 shadow-[0_4px_12px_rgba(16,185,129,0.1)]',
+    warning: 'bg-amber-500/10 text-amber-950 dark:text-amber-100 border-amber-500/30 shadow-[0_4px_12px_rgba(245,158,11,0.1)]',
+    error: 'bg-rose-500/10 text-rose-950 dark:text-rose-100 border-rose-500/30 shadow-[0_4px_12px_rgba(244,63,94,0.1)]',
+    info: 'bg-sky-500/10 text-sky-950 dark:text-sky-100 border-sky-500/30 shadow-[0_4px_12px_rgba(56,189,248,0.1)]'
   };
   const icons = {
-    success: <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0 animate-bounce" />,
-    warning: <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 animate-pulse" />,
-    error: <ShieldAlert className="w-4 h-4 text-rose-600 flex-shrink-0 animate-bounce" />,
-    info: <Info className="w-4 h-4 text-sky-600 flex-shrink-0" />
+    success: <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 animate-bounce" />,
+    warning: <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 animate-pulse" />,
+    error: <ShieldAlert className="w-4 h-4 text-rose-600 dark:text-rose-400 flex-shrink-0 animate-bounce" />,
+    info: <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" />
   };
   return (
     <div className={`p-4 rounded-xl border flex items-center justify-between text-xs font-semibold font-sans transition-all animate-slideDown ${styles[type]}`}>
@@ -382,7 +382,7 @@ const ColorCodedAlert = ({ type = 'info', text, onClose }) => {
         <span>{text}</span>
       </div>
       {onClose && (
-        <button onClick={onClose} className="hover:opacity-75 transition-opacity ml-4 cursor-pointer text-ink/50 hover:text-ink">
+        <button onClick={onClose} aria-label="Dismiss alert" className="btn-close ml-4 shrink-0">
           <X className="w-4 h-4" />
         </button>
       )}
@@ -1144,14 +1144,14 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                           <td className="px-5 py-3 text-right space-x-2">
                             <button
                               onClick={() => { setSelectedUserForReset(u); setResetPassValue(''); setShowResetPassModal(true); }}
-                              className="px-2.5 py-1.5 bg-paper border border-line-border hover:bg-sage/10 text-[10px] font-semibold rounded-lg cursor-pointer"
+                              className="btn btn-secondary btn-xs"
                             >
                               Reset Password
                             </button>
                             <button
                               disabled={u.username === user.username}
                               onClick={() => handleDeactivateUser(u)}
-                              className="px-2.5 py-1.5 bg-brick-critical/5 hover:bg-brick-critical text-brick-critical hover:text-paper text-[10px] font-semibold rounded-lg cursor-pointer"
+                              className="btn btn-delete btn-xs"
                             >
                               Lock Account
                             </button>
@@ -1259,7 +1259,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                       {periodsList.map(p => (
                         <span key={p} className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-paper border border-line-border/30 rounded-lg font-mono text-[10px]">
                           <span>{p}</span>
-                          <button type="button" onClick={() => handleDeletePeriod(p)} className="text-brick-critical/60 hover:text-brick-critical ml-1.5 cursor-pointer">
+                          <button type="button" onClick={() => handleDeletePeriod(p)} className="p-0.5 rounded text-rose-500 hover:text-rose-600 hover:bg-rose-500/15 ml-1.5 cursor-pointer transition-colors" title="Delete Period" aria-label="Delete period">
                             <X className="w-3 h-3" />
                           </button>
                         </span>
@@ -1576,7 +1576,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         {showAddUserModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/55 backdrop-blur-sm">
             <div className="w-full max-w-md bg-paper rounded-2xl shadow-2xl border border-line-border/30 p-6 animate-fadeIn relative">
-              <button onClick={() => setShowAddUserModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
+              <button onClick={() => setShowAddUserModal(false)} className="btn-close absolute right-4 top-4" aria-label="Close modal"><X className="w-5 h-5"/></button>
               <h4 className="text-lg font-display font-bold text-ink border-b border-line-border/20 pb-3 mb-4">Register User Login Credentials</h4>
               
               <form onSubmit={handleAddUserSubmit} className="space-y-4 text-xs font-sans">
@@ -1669,8 +1669,8 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 )}
 
                 <div className="flex justify-end space-x-2 pt-2 border-t border-line-border/30">
-                  <button type="button" onClick={() => setShowAddUserModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                  <button type="submit" className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer">Create Account</button>
+                  <button type="button" onClick={() => setShowAddUserModal(false)} className="btn btn-secondary btn-sm">Cancel</button>
+                  <button type="submit" className="btn btn-primary btn-sm">Create Account</button>
                 </div>
               </form>
             </div>
@@ -1681,7 +1681,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         {showResetPassModal && selectedUserForReset && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/55 backdrop-blur-sm">
             <div className="w-full max-w-sm bg-paper rounded-2xl shadow-2xl border border-line-border/30 p-6 animate-fadeIn relative">
-              <button onClick={() => { setShowResetPassModal(false); setSelectedUserForReset(null); }} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
+              <button onClick={() => { setShowResetPassModal(false); setSelectedUserForReset(null); }} className="btn-close absolute right-4 top-4" aria-label="Close modal"><X className="w-5 h-5"/></button>
               <h4 className="text-lg font-display font-bold text-ink border-b border-line-border/20 pb-3 mb-4">Reset User Password</h4>
               <p className="text-xs text-ink/60 mb-4">Assign a new login password for user <b>{selectedUserForReset.username}</b>.</p>
               
@@ -1707,8 +1707,8 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                   </div>
                 </div>
                 <div className="flex justify-end space-x-2 pt-2 border-t border-line-border/30">
-                  <button type="button" onClick={() => { setShowResetPassModal(false); setSelectedUserForReset(null); }} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                  <button type="submit" className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer">Reset Password</button>
+                  <button type="button" onClick={() => { setShowResetPassModal(false); setSelectedUserForReset(null); }} className="btn btn-secondary btn-sm">Cancel</button>
+                  <button type="submit" className="btn btn-primary btn-sm">Reset Password</button>
                 </div>
               </form>
             </div>
@@ -1719,7 +1719,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         {showAddStaffModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/55 backdrop-blur-sm">
             <div className="w-full max-w-md bg-paper rounded-2xl shadow-2xl border border-line-border/30 p-6 animate-fadeIn relative">
-              <button onClick={() => setShowAddStaffModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
+              <button onClick={() => setShowAddStaffModal(false)} className="btn-close absolute right-4 top-4" aria-label="Close modal"><X className="w-5 h-5"/></button>
               <h4 className="text-lg font-display font-bold text-ink border-b border-line-border/20 pb-3 mb-4">Register Teacher / Staff Profile</h4>
               
               <form onSubmit={handleAddStaffSubmit} className="space-y-4 text-xs font-sans">
@@ -1799,8 +1799,8 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 </div>
 
                 <div className="flex justify-end space-x-2 pt-2 border-t border-line-border/30">
-                  <button type="button" onClick={() => setShowAddStaffModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                  <button type="submit" className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer">Save Profile</button>
+                  <button type="button" onClick={() => setShowAddStaffModal(false)} className="btn btn-secondary btn-sm">Cancel</button>
+                  <button type="submit" className="btn btn-primary btn-sm">Save Profile</button>
                 </div>
               </form>
             </div>
@@ -1811,7 +1811,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         {showSlotModal && editSlot && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/55 backdrop-blur-sm">
             <div className="w-full max-w-sm bg-paper rounded-2xl shadow-2xl border border-line-border/30 p-6 animate-fadeIn relative">
-              <button onClick={() => setShowSlotModal(false)} className="absolute right-4 top-4 text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
+              <button onClick={() => setShowSlotModal(false)} className="btn-close absolute right-4 top-4" aria-label="Close modal"><X className="w-5 h-5"/></button>
               <h4 className="text-lg font-display font-bold text-ink border-b border-line-border/20 pb-3 mb-4">Schedule Class Lesson</h4>
               
               <div className="p-3 bg-sage/5 border border-line-border/20 rounded-xl mb-4 font-mono text-[10px] space-y-1">
@@ -1852,14 +1852,14 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
 
                 <div className="flex justify-between items-center pt-2 border-t border-line-border/30 gap-2">
                   {editSlot.id ? (
-                    <button type="button" onClick={handleDeleteSlot} className="px-3.5 py-2 bg-brick-critical/10 text-brick-critical rounded-xl text-xs font-semibold cursor-pointer">
+                    <button type="button" onClick={handleDeleteSlot} className="btn btn-delete btn-sm">
                       Unschedule
                     </button>
                   ) : <div />}
                   <div className="flex space-x-2">
-                    <button type="button" onClick={() => setShowSlotModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold cursor-pointer">Cancel</button>
-                    <button type="submit" disabled={slotSaving} className="px-4 py-2 bg-teal-primary text-paper rounded-xl text-xs font-semibold cursor-pointer">
-                      Save Slot
+                    <button type="button" onClick={() => setShowSlotModal(false)} className="btn btn-secondary btn-sm">Cancel</button>
+                    <button type="submit" disabled={slotSaving} className="btn btn-primary btn-sm">
+                      {slotSaving ? 'Saving...' : 'Save Slot'}
                     </button>
                   </div>
                 </div>
@@ -1878,10 +1878,10 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
         <h3 className="text-base font-sans font-bold text-ink">Registered Tenant Schools</h3>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center space-x-1.5 px-3 py-2 bg-teal-primary text-paper text-xs font-semibold rounded-xl hover:bg-teal-dark transition-colors cursor-pointer"
+          className="btn btn-primary btn-md shadow-sm"
         >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Add School</span>
+          <Plus className="w-4 h-4" />
+          <span>Add School Tenant</span>
         </button>
       </div>
 
@@ -1920,36 +1920,36 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                     <div className="inline-flex items-center space-x-1.5">
                       <button
                         onClick={() => setConfigSchool(s)}
-                        className="px-2.5 py-1.5 bg-teal-primary/10 hover:bg-teal-primary text-teal-primary hover:text-paper text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center space-x-1 border border-teal-primary/20"
+                        className="btn btn-xs btn-outline"
                         title="Configure Enabled Pages & Boarding Model"
                       >
-                        <Sliders className="w-3 h-3" />
+                        <Sliders className="w-3.5 h-3.5" />
                         <span>Pages & Setup</span>
                       </button>
                       <button
                         onClick={() => setSelectedManageSchool(s)}
-                        className="px-2.5 py-1.5 bg-paper hover:bg-sage/10 text-ink border border-line-border/30 text-[10px] font-bold rounded-lg transition-all cursor-pointer flex items-center space-x-1"
+                        className="btn btn-xs btn-secondary"
                       >
-                        <span>Portal</span><Settings className="w-3 h-3" />
+                        <span>Portal</span><Settings className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => { changeActiveSchool(s.id); window.location.href = '/school-admin/dashboard'; }}
-                        className="px-2.5 py-1.5 bg-teal-primary/10 hover:bg-teal-primary text-teal-primary hover:text-paper text-[10px] font-semibold rounded-lg transition-all cursor-pointer flex items-center space-x-1"
+                        className="btn btn-xs btn-primary shadow-xs"
                       >
-                        <span>Drill-In</span><ChevronRight className="w-3 h-3" />
+                        <span>Drill-In</span><ChevronRight className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => { setEditSchool(s); setEditForm({ name: s.name, tuition_fee_benchmark: s.tuition_fee_benchmark ?? '' }); setShowEdit(true); }}
-                        className="px-2.5 py-1.5 bg-paper hover:bg-sage/10 text-ink border border-line-border/30 text-[10px] font-semibold rounded-lg transition-all cursor-pointer flex items-center space-x-1"
+                        className="btn btn-xs btn-secondary"
                       >
-                        <Edit3 className="w-3 h-3" /><span>Edit</span>
+                        <Edit3 className="w-3.5 h-3.5" /><span>Edit</span>
                       </button>
                       <button
                         onClick={() => handleStatusToggle(s)}
-                        className={`px-2.5 py-1.5 text-[10px] font-semibold rounded-lg transition-all cursor-pointer ${
+                        className={`btn btn-xs ${
                           s.status === 'active'
-                            ? 'bg-brick-critical/10 text-brick-critical hover:bg-brick-critical hover:text-paper'
-                            : 'bg-sage/30 text-teal-dark hover:bg-teal-primary hover:text-paper'
+                            ? 'btn-danger'
+                            : 'btn-primary'
                         }`}
                       >
                         {s.status === 'active' ? 'Suspend' : 'Activate'}
@@ -1991,7 +1991,7 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
           <div className="w-full max-w-md bg-paper rounded-2xl shadow-2xl border border-line-border/30 p-6">
             <div className="flex justify-between items-center mb-5">
               <h3 className="text-xl font-display font-bold text-ink">Edit School Details</h3>
-              <button onClick={() => setShowEdit(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
+              <button onClick={() => setShowEdit(false)} className="btn-close" aria-label="Close modal"><X className="w-5 h-5"/></button>
             </div>
             <form onSubmit={handleEditSubmit} className="space-y-4 text-sm font-sans">
               <div>
@@ -2003,8 +2003,8 @@ const SchoolsTab = ({ schools, licenses = [], onRefresh }) => {
                 <input required type="number" min="0" step="0.01" className="w-full glass-input rounded-xl text-sm numeric-data" value={editForm.tuition_fee_benchmark} onChange={e => setEditForm({...editForm, tuition_fee_benchmark: e.target.value})} />
               </div>
               <div className="flex justify-end space-x-2 pt-2">
-                <button type="button" onClick={() => setShowEdit(false)} className="px-4 py-2 border border-line-border rounded-xl text-sm text-ink/70 hover:bg-sage/10 cursor-pointer font-semibold">Cancel</button>
-                <button type="submit" disabled={editSaving} className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-sm font-semibold cursor-pointer flex items-center space-x-2">
+                <button type="button" onClick={() => setShowEdit(false)} className="btn btn-secondary btn-sm">Cancel</button>
+                <button type="submit" disabled={editSaving} className="btn btn-primary btn-sm flex items-center space-x-2">
                   {editSaving && <Loader2 className="w-3.5 h-3.5 animate-spin"/>}
                   <span>Save Changes</span>
                 </button>
@@ -2125,7 +2125,7 @@ const LicensesTab = ({ licenses, schools, onRefresh }) => {
           <div className="w-full max-w-md glass-panel rounded-2xl shadow-2xl border border-line-border/30 p-6">
             <div className="flex justify-between items-center mb-5">
               <h3 className="text-xl font-display font-bold text-ink">Issue License</h3>
-              <button onClick={() => setShowModal(false)} className="text-ink/50 hover:text-ink cursor-pointer"><X className="w-5 h-5"/></button>
+              <button onClick={() => setShowModal(false)} className="btn-close" aria-label="Close modal"><X className="w-5 h-5"/></button>
             </div>
             {err && <div className="mb-4 p-3 rounded-lg bg-brick-critical/10 text-brick-critical text-xs border border-brick-critical/20">{err}</div>}
             <form onSubmit={handleCreate} className="space-y-4 text-sm font-sans">
@@ -2160,8 +2160,8 @@ const LicensesTab = ({ licenses, schools, onRefresh }) => {
                 <input type="date" required className="w-full glass-input rounded-xl text-sm" value={form.expires_at} onChange={e => setForm({...form, expires_at: e.target.value})} />
               </div>
               <div className="flex justify-end space-x-2 pt-2">
-                <button type="button" onClick={() => setShowModal(false)} className="px-4 py-2 border border-line-border rounded-xl text-sm text-ink/70 hover:bg-sage/10 cursor-pointer">Cancel</button>
-                <button type="submit" disabled={saving} className="px-4 py-2 bg-teal-primary hover:bg-teal-dark text-paper rounded-xl text-sm font-semibold cursor-pointer flex items-center space-x-2">
+                <button type="button" onClick={() => setShowModal(false)} className="btn btn-secondary btn-sm">Cancel</button>
+                <button type="submit" disabled={saving} className="btn btn-primary btn-sm flex items-center space-x-2">
                   {saving && <Loader2 className="w-3.5 h-3.5 animate-spin"/>}
                   <span>{saving ? 'Signing...' : 'Issue License'}</span>
                 </button>

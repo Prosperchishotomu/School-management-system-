@@ -171,18 +171,20 @@ const LayoutShell = ({ children }) => {
   }
 
   return (
-    <div className="min-h-screen bg-canvas flex text-ink overflow-x-hidden">
+    <div className="h-screen bg-canvas flex text-ink overflow-hidden">
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       
-      <main className="flex-1 lg:ml-[260px] ml-0 min-h-screen bg-canvas overflow-y-auto w-full min-w-0 transition-all">
+      <div className="flex-1 lg:ml-[260px] ml-0 h-screen flex flex-col min-w-0">
         <TopBar onMenuClick={() => setSidebarOpen(true)} />
         <SyncStatus />
-        <div className="p-6 md:p-8 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
-          <ErrorBoundary>
-            {children}
-          </ErrorBoundary>
-        </div>
-      </main>
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-canvas">
+          <div className="p-6 md:p-8 max-w-7xl w-full mx-auto space-y-6 animate-fadeIn">
+            <ErrorBoundary>
+              {children}
+            </ErrorBoundary>
+          </div>
+        </main>
+      </div>
     </div>
   );
 };

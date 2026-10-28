@@ -53,6 +53,43 @@ export default function StudentProfile() {
   const [chargeDueDate, setChargeDueDate] = useState('');
   const [chargeLoading, setChargeLoading] = useState(false);
 
+  // Elective Subjects Selection
+  const [electiveModalOpen, setElectiveModalOpen] = useState(false);
+  const [selectedElectives, setSelectedElectives] = useState([]);
+  const [savingElectives, setSavingElectives] = useState(false);
+
+  // Fetch student assigned and available subjects
+  const { data: electiveData, refetch: refetchElectives } = useApi(
+    `student_electives_${schoolId}_${id}`,
+    () => api.get(`/schools/${schoolId}/students/${id}/subjects`).then(r => r.data || {})
+  );
+
+  useEffect(() => {
+    if (electiveData?.assigned_subjects) {
+      setSelectedElectives(electiveData.assigned_subjects.map(s => s.subject_id));
+    }
+  }, [electiveData]);
+
+  const handleSaveElectives = async () => {
+    setSavingElectives(true);
+    try {
+      await api.put(`/schools/${schoolId}/students/${id}/subjects`, {
+        subject_ids: selectedElectives
+      });
+      toast.success('Elective subject choices updated successfully.');
+      setElectiveModalOpen(false);
+      refetchElectives();
+      refetch();
+    } catch (err) {
+      toast.error(err.message || 'Failed to update subject choices.');
+    } finally {
+      setSavingElectives(false);
+    }
+  };
+
+  const availableSubjectsList = electiveData?.available_subjects || [];
+  const assignedSubjectsList = electiveData?.assigned_subjects || [];
+
   // Fetch 360 Student Profile
   const { data: profile, loading, refetch } = useApi(
     `student_profile_${schoolId}_${id}`,
@@ -74,7 +111,7 @@ export default function StudentProfile() {
     : (typeof feeSummary.balance === 'number' ? feeSummary.balance : 0);
 
   const subjects = profile?.subjects || [];
-  const attendanceStats = profile?.attendance_summary || { present: 41, total: 43, rate: 95 };
+  const attendanceStats = profile?.attendance_summary || null;
   const healthInfo = profile?.health || {};
 
   const handleTabChange = (tabId) => {
@@ -261,8 +298,8 @@ export default function StudentProfile() {
           <KpiStrip>
             <StatCard
               title="Attendance Rate"
-              value={attendanceStats.rate != null ? `${attendanceStats.rate}%` : '100%'}
-              sublabel={`${attendanceStats.present || 0} of ${attendanceStats.total || 0} sessions`}
+              value={attendanceStats && attendanceStats.rate != null ? `${attendanceStats.rate}%` : 'N/A'}
+              sublabel={attendanceStats && attendanceStats.total > 0 ? `${attendanceStats.present || 0} of ${attendanceStats.total} sessions` : 'No sessions logged'}
               icon={CalendarCheck}
               iconColor="brand"
             />
@@ -277,7 +314,7 @@ export default function StudentProfile() {
 
             <StatCard
               title="Active Subjects"
-              value={String(subjects.length)}
+              value={String(assignedSubjectsList.length || subjects.length)}
               sublabel="Enrolled subject courses"
               icon={GraduationCap}
               iconColor="info"
@@ -294,39 +331,41 @@ export default function StudentProfile() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card title="Academic Summary" subtitle="Term-on-term weighted averages">
-              <div className="space-y-3">
-                {[
-                  { term: 'Term 1, 2026', avg: '78.4%', trend: [68, 72, 75, 78] },
-                  { term: 'Term 3, 2025', avg: '76.0%', trend: [65, 70, 74, 76] },
-                  { term: 'Term 2, 2025', avg: '71.5%', trend: [60, 64, 68, 71] }
-                ].map(t => (
-                  <div key={t.term} className="flex items-center justify-between p-3 rounded-xl bg-canvas border border-line text-xs">
-                    <div>
-                      <span className="font-semibold text-ink">{t.term}</span>
-                      <div className="text-muted">Mean Aggregate</div>
+              {Array.isArray(profile?.academic_summary) && profile.academic_summary.length > 0 ? (
+                <div className="space-y-3">
+                  {profile.academic_summary.map(t => (
+                    <div key={t.term} className="flex items-center justify-between p-3 rounded-xl bg-canvas border border-line text-xs">
+                      <div>
+                        <span className="font-semibold text-ink">{t.term}</span>
+                        <div className="text-muted">Mean Aggregate</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        {t.trend && <Sparkline data={t.trend} width={70} height={24} />}
+                        <span className="font-mono font-bold text-sm text-ink">{t.avg}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <Sparkline data={t.trend} width={70} height={24} />
-                      <span className="font-mono font-bold text-sm text-ink">{t.avg}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-6 text-center text-xs text-muted">
+                  No term aggregate averages recorded yet for this student.
+                </div>
+              )}
             </Card>
 
             <Card title="Guardian & Contacts" subtitle="Registered parents on file">
               <div className="space-y-3 text-xs">
-                <div className="p-3 rounded-xl bg-canvas border border-line">
-                  <div className="font-semibold text-ink">{student.guardian_name || 'Mrs. Sarah Moyo'}</div>
-                  <div className="text-muted">Mother (Primary Contact)</div>
-                  <div className="flex items-center gap-4 mt-2 font-mono text-muted">
+                <div className="p-3.5 rounded-xl bg-canvas border border-line">
+                  <div className="font-semibold text-ink">{student.guardian_name || 'No guardian listed'}</div>
+                  <div className="text-muted">{student.guardian_relation ? `${student.guardian_relation} (Primary Contact)` : 'Primary Contact'}</div>
+                  <div className="flex flex-wrap items-center gap-4 mt-2 font-mono text-muted">
                     <span className="flex items-center gap-1">
                       <Phone className="w-3.5 h-3.5 text-brand-500" />
-                      {student.guardian_phone || '+263 77 234 5678'}
+                      {student.guardian_phone || 'None'}
                     </span>
                     <span className="flex items-center gap-1">
                       <Mail className="w-3.5 h-3.5 text-brand-500" />
-                      guardian@example.co.zw
+                      {student.guardian_email || student.parent_email || 'None'}
                     </span>
                   </div>
                 </div>
@@ -338,7 +377,20 @@ export default function StudentProfile() {
 
       {/* Tab 2: Academic Subjects */}
       {activeTab === 'academic' && (
-        <Card title="Curriculum & Subject Component Marks" subtitle="ZIMSEC School Based Assessments & Internal Examinations">
+        <Card
+          title="Curriculum & Subject Component Marks"
+          subtitle="Enrolled Electives, ZIMSEC School Based Assessments & Internal Examinations"
+          action={
+            <button
+              onClick={() => setElectiveModalOpen(true)}
+              className="btn btn-secondary btn-sm flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Students and staff can select elective subject combinations"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-brand-600" />
+              <span>Choose / Enroll Electives</span>
+            </button>
+          }
+        >
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -352,22 +404,31 @@ export default function StudentProfile() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line/60">
-                {(subjects.length > 0 ? subjects : [
-                  { code: 'MATH', name: 'Mathematics', type: 'core', ca: 82, exam: 76, total: 78, grade: 'A' },
-                  { code: 'PHYS', name: 'Physics', type: 'core', ca: 78, exam: 72, total: 74, grade: 'B' },
-                  { code: 'CHEM', name: 'Chemistry', type: 'core', ca: 85, exam: 80, total: 81, grade: 'A' },
-                  { code: 'ENG',  name: 'English Language', type: 'core', ca: 88, exam: 84, total: 85, grade: 'A' },
-                  { code: 'CSC',  name: 'Computer Science', type: 'elective', ca: 92, exam: 90, total: 91, grade: 'A*' }
-                ]).map((s) => (
+                {(assignedSubjectsList.length > 0 ? assignedSubjectsList.map(as => {
+                  const matchingGr = subjects.find(s => s.code === as.subject_code || s.name === as.subject_name);
+                  return {
+                    code: as.subject_code || 'SUB',
+                    name: as.subject_name || 'Subject',
+                    type: as.status || 'elective',
+                    ca: matchingGr?.ca != null ? `${matchingGr.ca}%` : '—',
+                    exam: matchingGr?.exam != null ? `${matchingGr.exam}%` : '—',
+                    total: matchingGr?.total != null ? `${matchingGr.total}%` : '—',
+                    grade: matchingGr?.grade || '—'
+                  };
+                }) : subjects).map((s) => (
                   <tr key={s.code} className="hover:bg-canvas/40 transition-colors">
                     <td className="py-3 font-semibold text-ink">
                       <span>{s.name}</span>
                       <span className="font-mono text-muted text-[10px] ml-2">({s.code})</span>
                     </td>
-                    <td className="py-3 text-center uppercase font-mono text-[10px] text-muted">{s.type}</td>
-                    <td className="py-3 text-right font-mono tabular-nums">{s.ca}%</td>
-                    <td className="py-3 text-right font-mono tabular-nums">{s.exam}%</td>
-                    <td className="py-3 text-right font-mono font-bold text-ink tabular-nums">{s.total}%</td>
+                    <td className="py-3 text-center uppercase font-mono text-[10px]">
+                      <span className={`px-2 py-0.5 rounded-full ${s.type === 'core' ? 'bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'bg-accent/10 text-accent font-semibold'}`}>
+                        {s.type}
+                      </span>
+                    </td>
+                    <td className="py-3 text-right font-mono tabular-nums">{s.ca}</td>
+                    <td className="py-3 text-right font-mono tabular-nums">{s.exam}</td>
+                    <td className="py-3 text-right font-mono font-bold text-ink tabular-nums">{s.total}</td>
                     <td className="py-3 text-center">
                       <StatusPill status="present" label={s.grade} size="sm" />
                     </td>
@@ -376,25 +437,44 @@ export default function StudentProfile() {
               </tbody>
             </table>
           </div>
+          {assignedSubjectsList.length === 0 && subjects.length === 0 && (
+            <div className="py-8 text-center">
+              <EmptyState
+                icon={BookOpen}
+                title="No subjects enrolled"
+                message="This student has not yet been assigned subjects. Click 'Choose / Enroll Electives' above to configure their curriculum."
+              />
+            </div>
+          )}
         </Card>
       )}
 
       {/* Tab 3: Attendance */}
       {activeTab === 'attendance' && (
         <Card title="Attendance Registry" subtitle="Month-by-month session logs">
-          <div className="flex items-center justify-between p-4 rounded-xl bg-canvas border border-line mb-4">
-            <div>
-              <span className="font-bold text-sm text-ink">Term 1 Summary</span>
-              <p className="text-xs text-muted">Total school sessions held: 43</p>
-            </div>
-            <div className="flex items-center gap-6">
-              <div className="text-right">
-                <span className="font-mono font-bold text-sm text-brand-700">41 Days Present</span>
-                <div className="text-[11px] text-muted font-mono">2 Excused Absences</div>
+          {attendanceStats && attendanceStats.total > 0 ? (
+            <div className="flex items-center justify-between p-4 rounded-xl bg-canvas border border-line mb-4">
+              <div>
+                <span className="font-bold text-sm text-ink">Term Summary</span>
+                <p className="text-xs text-muted">Total school sessions held: {attendanceStats.total}</p>
               </div>
-              <ProgressRing value={95} size={64} color="brand" />
+              <div className="flex items-center gap-6">
+                <div className="text-right">
+                  <span className="font-mono font-bold text-sm text-brand-700">{attendanceStats.present || 0} Days Present</span>
+                  <div className="text-[11px] text-muted font-mono">{attendanceStats.absent || 0} Absences</div>
+                </div>
+                <ProgressRing value={attendanceStats.rate || 0} size={64} color="brand" />
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="py-8">
+              <EmptyState
+                icon={CalendarCheck}
+                title="No attendance records"
+                message="No roll-call sessions have been logged for this learner this term."
+              />
+            </div>
+          )}
         </Card>
       )}
 
@@ -621,15 +701,15 @@ export default function StudentProfile() {
             <div className="space-y-2 text-xs">
               <div className="flex justify-between py-1.5 border-b border-line text-muted">
                 <span>Blood Group:</span>
-                <span className="font-semibold text-ink font-mono">O+</span>
+                <span className="font-semibold text-ink font-mono">{healthInfo?.blood_group || student.blood_group || 'Not recorded'}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-line text-muted">
                 <span>Known Allergies:</span>
-                <span className="font-semibold text-accent">Penicillin</span>
+                <span className={`font-semibold ${healthInfo?.allergies ? 'text-accent' : 'text-muted'}`}>{healthInfo?.allergies || student.allergies || 'None declared'}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-line text-muted">
                 <span>Clinic Consultations:</span>
-                <span className="font-semibold text-ink">1 visit this term (Mild strain)</span>
+                <span className="font-semibold text-ink">{healthInfo?.clinic_visits || 'No visits this term'}</span>
               </div>
             </div>
           </Card>
@@ -639,24 +719,17 @@ export default function StudentProfile() {
       {/* Tab 6: Discipline & Merits */}
       {activeTab === 'discipline' && (
         <Card title="Conduct & Pastoral Timeline" subtitle="House points, commendations and disciplinary notices">
-          <Timeline
-            items={[
-              {
-                id: 1,
-                title: 'Academic Distinction Commendation',
-                description: 'Awarded 10 House Points for 1st place in Science Olympiad.',
-                timestamp: '2026-02-14',
-                type: 'positive'
-              },
-              {
-                id: 2,
-                title: 'Library Merit Award',
-                description: 'Commended by Head Librarian for book club stewardship.',
-                timestamp: '2026-02-02',
-                type: 'positive'
-              }
-            ]}
-          />
+          {Array.isArray(profile?.discipline) && profile.discipline.length > 0 ? (
+            <Timeline items={profile.discipline} />
+          ) : (
+            <div className="py-6">
+              <EmptyState
+                icon={Shield}
+                title="Clean Conduct Record"
+                message="No disciplinary infractions or pastoral sanctions on file for this learner."
+              />
+            </div>
+          )}
         </Card>
       )}
 
@@ -801,6 +874,122 @@ export default function StudentProfile() {
             </div>
           </div>
         </form>
+      </Modal>
+
+      {/* Elective Subjects Choice Modal */}
+      <Modal
+        isOpen={electiveModalOpen}
+        onClose={() => setElectiveModalOpen(false)}
+        title="Elective Subject Enrollment Provision"
+        subtitle={`Select subjects ${student.first_name || 'the student'} intends to study this academic cycle`}
+        maxWidth="max-w-3xl"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setElectiveModalOpen(false)}
+              className="btn btn-secondary btn-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={savingElectives}
+              onClick={handleSaveElectives}
+              className="btn btn-primary btn-sm"
+            >
+              {savingElectives ? 'Saving Choices...' : `Confirm & Save ${selectedElectives.length} Subject(s)`}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-xs font-sans">
+          <div className="p-3 rounded-xl bg-canvas border border-line flex flex-wrap items-center justify-between gap-2">
+            <span className="text-muted">Student: <strong className="text-ink">{student.first_name} {student.last_name}</strong></span>
+            <span className="text-muted">Class: <strong className="text-ink">{student.class_name || 'Enrolled Class'}</strong></span>
+            <span className="px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-700 dark:text-brand-300 font-mono font-bold">
+              {selectedElectives.length} Subjects Selected
+            </span>
+          </div>
+
+          {/* Quick Curriculum Stream Bundles */}
+          <div>
+            <label className="font-bold text-ink block mb-1.5 uppercase font-mono text-[10px] text-muted">
+              Quick Curriculum Combos:
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { name: 'Pure Sciences', keywords: ['math', 'phys', 'chem', 'bio'] },
+                { name: 'Commercials', keywords: ['acc', 'comm', 'econ', 'bus'] },
+                { name: 'Arts & Humanities', keywords: ['hist', 'lit', 'geo', 'relig', 'divin'] },
+                { name: 'Select All Core', keywords: ['math', 'eng'] },
+              ].map(bundle => (
+                <button
+                  key={bundle.name}
+                  type="button"
+                  onClick={() => {
+                    const matchedIds = availableSubjectsList
+                      .filter(sub => bundle.keywords.some(k => (sub.name || '').toLowerCase().includes(k) || (sub.code || '').toLowerCase().includes(k)))
+                      .map(s => s.id);
+                    setSelectedElectives(prev => Array.from(new Set([...prev, ...matchedIds])));
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-surface-alt hover:bg-surface border border-line text-xs font-medium text-ink cursor-pointer transition-colors"
+                >
+                  + Add {bundle.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setSelectedElectives([])}
+                className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-xs font-medium text-rose-600 dark:text-rose-400 cursor-pointer transition-colors"
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
+
+          {/* Subject Options Grid */}
+          <div>
+            <label className="font-bold text-ink block mb-2 uppercase font-mono text-[10px] text-muted">
+              Curriculum Catalog ({availableSubjectsList.length} Available Subjects):
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-72 overflow-y-auto p-1">
+              {availableSubjectsList.map(subj => {
+                const isChecked = selectedElectives.includes(subj.id);
+                return (
+                  <label
+                    key={subj.id}
+                    className={`flex items-start gap-2.5 p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      isChecked
+                        ? 'bg-brand-500/5 border-brand-500/40 shadow-xs'
+                        : 'bg-surface hover:bg-surface-alt border-line'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedElectives(prev => [...prev, subj.id]);
+                        } else {
+                          setSelectedElectives(prev => prev.filter(x => x !== subj.id));
+                        }
+                      }}
+                      className="mt-0.5 rounded text-brand-600 focus:ring-brand-500 cursor-pointer"
+                    />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-ink leading-tight truncate">{subj.name}</div>
+                      <div className="text-[10px] font-mono text-muted flex items-center gap-1.5 mt-0.5">
+                        <span>{subj.code}</span>
+                        {subj.category && <span className="text-[9px] px-1 rounded bg-line">{subj.category}</span>}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </Modal>
     </div>
   );

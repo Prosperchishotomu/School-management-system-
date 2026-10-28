@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { query, queryOne } = require('../config/db');
 const { authenticateToken, requireRoles } = require('../middleware/auth');
 const { broadcastInvalidation } = require('../services/realtime');
+const { validateClassForSchool } = require('../utils/classValidator');
 
 const MESSAGE_STAFF_ROLES = new Set([
   'super_admin', 'school_admin', 'head', 'head_teacher', 'deputy_head', 'hod',
@@ -1890,6 +1891,28 @@ router.post('/schools/:schoolId/timetable', authenticateToken, requireRoles('sch
     if (!class_id || !day || !period) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class, day, and period are required.' } });
     }
+
+    // ─── Timetable Clash Detection: Prevent teacher double-booking ──────────
+    if (teacher && teacher !== 'Unassigned' && teacher.trim() !== '') {
+      const teacherClash = await queryOne(
+        `SELECT t.*, c.name as class_name
+         FROM timetable t
+         LEFT JOIN classes c ON t.class_id = c.id
+         WHERE t.school_id = ? AND t.day = ? AND t.period = ?
+           AND LOWER(TRIM(t.teacher)) = LOWER(TRIM(?))
+           AND t.class_id != ?`,
+        [schoolId, day, period, teacher, class_id]
+      );
+      if (teacherClash) {
+        return res.status(409).json({
+          error: {
+            code: 'TIMETABLE_CLASH',
+            message: `Schedule Clash: Teacher '${teacher}' is already assigned to '${teacherClash.class_name || teacherClash.class_id}' teaching '${teacherClash.subject || 'a lesson'}' on ${day} during '${period}'. A teacher cannot be scheduled in two classes simultaneously.`
+          }
+        });
+      }
+    }
+
     // Generate short ID within VARCHAR(8)
     const id = 'TT' + Math.random().toString(36).substr(2, 6).toUpperCase();
     await query(
@@ -1916,7 +1939,6 @@ router.delete('/schools/:schoolId/timetable/:id', authenticateToken, requireRole
 });
 
 router.put('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('school_admin', 'super_admin', 'teacher'), async (req, res) => {
-
   try {
     const { schoolId, id } = req.params;
     const day = req.body.day || req.body.day_of_week;
@@ -1925,9 +1947,35 @@ router.put('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('
     const teacher = req.body.teacher || req.body.teacher_name || null;
     const class_id = req.body.class_id;
 
-    let existing = await queryOne('SELECT id FROM timetable WHERE id = ? AND school_id = ?', [id, schoolId]);
+    let existing = await queryOne('SELECT id, class_id, day, period FROM timetable WHERE id = ? AND school_id = ?', [id, schoolId]);
     if (!existing && class_id && day && period) {
-      existing = await queryOne('SELECT id FROM timetable WHERE school_id = ? AND class_id = ? AND day = ? AND period = ?', [schoolId, class_id, day, period]);
+      existing = await queryOne('SELECT id, class_id, day, period FROM timetable WHERE school_id = ? AND class_id = ? AND day = ? AND period = ?', [schoolId, class_id, day, period]);
+    }
+
+    const targetClassId = class_id || existing?.class_id;
+    const targetDay = day || existing?.day;
+    const targetPeriod = period || existing?.period;
+
+    // ─── Timetable Clash Detection: Prevent teacher double-booking ──────────
+    if (teacher && teacher !== 'Unassigned' && teacher.trim() !== '' && targetDay && targetPeriod) {
+      const teacherClash = await queryOne(
+        `SELECT t.*, c.name as class_name
+         FROM timetable t
+         LEFT JOIN classes c ON t.class_id = c.id
+         WHERE t.school_id = ? AND t.day = ? AND t.period = ?
+           AND LOWER(TRIM(t.teacher)) = LOWER(TRIM(?))
+           AND t.id != ?
+           AND t.class_id != ?`,
+        [schoolId, targetDay, targetPeriod, teacher, existing ? existing.id : id, targetClassId]
+      );
+      if (teacherClash) {
+        return res.status(409).json({
+          error: {
+            code: 'TIMETABLE_CLASH',
+            message: `Schedule Clash: Teacher '${teacher}' is already assigned to '${teacherClash.class_name || teacherClash.class_id}' teaching '${teacherClash.subject || 'a lesson'}' on ${targetDay} during '${targetPeriod}'.`
+          }
+        });
+      }
     }
 
     if (existing) {
@@ -1947,15 +1995,12 @@ router.put('/schools/:schoolId/timetable/:id', authenticateToken, requireRoles('
       const newId = id || ('TT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4));
       await query(
         `INSERT INTO timetable (id, school_id, class_id, day, period, subject, teacher)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE subject = VALUES(subject), teacher = VALUES(teacher)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [newId, schoolId, class_id, day, period, subject, teacher]
       );
-      const result = await queryOne('SELECT * FROM timetable WHERE school_id = ? AND class_id = ? AND day = ? AND period = ?', [schoolId, class_id, day, period]);
-      return res.json({ data: result });
+      const result = await queryOne('SELECT * FROM timetable WHERE id = ?', [newId]);
+      return res.status(201).json({ data: result });
     }
-
-    return res.json({ data: result });
   } catch (err) {
     console.error('Update timetable error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update timetable entry.' } });
@@ -2161,23 +2206,37 @@ async function provisionSchoolDefaults(schoolId, schoolType, headTitle, adminUse
     // 3. Provision classes (either custom chosen by super admin, or defaults matching school type)
     const existingClasses = await query('SELECT id FROM classes WHERE school_id = ?', [schoolId]);
     if (!existingClasses || existingClasses.length === 0) {
-      const isPrimary = String(schoolType || '').toLowerCase() === 'primary';
+      const schoolRecord = await queryOne('SELECT * FROM schools WHERE id = ?', [schoolId]) || { id: schoolId, school_type: schoolType };
+      const isPrimary = String(schoolRecord.school_type || schoolType || '').toLowerCase() === 'primary';
+      const hasAlevel = Boolean(schoolRecord.has_alevel);
       let classNamesToSeed = [];
       if (Array.isArray(customClasses) && customClasses.length > 0) {
-        classNamesToSeed = customClasses.map(c => typeof c === 'string' ? c : (c.name || '')).filter(Boolean);
+        // Strictly filter custom classes to only those valid for this school type and stream policy
+        for (const raw of customClasses) {
+          const rawName = typeof raw === 'string' ? raw : (raw.name || '');
+          if (!rawName) continue;
+          const valRes = validateClassForSchool(rawName, schoolRecord);
+          if (valRes.valid) {
+            classNamesToSeed.push({ name: valRes.canonicalName, level: valRes.level, stream: valRes.stream });
+          }
+        }
       }
       if (classNamesToSeed.length === 0) {
-        classNamesToSeed = isPrimary
+        const defaultNames = isPrimary
           ? ['ECD A', 'ECD B', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4', 'Grade 5', 'Grade 6', 'Grade 7']
-          : ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6'];
+          : (hasAlevel ? ['Form 1', 'Form 2', 'Form 3', 'Form 4', 'Lower 6', 'Upper 6'] : ['Form 1', 'Form 2', 'Form 3', 'Form 4']);
+        classNamesToSeed = defaultNames.map(cName => {
+          const v = validateClassForSchool(cName, schoolRecord);
+          return { name: v.canonicalName || cName, level: v.level || (isPrimary ? 'Primary' : 'Secondary'), stream: v.stream || null };
+        });
       }
 
-      for (const cName of classNamesToSeed) {
+      for (const item of classNamesToSeed) {
         const cId = 'CLS' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
         await query(
-          `INSERT INTO classes (id, school_id, name, grade_level, level, status)
-           VALUES (?, ?, ?, ?, ?, 'active')`,
-          [cId, schoolId, cName, cName, isPrimary ? 'Primary' : 'Secondary']
+          `INSERT INTO classes (id, school_id, name, grade_level, level, stream, status)
+           VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+          [cId, schoolId, item.name, item.name, item.level, item.stream]
         );
       }
     }
@@ -3721,11 +3780,7 @@ router.get('/schools/:schoolId/library', authenticateToken, async (req, res) => 
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STUDENT HEALTH BY STUDENT ID
-// GET /schools/:schoolId/students/:studentId/health
-// PUT /schools/:schoolId/students/:studentId/health
-// ─────────────────────────────────────────────────────────────────────────────
+
 router.get('/schools/:schoolId/students/:studentId/health', authenticateToken, async (req, res) => {
   try {
     const { studentId } = req.params;

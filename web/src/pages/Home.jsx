@@ -54,15 +54,15 @@ export default function Home({ preOpenLogin = false }) {
           {user ? (
             <button
               onClick={() => navigate('/dashboard')}
-              className="btn-primary text-xs"
+              className="btn btn-primary btn-sm shadow-xs"
             >
               <span>Go to Dashboard</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <ArrowRight className="w-4 h-4" />
             </button>
           ) : (
             <button
               onClick={() => setShowLogin(true)}
-              className="btn-primary text-xs"
+              className="btn btn-primary btn-sm shadow-xs"
             >
               Sign In to Portal
             </button>
@@ -168,12 +168,15 @@ export default function Home({ preOpenLogin = false }) {
                 />
               </div>
 
-              <button
-                type="submit"
-                className="btn-primary w-full py-2.5"
-              >
-                Submit Admission Enquiry
-              </button>
+              <div className="pt-2 flex justify-start">
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-md shadow-sm"
+                >
+                  <span>Submit Admission Enquiry</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </form>
           )}
         </div>
@@ -237,17 +240,17 @@ export default function Home({ preOpenLogin = false }) {
           role="dialog"
           aria-modal="true"
           onClick={() => setShowLogin(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fadeIn"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fadeIn"
         >
           <div
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-md bg-white border border-slate-200/90 rounded-3xl shadow-2xl p-6 sm:p-8 relative animate-slideUp"
+            className="w-full max-w-md bg-[#0D162B] border border-slate-700/80 rounded-3xl shadow-2xl p-6 sm:p-8 relative animate-slideUp text-white"
           >
             <button
               type="button"
               onClick={() => setShowLogin(false)}
               aria-label="Close modal"
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition-colors cursor-pointer"
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-white/10 transition-colors cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>

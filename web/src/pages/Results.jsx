@@ -199,6 +199,40 @@ export default function Results() {
   );
   const allocations = allocationsData?.data || allocationsData || {};
 
+  // Admin Directorate View Mode: 'broadsheet' vs 'analytics'
+  const [adminViewMode, setAdminViewMode] = useState('broadsheet');
+  const isSuperAdmin = userRole === 'super_admin';
+
+  // Admin Analytics & Automated Submissions Aggregation
+  const { 
+    data: adminAnalyticsData, 
+    loading: adminAnalyticsLoading,
+    refetch: refetchAdminAnalytics
+  } = useApi(
+    isAdmin ? `admin_analytics_${schoolId}_${selectedTerm}` : null,
+    () => api.get(`/schools/${schoolId}/grades/admin-analytics?term=${encodeURIComponent(selectedTerm)}`),
+    { enabled: isAdmin }
+  );
+  const adminAnalytics = adminAnalyticsData?.data || adminAnalyticsData || {};
+
+  const handleAdminUnlockClass = async (classId, className) => {
+    if (!window.confirm(`Are you sure you want to unlock marks for ${className}? This is a Super Admin reversal.`)) return;
+    try {
+      await api.post(`/schools/${schoolId}/classes/${classId}/grades/unlock`, {
+        term: selectedTerm,
+        year: Number(selectedYear) || 2026
+      });
+      toast.success(`Marks for ${className} unlocked.`);
+      invalidate([
+        `admin_analytics_${schoolId}_${selectedTerm}`,
+        `class_results_${schoolId}_${classId}`
+      ]);
+      refetchAdminAnalytics();
+    } catch (err) {
+      toast.error(err.response?.data?.error?.message || err.message || 'Failed to unlock class grades.');
+    }
+  };
+
   // 2. Fetch Classes
   const { data: classesData } = useApi(
     !isParent ? `results_classes_${schoolId}` : null,
@@ -1084,7 +1118,35 @@ export default function Results() {
             : `Subject Teacher Mark Sheet • Allocated Subject: ${assignedSubjects[0]?.subject_name || 'Assigned Syllabus'}`
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {isAdmin && (
+              <div className="flex items-center p-1 rounded-xl border border-line bg-canvas text-xs font-semibold mr-1">
+                <button
+                  type="button"
+                  onClick={() => setAdminViewMode('broadsheet')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                    adminViewMode === 'broadsheet'
+                      ? 'bg-brand-700 text-white shadow-2xs'
+                      : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  Class Broadsheets
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdminViewMode('analytics')}
+                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                    adminViewMode === 'analytics'
+                      ? 'bg-brand-700 text-white shadow-2xs'
+                      : 'text-muted hover:text-ink'
+                  }`}
+                >
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  <span>Admin Visual Analytics</span>
+                </button>
+              </div>
+            )}
+
             <button
               onClick={() => {
                 const token = sessionStorage.getItem('schoolbase_token') || localStorage.getItem('schoolbase_token');
@@ -1123,7 +1185,321 @@ export default function Results() {
       {/* Academic Period Archive Navigator */}
       {renderPeriodNavigator()}
 
-      {/* TEACHER ROLE ACCESS BANNER */}
+      {isAdmin && adminViewMode === 'analytics' ? (
+        <div className="space-y-6">
+          {/* Executive Directorate Header Banner */}
+          <div className="p-6 rounded-2xl bg-linear-to-r from-brand-900 via-indigo-950 to-brand-900 text-white shadow-xl border border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-white/20 text-white border border-white/30 uppercase tracking-wider">
+                  Executive Directorate Analytics
+                </span>
+                <span className="text-xs text-white/80 font-mono">
+                  {selectedTerm} • {selectedYear}
+                </span>
+              </div>
+              <h2 className="text-2xl font-display font-extrabold tracking-tight">
+                School-wide Academic Performance & Cohort Submissions
+              </h2>
+              <p className="text-xs text-white/70 max-w-2xl mt-1 leading-relaxed">
+                Aggregated real-time metrics generated from class teacher submissions. Marks submitted by class teachers automatically populate these administrative analytics with immutability guarantees.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => window.print()}
+                className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition border border-white/20 flex items-center gap-2 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print Executive Report</span>
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Strip */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="glass-card p-5 border border-line">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted font-mono font-bold uppercase">Overall Pass Rate</span>
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                  <Award className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-extrabold font-display text-emerald-600 dark:text-emerald-400 mt-2">
+                {adminAnalytics.overall_pass_rate ?? 0}%
+              </div>
+              <div className="text-[11px] text-muted mt-1">Across all assessed learner examinations</div>
+            </div>
+
+            <div className="glass-card p-5 border border-line">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted font-mono font-bold uppercase">School-wide Mean</span>
+                <div className="w-8 h-8 rounded-xl bg-brand-500/10 text-brand-700 flex items-center justify-center">
+                  <GraduationCap className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-extrabold font-display text-ink mt-2">
+                {adminAnalytics.overall_average ?? 0}%
+              </div>
+              <div className="text-[11px] text-muted mt-1">Institutional cumulative mean mark</div>
+            </div>
+
+            <div className="glass-card p-5 border border-line">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted font-mono font-bold uppercase">Cohort Submissions</span>
+                <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-extrabold font-display text-ink mt-2">
+                {adminAnalytics.submitted_cohorts || 0} / {adminAnalytics.total_cohorts || 0}
+              </div>
+              <div className="text-[11px] text-muted mt-1">Classes finalized & submitted to admin</div>
+            </div>
+
+            <div className="glass-card p-5 border border-line">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted font-mono font-bold uppercase">Top Candidate</span>
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
+              </div>
+              <div className="text-3xl font-extrabold font-display text-ink mt-2">
+                {adminAnalytics.top_achievers?.[0]?.average_mark ? `${adminAnalytics.top_achievers[0].average_mark}%` : '—'}
+              </div>
+              <div className="text-[11px] text-muted mt-1 truncate">
+                {adminAnalytics.top_achievers?.[0] ? `${adminAnalytics.top_achievers[0].first_name} ${adminAnalytics.top_achievers[0].last_name} (${adminAnalytics.top_achievers[0].class_name})` : 'Awaiting grades'}
+              </div>
+            </div>
+          </div>
+
+          {/* Grid Layout: Cohort Submissions & Class Performance Table */}
+          <Card
+            title="Class Cohort Submissions & Performance League"
+            subtitle="Real-time submission status, class teacher lock tracking, and pass rate analytics."
+          >
+            <div className="overflow-x-auto border border-line rounded-xl">
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="bg-canvas border-b border-line text-muted uppercase text-[11px]">
+                    <th className="py-2.5 px-3 text-left">Class Cohort</th>
+                    <th className="py-2.5 px-2 text-center">Grade Level</th>
+                    <th className="py-2.5 px-3 text-right">Learners</th>
+                    <th className="py-2.5 px-3 text-right">Assessed</th>
+                    <th className="py-2.5 px-3 text-right">Average</th>
+                    <th className="py-2.5 px-3 text-center min-w-[140px]">Pass Rate</th>
+                    <th className="py-2.5 px-3 text-center">Submission Status</th>
+                    <th className="py-2.5 px-3 text-right">Submitted By</th>
+                    {isSuperAdmin && <th className="py-2.5 px-3 text-center">Admin Action</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line/60">
+                  {adminAnalyticsLoading ? (
+                    <Skeleton variant="table-row" count={6} />
+                  ) : (adminAnalytics.cohort_performance || []).length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="py-6 text-center text-muted">
+                        No class records found for this academic period.
+                      </td>
+                    </tr>
+                  ) : (
+                    (adminAnalytics.cohort_performance || []).map((cp) => {
+                      const isSubmitted = cp.submission_status === 'submitted' || cp.submission_status === 'verified';
+                      return (
+                        <tr key={cp.id} className="hover:bg-canvas/30 transition-colors">
+                          <td className="py-2.5 px-3 font-bold text-ink">
+                            {cp.name}
+                          </td>
+                          <td className="py-2.5 px-2 text-center text-muted font-mono">
+                            {cp.grade_level || '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-ink">
+                            {cp.total_students}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono text-ink font-semibold">
+                            {cp.assessed_students}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-brand-700 dark:text-brand-400">
+                            {cp.average_mark}%
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <div className="flex items-center gap-2 justify-center">
+                              <div className="w-16 h-1.5 bg-canvas rounded-full overflow-hidden border border-line">
+                                <div
+                                  className="h-full bg-linear-to-r from-emerald-500 to-teal-400 rounded-full"
+                                  style={{ width: `${Math.min(100, Math.max(0, cp.pass_rate))}%` }}
+                                />
+                              </div>
+                              <span className="font-mono font-bold text-[11px]">{cp.pass_rate}%</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            {isSubmitted ? (
+                              <StatusPill status="submitted" label="Submitted & Immutable" size="sm" />
+                            ) : (
+                              <StatusPill status="draft" label="Pending Submission" size="sm" />
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right text-muted text-[11px]">
+                            {cp.submitted_by ? (
+                              <div>
+                                <span className="font-semibold text-ink block">{cp.submitted_by}</span>
+                                <span className="text-[10px]">{cp.submitted_at ? new Date(cp.submitted_at).toLocaleDateString() : ''}</span>
+                              </div>
+                            ) : (
+                              <span className="text-muted/50">—</span>
+                            )}
+                          </td>
+                          {isSuperAdmin && (
+                            <td className="py-2.5 px-3 text-center">
+                              {isSubmitted ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAdminUnlockClass(cp.id, cp.name)}
+                                  className="px-2.5 py-1 rounded-lg text-amber-700 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 font-bold text-[11px] transition flex items-center gap-1 mx-auto cursor-pointer"
+                                  title="Super Admin reversal to unlock class marks"
+                                >
+                                  <Unlock className="w-3 h-3" />
+                                  <span>Unlock</span>
+                                </button>
+                              ) : (
+                                <span className="text-muted/40 text-[10px]">—</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* Dual Column: Subject League Table & Gender Analytics */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Subject League Table */}
+            <Card
+              title="Subject League Table"
+              subtitle="Ranked performance and examination pass rates by syllabus subject."
+            >
+              <div className="overflow-x-auto border border-line rounded-xl">
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-canvas border-b border-line text-muted uppercase text-[11px]">
+                      <th className="py-2 px-3 text-left">Subject</th>
+                      <th className="py-2 px-2 text-right">Scripts</th>
+                      <th className="py-2 px-3 text-right">Mean Score</th>
+                      <th className="py-2 px-3 text-center">Pass Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line/60">
+                    {(adminAnalytics.subject_league || []).map((sub, i) => (
+                      <tr key={sub.subject_name || i} className="hover:bg-canvas/30 transition-colors">
+                        <td className="py-2 px-3 font-semibold text-ink flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-brand-500/10 text-brand-700 font-mono text-[10px] flex items-center justify-center font-bold">
+                            {i + 1}
+                          </span>
+                          <span>{sub.subject_name}</span>
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono text-muted">
+                          {sub.assessed_count}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-ink">
+                          {sub.average_mark}%
+                        </td>
+                        <td className="py-2 px-3 text-center">
+                          <span className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] ${
+                            sub.pass_rate >= 70
+                              ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
+                              : sub.pass_rate >= 50
+                              ? 'bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20'
+                              : 'bg-danger/10 text-danger border border-danger/20'
+                          }`}>
+                            {sub.pass_rate}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* Gender Performance & Top Achievers Deck */}
+            <div className="space-y-6">
+              {/* Gender Comparison */}
+              <Card
+                title="Gender Equity & Cohort Distribution"
+                subtitle="Comparative performance analysis between male and female candidates."
+              >
+                <div className="grid grid-cols-2 gap-4">
+                  {(adminAnalytics.gender_distribution || []).map(g => {
+                    const isFemale = (g.gender || '').toLowerCase().startsWith('f');
+                    return (
+                      <div key={g.gender} className="p-4 rounded-xl border border-line bg-canvas/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-xs uppercase tracking-wider text-muted font-mono">
+                            {isFemale ? 'Female Learners' : 'Male Learners'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-brand-500/10 text-brand-700">
+                            {g.total_assessments} scripts
+                          </span>
+                        </div>
+                        <div className="text-2xl font-extrabold font-display text-ink">
+                          {g.average_mark}%
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-muted">
+                          <span>Pass Rate:</span>
+                          <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400">{g.pass_rate}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+
+              {/* Top 10 High Achievers */}
+              <Card
+                title="Top 10 Institutional Achievers"
+                subtitle="Leading academic performers across all class cohorts."
+              >
+                <div className="divide-y divide-line/60 max-h-80 overflow-y-auto">
+                  {(adminAnalytics.top_achievers || []).map((ach, idx) => (
+                    <div key={ach.id || idx} className="py-2.5 px-3 flex items-center justify-between hover:bg-canvas/40 transition rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs ${
+                          idx === 0
+                            ? 'bg-amber-500 text-white shadow-xs'
+                            : idx === 1
+                            ? 'bg-slate-300 text-slate-800'
+                            : idx === 2
+                            ? 'bg-amber-700 text-white'
+                            : 'bg-canvas text-muted border border-line font-mono'
+                        }`}>
+                          {idx + 1}
+                        </span>
+                        <div>
+                          <div className="font-bold text-ink text-xs">{ach.first_name} {ach.last_name}</div>
+                          <div className="text-[10px] text-muted">{ach.class_name} • ADM: {ach.admission_number}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-mono font-extrabold text-sm text-brand-700 dark:text-brand-400">
+                          {ach.average_mark}%
+                        </div>
+                        <div className="text-[10px] text-muted font-mono">{ach.subjects_count} Subjects</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* TEACHER ROLE ACCESS BANNER */}
       {isTeacher && (
         <div className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${
           isClassTeacher
@@ -2191,7 +2567,9 @@ export default function Results() {
             </div>
           </div>
         </div>
-      </Modal>
+        </Modal>
+        </>
+      )}
     </div>
   );
 

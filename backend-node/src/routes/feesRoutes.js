@@ -602,8 +602,9 @@ router.get('/schools/:schoolId/fees', authenticateToken, async (req, res) => {
       }
     } else if (userRole === 'student') {
       // Student can only see their own fees
-      sql += ' AND (f.student_id = ? OR st.user_id = ?)';
-      params.push(req.user.id, req.user.id);
+      const myStudentId = req.user.student_id || req.user.id;
+      sql += ' AND f.student_id = ?';
+      params.push(myStudentId);
     } else {
       // Admin / Bursar can filter by student_id or class_id
       if (student_id) {
@@ -818,6 +819,15 @@ router.post(['/schools/:schoolId/remote-payments/:id/approve', '/schools/:school
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Remote payment declaration record not found.' } });
     }
 
+    if (rp.status === 'approved') {
+      return res.status(403).json({
+        error: {
+          code: 'PAYMENT_IMMUTABLE',
+          message: 'Payment has already been approved and is strictly immutable. Only Super Administrators can reverse an approved payment.'
+        }
+      });
+    }
+
     try { await query('ALTER TABLE remote_payments ADD COLUMN verified_at DATETIME NULL'); } catch(e) {}
     try { await query('ALTER TABLE remote_payments ADD COLUMN verified_by VARCHAR(50) NULL'); } catch(e) {}
     try { await query('ALTER TABLE remote_payments ADD COLUMN notes TEXT NULL'); } catch(e) {}
@@ -902,6 +912,39 @@ router.post('/schools/:schoolId/remote-payments/:id/reject', authenticateToken, 
   } catch (err) {
     console.error('Reject remote payment error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to reject remote payment.' } });
+  }
+});
+
+// POST /schools/:schoolId/remote-payments/:id/reverse (Only Super Admin can reverse approved payments)
+router.post('/schools/:schoolId/remote-payments/:id/reverse', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const { schoolId, id } = req.params;
+    const { reason } = req.body || {};
+
+    const rp = await queryOne('SELECT * FROM remote_payments WHERE id = ? AND school_id = ?', [id, schoolId]);
+    if (!rp) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Remote payment declaration not found.' } });
+
+    await query(
+      `UPDATE remote_payments SET status = 'reversed', notes = CONCAT(COALESCE(notes, ''), ' [Reversed by Super Admin: ', ?, ']') WHERE id = ? AND school_id = ?`,
+      [reason || 'Administrative reversal', id, schoolId]
+    );
+
+    // Rollback student fees ledger if payment had been credited
+    const amountPaid = parseFloat(rp.amount || 0);
+    if (rp.fee_id && amountPaid > 0) {
+      await query(
+        `UPDATE fees SET amount_paid = GREATEST(0, amount_paid - ?), status = CASE WHEN amount_paid - ? <= 0 THEN 'unpaid' ELSE 'partial' END WHERE id = ?`,
+        [amountPaid, amountPaid, rp.fee_id]
+      );
+      await query(`UPDATE fee_payments SET status = 'reversed' WHERE reference = ? OR id = ?`, [rp.reference || id, id]);
+    }
+
+    broadcastInvalidation(schoolId, ['remote_payments', 'fees', 'fees_ledger', 'fees_summary', 'summary'], 'payment_reversed');
+
+    return res.json({ data: { message: 'Approved payment successfully reversed by Super Administrator.' } });
+  } catch (err) {
+    console.error('Reverse remote payment error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to reverse payment.' } });
   }
 });
 

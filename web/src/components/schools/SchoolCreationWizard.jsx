@@ -279,7 +279,8 @@ export default function SchoolCreationWizard({ isOpen, onClose, onSchoolCreated 
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full hover:bg-ink/10 flex items-center justify-center text-ink/50 hover:text-ink transition-colors cursor-pointer"
+            aria-label="Close creation wizard"
+            className="btn-close"
           >
             <X className="w-4 h-4" />
           </button>
@@ -982,7 +983,7 @@ export default function SchoolCreationWizard({ isOpen, onClose, onSchoolCreated 
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-line-border rounded-xl text-xs font-semibold text-ink/70 hover:bg-paper cursor-pointer transition-colors"
+              className="btn btn-secondary btn-md"
             >
               Cancel
             </button>
@@ -992,7 +993,7 @@ export default function SchoolCreationWizard({ isOpen, onClose, onSchoolCreated 
                 type="button"
                 disabled={!canGoNext()}
                 onClick={() => setCurrentStep(currentStep + 1)}
-                className="px-5 py-2 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/30 text-paper rounded-xl text-xs font-semibold cursor-pointer flex items-center space-x-1.5 shadow-sm transition-all"
+                className="btn btn-primary btn-md shadow-sm"
               >
                 <span>Continue</span>
                 <ChevronRight className="w-3.5 h-3.5" />
@@ -1002,7 +1003,7 @@ export default function SchoolCreationWizard({ isOpen, onClose, onSchoolCreated 
                 type="button"
                 disabled={saving || !canGoNext()}
                 onClick={handleSubmit}
-                className="px-6 py-2.5 bg-teal-primary hover:bg-teal-dark disabled:bg-teal-primary/40 text-paper rounded-xl text-xs font-bold shadow-md cursor-pointer flex items-center space-x-2 transition-all"
+                className="btn btn-primary btn-md shadow-md"
               >
                 {saving && <Loader2 className="w-4 h-4 animate-spin" />}
                 <span>{saving ? 'Provisioning School Tenant...' : 'Create & Provision School'}</span>

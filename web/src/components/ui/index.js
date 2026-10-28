@@ -26,3 +26,4 @@ export { default as Funnel } from './Funnel';
 export { default as Sparkline } from './Sparkline';
 export { default as Stepper } from './Stepper';
 export { default as CommandPalette } from './CommandPalette';
+export { default as Button } from './Button';

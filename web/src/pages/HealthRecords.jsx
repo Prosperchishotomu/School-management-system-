@@ -55,10 +55,19 @@ export default function HealthRecords() {
   const [visits, setVisits] = useState([]);
   const [chronicRegistry, setChronicRegistry] = useState([]);
 
-  const handleRecordVisit = (e) => {
+  const handleRecordVisit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
-    setTimeout(() => {
+    try {
+      await api.post('/health/visits', {
+        student_id: visitForm.student_id,
+        visit_date: new Date().toISOString().split('T')[0],
+        symptoms: visitForm.complaint,
+        diagnosis: 'Clinic consultation',
+        treatment: visitForm.treatment,
+        referred_to_hospital: visitForm.referred ? 1 : 0,
+        notes: visitForm.nurse_notes || visitForm.complaint
+      });
       const st = students.find(s => String(s.id) === String(visitForm.student_id));
       const newEntry = {
         id: visits.length + 1,
@@ -73,8 +82,11 @@ export default function HealthRecords() {
       setVisits([newEntry, ...visits]);
       toast.success('Sanatorium clinic visit logged.');
       setShowVisitModal(false);
+    } catch (err) {
+      toast.error(err?.message || 'Failed to record clinic visit.');
+    } finally {
       setSubmitting(false);
-    }, 600);
+    }
   };
 
   const handleSaveChronic = (e) => {
@@ -107,17 +119,17 @@ export default function HealthRecords() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowRegistryModal(true)}
-              className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs"
+              className="btn btn-secondary btn-md shadow-xs"
             >
               <ShieldAlert className="w-4 h-4 text-accent" />
-              Register Chronic / Allergy
+              <span>Register Chronic / Allergy</span>
             </button>
             <button
               onClick={() => setShowVisitModal(true)}
-              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+              className="btn btn-primary btn-md shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              Record Clinic Visit
+              <span>Record Clinic Visit</span>
             </button>
           </div>
         }

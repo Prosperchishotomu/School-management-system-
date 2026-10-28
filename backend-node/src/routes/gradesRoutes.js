@@ -90,22 +90,27 @@ router.get('/', authenticateToken, async (req, res) => {
     const scopedStudents = await query(studentFilterSql, studentFilterParams);
 
     // Teacher Allocation Scoping:
+    // Class teachers must see all subjects for their class (primary or secondary)
+    // Primary teachers are responsible for recording all subjects in their classes
     let allocatedSubjects = [];
     let isClassTeacher = false;
     const userRole = req.user.role;
     const userId = req.user.id;
     const isAdmin = ['school_admin', 'super_admin', 'principal', 'head', 'headmaster', 'deputy_head', 'admin'].includes(userRole);
+    const isPrimary = Boolean(!cls?.level || cls.level.toLowerCase().includes('primary') || (cls.name || '').toLowerCase().includes('grade') || (cls.school_type || '').toLowerCase() === 'primary');
 
     if (isAdmin) {
       allocatedSubjects = await query('SELECT id, name, code FROM subjects WHERE school_id = ? OR school_id IS NULL ORDER BY name ASC', [schoolId]);
       isClassTeacher = true;
     } else {
-      // Check if class teacher / form master
+      // Check if user is the assigned class teacher / form master
       if (cls?.form_master_id === userId) isClassTeacher = true;
-      const staffRecord = await queryOne('SELECT class_id FROM staff WHERE user_id = ? OR id = ?', [userId, userId]);
-      if (staffRecord?.class_id === classId) isClassTeacher = true;
+      const staffRecord = await queryOne('SELECT id, class_id FROM staff WHERE user_id = ? OR id = ?', [userId, userId]);
+      if (staffRecord && (staffRecord.class_id === classId || cls?.form_master_id === staffRecord.id)) {
+        isClassTeacher = true;
+      }
 
-      // Check teaching assignments for this class
+      // Check specific teaching assignments for this class
       const teacherAssignments = await query(
         `SELECT sub.id, sub.name, sub.code
          FROM teaching_assignments ta
@@ -117,13 +122,25 @@ router.get('/', authenticateToken, async (req, res) => {
         [schoolId, classId, userId, userId]
       );
 
-      if (isClassTeacher && (!cls?.level || cls.level.toLowerCase().includes('primary') || (cls.name || '').toLowerCase().includes('grade'))) {
-        // Primary class teacher teaches all subjects
+      if (isClassTeacher) {
+        // Both primary and secondary class teachers see all class subjects
         allocatedSubjects = await query('SELECT id, name, code FROM subjects WHERE school_id = ? OR school_id IS NULL ORDER BY name ASC', [schoolId]);
       } else {
         allocatedSubjects = teacherAssignments;
       }
     }
+
+    // Check submission status for this class and term
+    const resolvedTerm = term || getTermFromDate();
+    let submission = null;
+    try {
+      submission = await queryOne(
+        'SELECT * FROM grade_submissions WHERE school_id = ? AND class_id = ? AND term = ?',
+        [schoolId, classId, resolvedTerm]
+      );
+    } catch (_) {}
+
+    const isImmutable = Boolean(submission && (submission.status === 'submitted' || submission.status === 'verified'));
 
     const grouped = {};
     grades.forEach(g => {
@@ -191,7 +208,11 @@ router.get('/', authenticateToken, async (req, res) => {
         level_category: levelCategory,
         students: scopedStudents,
         allocated_subjects: allocatedSubjects,
-        is_class_teacher: isClassTeacher
+        is_class_teacher: isClassTeacher,
+        is_primary_teacher: isClassTeacher && isPrimary,
+        can_record_all: isAdmin || (isClassTeacher && isPrimary),
+        submission: submission || null,
+        is_immutable: isImmutable
       }
     });
   } catch (err) {
@@ -200,12 +221,23 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
-// Helper for saving batch or single grades
-async function saveGradeEntry(schoolId, targetClassId, body) {
+// Helper for saving batch or single grades with immutability enforcement
+async function saveGradeEntry(schoolId, targetClassId, body, user = null) {
   const { student_id, subject, grade_value, assessment_type, term, weight, scores } = body;
   const resolvedTerm = term || getTermFromDate();
   const resolvedType = assessment_type || 'test';
   const resolvedSubject = subject || body.subject_id;
+
+  // Immutability Check: If class results have already been submitted, only Super Admin can edit
+  const existingSub = await queryOne(
+    'SELECT * FROM grade_submissions WHERE school_id = ? AND class_id = ? AND term = ?',
+    [schoolId, targetClassId, resolvedTerm]
+  );
+  if (existingSub && (existingSub.status === 'submitted' || existingSub.status === 'verified')) {
+    if (!user || user.role !== 'super_admin') {
+      throw new Error('Grades for this class and term have already been submitted to administration and are immutable. Only Super Administrators can unlock submitted grades.');
+    }
+  }
 
   if (scores && typeof scores === 'object') {
     // Batch scores save: { [student_id]: { ca1: 20, exam: 50 } } OR { [student_id]: 75 }
@@ -278,11 +310,226 @@ router.post('/', authenticateToken, requireRoles('teacher', 'school_admin', 'sup
   try {
     const { schoolId, classId } = req.params;
     const targetClassId = classId || req.body.class_id;
-    const result = await saveGradeEntry(schoolId, targetClassId, req.body);
+    const result = await saveGradeEntry(schoolId, targetClassId, req.body, req.user);
     return res.status(201).json({ data: result });
   } catch (err) {
     console.error('Create grade entry error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message || 'Failed to record grade.' } });
+    return res.status(err.message?.includes('immutable') ? 403 : 500).json({ error: { code: 'IMMUTABLE_ERROR', message: err.message || 'Failed to record grade.' } });
+  }
+});
+
+// POST /schools/:schoolId/classes/:classId/grades/submit-to-admin
+router.post('/submit-to-admin', authenticateToken, requireRoles('teacher', 'school_admin', 'super_admin'), async (req, res) => {
+  try {
+    const { schoolId, classId } = req.params;
+    const { term, notes } = req.body;
+    const resolvedTerm = term || getTermFromDate();
+    const currentYear = new Date().getFullYear();
+
+    const cls = await queryOne('SELECT * FROM classes WHERE id = ? AND school_id = ?', [classId, schoolId]);
+    if (!cls) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Class not found.' } });
+
+    const teacherName = req.user.name || req.user.username || 'Class Teacher';
+    const subId = 'GSUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+
+    await query(`
+      INSERT INTO grade_submissions (id, school_id, class_id, term, year, status, submitted_by, teacher_name, notes, submitted_at)
+      VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, NOW())
+      ON DUPLICATE KEY UPDATE status = 'submitted', submitted_by = VALUES(submitted_by), teacher_name = VALUES(teacher_name), notes = VALUES(notes), submitted_at = NOW()
+    `, [subId, schoolId, classId, resolvedTerm, currentYear, req.user.id, teacherName, notes || null]);
+
+    // Create high-priority administrative alert
+    const notifId = 'NOT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
+    await query(`
+      INSERT INTO notifications (id, school_id, user_id, title, message, is_read, target_role, sender_id, sender_name, type)
+      VALUES (?, ?, NULL, ?, ?, 0, 'school_admin', ?, ?, 'grades_submitted')
+    `, [
+      notifId,
+      schoolId,
+      `Class Results Submitted: ${cls.name} (${resolvedTerm})`,
+      `${teacherName} marked and submitted academic results and broadsheet for ${cls.name}. Class reports are now available for administrative review.`,
+      req.user.id,
+      teacherName
+    ]);
+
+    const { broadcastInvalidation } = require('../services/realtime');
+    broadcastInvalidation(schoolId, ['grades', 'results', 'broadsheet', 'admin_analytics', 'dashboard'], 'grades_submitted');
+
+    return res.json({
+      data: {
+        message: `Results for ${cls.name} successfully submitted to administration. Marks are now locked and immutable.`,
+        status: 'submitted',
+        submitted_at: new Date().toISOString()
+      }
+    });
+  } catch (err) {
+    console.error('Submit grades to admin error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to submit class grades: ' + err.message } });
+  }
+});
+
+// POST /schools/:schoolId/classes/:classId/grades/unlock (Super Admin reversal only)
+router.post('/unlock', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const { schoolId, classId } = req.params;
+    const { term } = req.body;
+    const resolvedTerm = term || getTermFromDate();
+
+    await query(`
+      UPDATE grade_submissions
+      SET status = 'unlocked', unlocked_by = ?, unlocked_at = NOW()
+      WHERE school_id = ? AND class_id = ? AND term = ?
+    `, [req.user.id, schoolId, classId, resolvedTerm]);
+
+    const { broadcastInvalidation } = require('../services/realtime');
+    broadcastInvalidation(schoolId, ['grades', 'results', 'broadsheet', 'admin_analytics'], 'grades_unlocked');
+
+    return res.json({ data: { message: 'Class results unlocked by Super Administrator. Teachers can now update marks.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to unlock class results.' } });
+  }
+});
+
+// GET /schools/:schoolId/classes/:classId/grades/broadsheet
+router.get('/broadsheet', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, classId } = req.params;
+    const { term } = req.query;
+    const resolvedTerm = term || getTermFromDate();
+
+    const cls = await queryOne(
+      'SELECT c.*, s.school_type FROM classes c LEFT JOIN schools s ON c.school_id = s.id WHERE c.id = ? AND c.school_id = ?',
+      [classId, schoolId]
+    );
+    if (!cls) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Class not found.' } });
+
+    const levelCategory = determineLevelCategory(cls.name, cls.level, cls.school_type);
+
+    // Fetch enrolled students
+    const students = await query(
+      `SELECT id, first_name, last_name, admission_number, gender
+       FROM students
+       WHERE school_id = ? AND class_id = ? AND (status IN ('active', 'enrolled') OR status IS NULL OR status != 'transferred')
+       ORDER BY first_name ASC`,
+      [schoolId, classId]
+    );
+
+    // Fetch all grades for this class and term
+    const grades = await query(
+      `SELECT g.student_id, g.subject, g.grade_value, g.weight, g.assessment_type
+       FROM grades g
+       JOIN students st ON g.student_id = st.id
+       WHERE g.school_id = ? AND st.class_id = ? AND g.term = ?`,
+      [schoolId, classId, resolvedTerm]
+    );
+
+    // Fetch distinct evaluated subjects
+    const distinctSubjectNames = [...new Set(grades.map(g => g.subject))].sort();
+
+    // Group student grades
+    const studentMap = new Map();
+    students.forEach(st => {
+      studentMap.set(st.id, {
+        student_id: st.id,
+        name: `${st.first_name} ${st.last_name}`,
+        first_name: st.first_name,
+        last_name: st.last_name,
+        admission_number: st.admission_number,
+        gender: st.gender,
+        subject_scores: {},
+        subject_results: []
+      });
+    });
+
+    grades.forEach(g => {
+      const entry = studentMap.get(g.student_id);
+      if (entry) {
+        if (!entry.subject_scores[g.subject]) {
+          entry.subject_scores[g.subject] = { weighted_sum: 0, weight_total: 0 };
+        }
+        const w = parseFloat(g.weight || 1.0);
+        const v = parseFloat(g.grade_value || 0);
+        entry.subject_scores[g.subject].weighted_sum += (v * w);
+        entry.subject_scores[g.subject].weight_total += w;
+      }
+    });
+
+    // Compute subject averages and overall rankings
+    const broadsheetRows = [];
+    studentMap.forEach(st => {
+      const evaluated = [];
+      let totalMarks = 0;
+      let evaluatedCount = 0;
+
+      distinctSubjectNames.forEach(sub => {
+        const item = st.subject_scores[sub];
+        if (item && item.weight_total > 0) {
+          const avg = parseFloat((item.weighted_sum / item.weight_total).toFixed(1));
+          evaluated.push({ subject: sub, subject_id: sub, subject_avg: avg });
+          totalMarks += avg;
+          evaluatedCount += 1;
+        } else {
+          evaluated.push({ subject: sub, subject_id: sub, subject_avg: null });
+        }
+      });
+
+      const processed = processStudentSubjects(evaluated.filter(e => e.subject_avg !== null), levelCategory);
+
+      broadsheetRows.push({
+        ...st,
+        subjects: evaluated,
+        total_marks: parseFloat(totalMarks.toFixed(1)),
+        average_mark: evaluatedCount > 0 ? parseFloat((totalMarks / evaluatedCount).toFixed(1)) : 0,
+        overall_percentage: processed.overallPercentage,
+        total_units: processed.totalUnits,
+        total_points: processed.totalPoints,
+        passes_count: processed.passesCount,
+        pass_status: processed.passStatus
+      });
+    });
+
+    // Rank students
+    const rankedRows = rankStudentResults(broadsheetRows, levelCategory);
+
+    // Subject averages across the class
+    const subjectMetrics = distinctSubjectNames.map(sub => {
+      const marks = [];
+      rankedRows.forEach(r => {
+        const s = r.subjects.find(item => item.subject === sub);
+        if (s && s.subject_avg !== null) marks.push(s.subject_avg);
+      });
+      const avg = marks.length > 0 ? parseFloat((marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(1)) : 0;
+      const passThreshold = levelCategory === 'primary' ? 40 : 50;
+      const passes = marks.filter(m => m >= passThreshold).length;
+      return {
+        subject: sub,
+        average: avg,
+        assessed_students: marks.length,
+        pass_rate: marks.length > 0 ? Math.round((passes / marks.length) * 100) : 0
+      };
+    });
+
+    // Submission info
+    const submission = await queryOne(
+      'SELECT * FROM grade_submissions WHERE school_id = ? AND class_id = ? AND term = ?',
+      [schoolId, classId, resolvedTerm]
+    );
+
+    return res.json({
+      data: {
+        class_info: cls,
+        term: resolvedTerm,
+        level_category: levelCategory,
+        subjects: distinctSubjectNames,
+        subject_metrics: subjectMetrics,
+        students: rankedRows,
+        submission: submission || null,
+        is_immutable: Boolean(submission && (submission.status === 'submitted' || submission.status === 'verified'))
+      }
+    });
+  } catch (err) {
+    console.error('Broadsheet error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to generate class broadsheet.' } });
   }
 });
 
@@ -526,11 +773,144 @@ schoolGradesRouter.post('/', authenticateToken, requireRoles('teacher', 'school_
     if (!targetClassId) {
       return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Class ID is required.' } });
     }
-    const result = await saveGradeEntry(schoolId, targetClassId, req.body);
+    const result = await saveGradeEntry(schoolId, targetClassId, req.body, req.user);
     return res.status(201).json({ data: result });
   } catch (err) {
     console.error('Save grades batch error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message || 'Failed to record grades.' } });
+    return res.status(err.message?.includes('immutable') ? 403 : 500).json({ error: { code: 'IMMUTABLE_ERROR', message: err.message || 'Failed to record grades.' } });
+  }
+});
+
+// GET /schools/:schoolId/grades/admin-analytics
+schoolGradesRouter.get('/admin-analytics', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { term } = req.query;
+    const resolvedTerm = term || getTermFromDate();
+
+    // 1. Fetch all classes
+    const classes = await query('SELECT id, name, grade_level, level, stream FROM classes WHERE school_id = ? AND (status = "active" OR status IS NULL) ORDER BY name ASC', [schoolId]);
+
+    // 2. Fetch all submissions
+    const submissions = await query('SELECT * FROM grade_submissions WHERE school_id = ? AND term = ?', [schoolId, resolvedTerm]);
+    const submissionMap = new Map();
+    submissions.forEach(s => submissionMap.set(s.class_id, s));
+
+    // 3. For each class, calculate student count, evaluated count, average mark, and pass rate
+    const cohortPerformance = [];
+    let schoolTotalMarks = 0;
+    let schoolTotalEvaluated = 0;
+    let schoolPasses = 0;
+
+    for (const c of classes) {
+      const classGrades = await query(
+        `SELECT g.student_id, g.grade_value, g.weight, st.gender
+         FROM grades g
+         JOIN students st ON g.student_id = st.id
+         WHERE g.school_id = ? AND st.class_id = ? AND g.term = ?`,
+        [schoolId, c.id, resolvedTerm]
+      );
+
+      const studentCount = (await queryOne('SELECT COUNT(*) as cnt FROM students WHERE school_id = ? AND class_id = ? AND (status = "active" OR status IS NULL)', [schoolId, c.id]))?.cnt || 0;
+
+      let classSum = 0;
+      let passCount = 0;
+      const assessedStudentIds = new Set();
+
+      classGrades.forEach(g => {
+        const val = parseFloat(g.grade_value || 0);
+        classSum += val;
+        assessedStudentIds.add(g.student_id);
+        if (val >= 50) passCount += 1;
+      });
+
+      const evaluatedCount = classGrades.length;
+      const avg = evaluatedCount > 0 ? parseFloat((classSum / evaluatedCount).toFixed(1)) : 0;
+      const passRate = evaluatedCount > 0 ? Math.round((passCount / evaluatedCount) * 100) : 0;
+
+      schoolTotalMarks += classSum;
+      schoolTotalEvaluated += evaluatedCount;
+      schoolPasses += passCount;
+
+      const subRecord = submissionMap.get(c.id);
+
+      cohortPerformance.push({
+        class_id: c.id,
+        class_name: c.name,
+        grade_level: c.grade_level,
+        level: c.level,
+        stream: c.stream,
+        total_students: studentCount,
+        assessed_students: assessedStudentIds.size,
+        average_mark: avg,
+        pass_rate: passRate,
+        submission_status: subRecord?.status || 'pending',
+        submitted_by: subRecord?.teacher_name || null,
+        submitted_at: subRecord?.submitted_at || null
+      });
+    }
+
+    // 4. Subject League Table
+    const subjectStats = await query(
+      `SELECT g.subject as subject_name,
+              COUNT(g.id) as assessed_count,
+              ROUND(AVG(g.grade_value), 1) as average_mark,
+              ROUND(SUM(CASE WHEN g.grade_value >= 50 THEN 1 ELSE 0 END) / COUNT(g.id) * 100, 1) as pass_rate
+       FROM grades g
+       WHERE g.school_id = ? AND g.term = ?
+       GROUP BY g.subject
+       ORDER BY pass_rate DESC`,
+      [schoolId, resolvedTerm]
+    );
+
+    // 5. Gender Performance
+    const genderStats = await query(
+      `SELECT st.gender,
+              COUNT(g.id) as total_assessments,
+              ROUND(AVG(g.grade_value), 1) as average_mark,
+              ROUND(SUM(CASE WHEN g.grade_value >= 50 THEN 1 ELSE 0 END) / COUNT(g.id) * 100, 1) as pass_rate
+       FROM grades g
+       JOIN students st ON g.student_id = st.id
+       WHERE g.school_id = ? AND g.term = ?
+       GROUP BY st.gender`,
+      [schoolId, resolvedTerm]
+    );
+
+    // 6. Top Achievers
+    const topStudents = await query(
+      `SELECT st.id, st.first_name, st.last_name, st.admission_number, c.name as class_name,
+              ROUND(AVG(g.grade_value), 1) as average_mark,
+              COUNT(DISTINCT g.subject) as subjects_count
+       FROM grades g
+       JOIN students st ON g.student_id = st.id
+       JOIN classes c ON st.class_id = c.id
+       WHERE g.school_id = ? AND g.term = ?
+       GROUP BY st.id, st.first_name, st.last_name, st.admission_number, c.name
+       HAVING subjects_count >= 3
+       ORDER BY average_mark DESC
+       LIMIT 10`,
+      [schoolId, resolvedTerm]
+    );
+
+    const overallAverage = schoolTotalEvaluated > 0 ? parseFloat((schoolTotalMarks / schoolTotalEvaluated).toFixed(1)) : 0;
+    const overallPassRate = schoolTotalEvaluated > 0 ? Math.round((schoolPasses / schoolTotalEvaluated) * 100) : 0;
+
+    return res.json({
+      data: {
+        term: resolvedTerm,
+        overall_average: overallAverage,
+        overall_pass_rate: overallPassRate,
+        total_cohorts: classes.length,
+        submitted_cohorts: cohortPerformance.filter(c => c.submission_status === 'submitted' || c.submission_status === 'verified').length,
+        cohort_performance: cohortPerformance,
+        subject_league: subjectStats,
+        gender_distribution: genderStats,
+        top_achievers: topStudents
+      }
+    });
+  } catch (err) {
+    console.error('Admin analytics error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to aggregate administrative grades analytics.' } });
   }
 });
 

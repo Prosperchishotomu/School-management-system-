@@ -80,6 +80,9 @@ async function ensureTables() {
     try { await query(`ALTER TABLE \`staff\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`staff\` MODIFY COLUMN \`school_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`staff\` MODIFY COLUMN \`user_id\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`expenses\` MODIFY COLUMN \`id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`expenses\` MODIFY COLUMN \`school_id\` VARCHAR(50) NOT NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`expenses\` MODIFY COLUMN \`recorded_by\` VARCHAR(50) NULL`); } catch(e) {}
 
     // 2. Missing columns additions (using standard ALTER TABLE ADD COLUMN statements inside try-catch)
     // Students missing columns
@@ -978,6 +981,71 @@ async function ensureTables() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
     try { await query(`ALTER TABLE \`fee_payments\` ADD COLUMN \`amount\` DECIMAL(12,2) NULL`); } catch(e) {}
     try { await query(`UPDATE fee_payments SET amount = amount_paid WHERE amount IS NULL`); } catch(e) {}
+
+    // Terms school days
+    try { await query(`ALTER TABLE \`terms\` ADD COLUMN \`total_school_days\` INT UNSIGNED DEFAULT 65`); } catch(e) {}
+
+    // Digital Library E-Resources (downloadable files ie PDF and DOCX, read in system, request to download)
+    await query(`CREATE TABLE IF NOT EXISTS \`library_resources\` (
+      \`id\` VARCHAR(50) PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`title\` VARCHAR(200) NOT NULL,
+      \`author\` VARCHAR(150) NULL,
+      \`category\` VARCHAR(50) DEFAULT 'textbook',
+      \`resource_type\` VARCHAR(50) DEFAULT 'textbook',
+      \`file_url\` TEXT NULL,
+      \`file_name\` VARCHAR(255) NULL,
+      \`file_type\` VARCHAR(20) DEFAULT 'pdf',
+      \`file_size\` VARCHAR(50) DEFAULT '2.4 MB',
+      \`description\` TEXT NULL,
+      \`grade_level\` VARCHAR(50) NULL,
+      \`subject\` VARCHAR(100) NULL,
+      \`status\` VARCHAR(20) DEFAULT 'active',
+      \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX \`idx_lib_school\` (\`school_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    // Library Download Requests (students request to download, reviewed and approved by librarian/admin)
+    await query(`CREATE TABLE IF NOT EXISTS \`library_download_requests\` (
+      \`id\` VARCHAR(50) PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`resource_id\` VARCHAR(50) NOT NULL,
+      \`user_id\` VARCHAR(50) NOT NULL,
+      \`user_name\` VARCHAR(100) NULL,
+      \`user_role\` VARCHAR(50) DEFAULT 'student',
+      \`reason\` TEXT NULL,
+      \`status\` ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+      \`requested_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      \`actioned_by\` VARCHAR(50) NULL,
+      \`actioned_at\` DATETIME NULL,
+      \`admin_notes\` TEXT NULL,
+      INDEX \`idx_ldr_school\` (\`school_id\`),
+      INDEX \`idx_ldr_res\` (\`resource_id\`),
+      INDEX \`idx_ldr_user\` (\`user_id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    // Grade / Results Submissions (immutable once submitted to admin; only super admin can unlock)
+    await query(`CREATE TABLE IF NOT EXISTS \`grade_submissions\` (
+      \`id\` VARCHAR(50) PRIMARY KEY,
+      \`school_id\` VARCHAR(50) NOT NULL,
+      \`class_id\` VARCHAR(50) NOT NULL,
+      \`term\` VARCHAR(50) NOT NULL,
+      \`year\` INT UNSIGNED NOT NULL DEFAULT 2026,
+      \`status\` ENUM('draft', 'submitted', 'verified', 'unlocked') DEFAULT 'submitted',
+      \`submitted_by\` VARCHAR(50) NOT NULL,
+      \`teacher_name\` VARCHAR(100) NULL,
+      \`notes\` TEXT NULL,
+      \`submitted_at\` DATETIME DEFAULT CURRENT_TIMESTAMP,
+      \`verified_by\` VARCHAR(50) NULL,
+      \`verified_at\` DATETIME NULL,
+      \`unlocked_by\` VARCHAR(50) NULL,
+      \`unlocked_at\` DATETIME NULL,
+      UNIQUE KEY \`uq_class_term_year\` (\`school_id\`, \`class_id\`, \`term\`, \`year\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+
+    // Attendance unlock audit
+    try { await query(`ALTER TABLE \`attendance_submissions\` ADD COLUMN \`unlocked_by\` VARCHAR(50) NULL`); } catch(e) {}
+    try { await query(`ALTER TABLE \`attendance_submissions\` ADD COLUMN \`unlocked_at\` DATETIME NULL`); } catch(e) {}
 
     console.log('Schema migration verification complete. All required database tables active.');
   } catch (err) {

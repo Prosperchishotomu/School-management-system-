@@ -11,17 +11,17 @@ const ICONS = {
 };
 
 const STYLES = {
-  success: 'bg-slate-900/95 border-emerald-500/50 text-emerald-100 shadow-lg shadow-black/40',
-  error:   'bg-slate-900/95 border-rose-500/50 text-rose-100 shadow-lg shadow-black/40',
-  warning: 'bg-slate-900/95 border-amber-500/50 text-amber-100 shadow-lg shadow-black/40',
-  info:    'bg-slate-900/95 border-cyan-500/50 text-slate-100 shadow-lg shadow-black/40',
+  success: 'bg-slate-900/95 border-emerald-500/40 text-emerald-100 shadow-lg shadow-emerald-950/30',
+  error:   'bg-slate-900/95 border-rose-500/40 text-rose-100 shadow-lg shadow-rose-950/30',
+  warning: 'bg-slate-900/95 border-amber-500/40 text-amber-100 shadow-lg shadow-amber-950/30',
+  info:    'bg-slate-900/95 border-sky-500/40 text-sky-100 shadow-lg shadow-sky-950/30',
 };
 
 const ICON_STYLES = {
   success: 'text-emerald-400',
   error:   'text-rose-400',
   warning: 'text-amber-400',
-  info:    'text-cyan-400',
+  info:    'text-sky-400',
 };
 
 let toastId = 0;
@@ -100,7 +100,7 @@ export const ToastProvider = ({ children }) => {
               <button
                 onClick={() => dismiss(t.id)}
                 aria-label="Dismiss message"
-                className="shrink-0 opacity-60 hover:opacity-100 transition-opacity cursor-pointer mt-0.5"
+                className="shrink-0 p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 transition-all duration-150 cursor-pointer mt-0.5"
               >
                 <X className="w-3.5 h-3.5" />
               </button>

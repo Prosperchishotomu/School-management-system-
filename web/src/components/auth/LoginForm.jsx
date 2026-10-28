@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   School, Lock, User, Eye, EyeOff, ArrowRight, AlertCircle,
-  ShieldCheck
+  ShieldCheck, Clock, ShieldAlert
 } from 'lucide-react';
 
 export default function LoginForm({ isModal = false, onClose = null, onSuccess = null }) {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isSessionExpired = searchParams.get('expired') === '1';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -89,6 +91,23 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
         </p>
       </div>
 
+      {/* Session Expired Notice */}
+      {isSessionExpired && (
+        <div className="mb-5 p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/15 to-orange-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-3 shadow-lg shadow-amber-950/20 animate-fadeIn font-medium">
+          <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5">
+            <Clock className="w-4 h-4" />
+          </div>
+          <div className="flex-1">
+            <h4 className="font-display font-bold text-amber-300 text-xs tracking-tight">
+              Session Timed Out
+            </h4>
+            <p className="text-[11px] text-slate-300 leading-relaxed font-sans mt-0.5">
+              Your previous session expired due to security timeout or inactivity. Please sign in to resume your portal session.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Error Banner */}
       {error && (
         <div className="mb-5 p-3 rounded-xl bg-rose-950/50 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5 animate-fadeIn font-medium">
@@ -116,7 +135,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setUsername(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="       Enter your username"
+              placeholder="Enter your username"
               autoComplete="username"
               className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-700/80 bg-slate-950/70 text-white placeholder-slate-500 text-xs font-medium font-sans focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 shadow-inner transition-all"
             />
@@ -150,7 +169,7 @@ export default function LoginForm({ isModal = false, onClose = null, onSuccess =
                 setPassword(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="       Enter your password"
+              placeholder="Enter your password"
               autoComplete="current-password"
               className="w-full pl-10 pr-11 py-3 rounded-xl border border-slate-700/80 bg-slate-950/70 text-white placeholder-slate-500 text-xs font-medium font-sans focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/20 shadow-inner transition-all"
             />

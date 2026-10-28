@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from '../utils/api';
 import { useToast } from '../contexts/ToastContext';
+import { useAuth } from '../contexts/AuthContext';
 import { invalidate } from '../data/apiHooks';
 import { Modal } from './ui';
 import {
@@ -71,170 +72,219 @@ function parseClientTable(rawText) {
 }
 
 /**
- * Built-in authoritative institutional format specifications
+ * Dynamically generated authoritative institutional format specifications
+ * Strictly enforces school type (Primary, Secondary, High School, Combined)
+ * and stream policy (single-cohort vs streamed).
  */
-const ENTITY_SPECIFICATIONS = {
-  students: {
-    title: 'Students & Guardian Roster Specification',
-    description: 'Mandatory Format: Ingests student demographic profiles, assigns them into their class, and establishes parent/guardian linkage for security, communication, and fee billing.',
-    mandatory: ['first_name', 'last_name', 'gender', 'class_name'],
-    fields: [
-      { key: 'first_name', label: 'First Name', required: true, type: 'Text', rule: 'Student legal first name (as on birth certificate)', example: 'Tadiwanashe' },
-      { key: 'last_name', label: 'Last Name / Surname', required: true, type: 'Text', rule: 'Student legal surname / family name', example: 'Moyo' },
-      { key: 'gender', label: 'Gender', required: true, type: 'Choice', rule: 'Must be "male" or "female" (also accepts "M" or "F")', example: 'female' },
-      { key: 'class_name', label: 'Class Stream', required: true, type: 'Text', rule: 'Exact class name (e.g. Form 1A, Grade 7 East). Auto-created if missing.', example: 'Form 1A' },
-      { key: 'admission_number', label: 'Admission Number', required: false, type: 'Text', rule: 'Unique student admission ID. If omitted, auto-generated sequentially.', example: 'ADM2026-001' },
-      { key: 'date_of_birth', label: 'Date of Birth', required: false, type: 'Date', rule: 'Strict format: YYYY-MM-DD (e.g. 2012-05-18)', example: '2012-05-18' },
-      { key: 'guardian_name', label: 'Guardian Full Name', required: false, type: 'Text', rule: 'Primary parent or legal guardian full name', example: 'Dr. Peter Moyo' },
-      { key: 'guardian_phone', label: 'Guardian Phone', required: false, type: 'Phone', rule: 'Primary phone with country code for SMS & WhatsApp emergency alerts', example: '+263772345678' },
-      { key: 'guardian_email', label: 'Guardian Email', required: false, type: 'Email', rule: 'Email for parent portal login & digital report card delivery', example: 'pmoyo@health.gov.zw' }
-    ],
-    sampleHeaders: 'admission_number,first_name,last_name,gender,date_of_birth,class_name,guardian_name,guardian_phone,guardian_email',
-    sampleRows: [
-      { admission_number: 'ADM2026-001', first_name: 'Tendai', last_name: 'Mutasa', gender: 'male', date_of_birth: '2013-05-12', class_name: 'Grade 6 Red', guardian_name: 'Mr. C. Mutasa', guardian_phone: '+263771234567', guardian_email: 'cmutasa@gmail.com' },
-      { admission_number: 'ADM2026-002', first_name: 'Ruvimbo', last_name: 'Chirandu', gender: 'female', date_of_birth: '2012-08-24', class_name: 'Grade 7 Blue', guardian_name: 'Mrs. S. Chirandu', guardian_phone: '+263772345678', guardian_email: 'chirandu@yahoo.com' },
-      { admission_number: 'ADM2026-003', first_name: 'Farai', last_name: 'Moyo', gender: 'male', date_of_birth: '2010-02-15', class_name: 'Form 2 East', guardian_name: 'Dr. P. Moyo', guardian_phone: '+263773456789', guardian_email: 'pmoyo@health.gov.zw' }
-    ],
-    rules: [
-      'Data Privacy: Parent accounts are linked exclusively to their own children. Unlinked parents can never view student rosters.',
-      'Date Standard: Use YYYY-MM-DD (e.g. 2012-05-18) for all birth dates.',
-      'Auto-Enrollment: Students are enrolled directly into their assigned class stream upon ingestion.'
-    ]
-  },
-  staff: {
-    title: 'Staff, Form Master & Subject Allocation Specification',
-    description: 'Mandatory Format: Creates teacher user accounts, links Form Master / Class Teacher responsibilities to classes, and assigns teaching allocations to subjects.',
-    mandatory: ['name', 'email', 'role_title'],
-    fields: [
-      { key: 'name', label: 'Full Name', required: true, type: 'Text', rule: 'Full name and title of the teacher', example: 'Mr. Tawanda Dube' },
-      { key: 'email', label: 'Institutional Email', required: true, type: 'Email', rule: 'Unique email address for portal login. A temporary password will be generated.', example: 'tdube@harareacademy.ac.zw' },
-      { key: 'role_title', label: 'Designation / Post', required: true, type: 'Text', rule: 'Designation: Senior Teacher, HOD Sciences, Form Master, Class Teacher', example: 'HOD Sciences' },
-      { key: 'phone', label: 'Phone Number', required: false, type: 'Phone', rule: 'Teacher mobile contact number for emergency school alerts', example: '+263774567890' },
-      { key: 'qualification', label: 'Academic / Professional Qualification', required: false, type: 'Text', rule: 'Highest qualification (e.g. B.Ed Mathematics, Dip.Ed Primary, M.Sc Education, B.Sc Chemistry)', example: 'B.Ed Mathematics' },
-      { key: 'experience_years', label: 'Teaching Experience (Years)', required: false, type: 'Number', rule: 'Years of professional experience (e.g. 5, 12). Used for MoPSE staffing returns and salary grading.', example: '8' },
-      { key: 'ec_number', label: 'EC / Civil Service Number', required: false, type: 'Text', rule: 'Staff employment code or MoPSE Civil Service EC Number', example: 'EC-993810' },
-      { key: 'employment_type', label: 'Employment Status', required: false, type: 'Choice', rule: 'permanent, contract, temporary, or relief', example: 'permanent' },
-      { key: 'class_name', label: 'Class Teacher / Form Master', required: false, type: 'Text', rule: 'Crucial: Links this teacher as the official Form Master / Class Teacher for this class.', example: 'Form 3B' },
-      { key: 'subjects', label: 'Subjects Taught', required: false, type: 'List', rule: 'Crucial: Semicolon or comma-separated subjects. Automatically maps teaching allocations.', example: 'Mathematics; Physical Science' }
-    ],
-    sampleHeaders: 'name,email,phone,role_title,qualification,experience_years,ec_number,class_name,subjects',
-    sampleRows: [
-      { name: 'Mr. Blessmore Sibanda', email: 'bsibanda@harareacademy.ac.zw', phone: '+263774567890', role_title: 'Senior Teacher', qualification: 'Dip.Ed Primary (UZ)', experience_years: '12', ec_number: 'EC-842109', class_name: 'Grade 5 Gold', subjects: 'All Primary Subjects' },
-      { name: 'Ms. Tariro Moyo', email: 'tmoyo@harareacademy.ac.zw', phone: '+263775678901', role_title: 'Subject Teacher', qualification: 'B.A. Shona & Linguistics (MSU)', experience_years: '4', ec_number: 'EC-934812', class_name: 'Form 1A', subjects: 'Shona; Heritage Studies' },
-      { name: 'Mr. Tawanda Dube', email: 'tdube@harareacademy.ac.zw', phone: '+263776789012', role_title: 'HOD Sciences', qualification: 'M.Sc Science Education (NUST)', experience_years: '15', ec_number: 'EC-718290', class_name: 'Form 3B', subjects: 'Mathematics; Physical Science' }
-    ],
-    rules: [
-      'Form Master Assignment: Providing class_name immediately designates the teacher as the Form Master / Class Teacher.',
-      'Subject Allocation: Subjects listed in the "subjects" column automatically link into teaching_assignments for marks entry.',
-      'Qualifications & MoPSE EMIS: Qualification and experience_years automatically feed into the MoPSE Staffing & Qualifications Return.',
-      'Auto-Generated Passwords: Secure temporary login credentials (username + password) are displayed upon successful import.'
-    ]
-  },
-  classes: {
-    title: 'Classes & Streams Specification',
-    description: 'Mandatory Format: Ingests school grade streams, cohort levels, and room enrolment limits.',
-    mandatory: ['name', 'level'],
-    fields: [
-      { key: 'name', label: 'Class Name', required: true, type: 'Text', rule: 'Unique class or stream name (e.g. Form 1A, Grade 3 Blue)', example: 'Form 1A' },
-      { key: 'level', label: 'Phase / Level', required: true, type: 'Text', rule: 'Primary, Secondary, Infant, Junior, Advanced', example: 'Secondary' },
-      { key: 'capacity', label: 'Enrolment Capacity', required: false, type: 'Number', rule: 'Maximum student desks (default 45)', example: '45' },
-      { key: 'stream', label: 'Stream Tag', required: false, type: 'Text', rule: 'Stream identifier (e.g. East, West, Gold, A, B)', example: 'A' }
-    ],
-    sampleHeaders: 'name,level,capacity,stream',
-    sampleRows: [
-      { name: 'Form 1A', level: 'Secondary', capacity: '45', stream: 'A' },
-      { name: 'Grade 7 East', level: 'Primary', capacity: '40', stream: 'East' }
-    ],
-    rules: [
-      'Used across attendance rosters, fee billing groupings, and broadsheet reports.'
-    ]
-  },
-  subjects: {
-    title: 'Curriculum Subjects Specification',
-    description: 'Mandatory Format: Registers academic subjects into the school curriculum syllabus.',
-    mandatory: ['name'],
-    fields: [
-      { key: 'name', label: 'Subject Name', required: true, type: 'Text', rule: 'Full curriculum subject name', example: 'Mathematics' },
-      { key: 'code', label: 'Subject Code', required: false, type: 'Text', rule: 'Short 3-5 letter subject code (e.g. MATH, PHYS)', example: 'MATH' },
-      { key: 'category', label: 'Department / Faculty', required: false, type: 'Text', rule: 'Sciences, Languages, Commercials, Humanities, Arts', example: 'Sciences' },
-      { key: 'level', label: 'Applicable Level', required: false, type: 'Text', rule: 'Primary, O-Level, A-Level, All', example: 'Primary & Secondary' }
-    ],
-    sampleHeaders: 'code,name,category,level',
-    sampleRows: [
-      { code: 'MATH', name: 'Mathematics', category: 'Sciences', level: 'Primary & Secondary' },
-      { code: 'ENG', name: 'English Language', category: 'Languages', level: 'All Levels' }
-    ],
-    rules: [
-      'Used for timetable allocations, exam entries, and term report cards.'
-    ]
-  },
-  assets: {
-    title: 'School Assets & Inventory Specification',
-    description: 'Mandatory Format: Ingests institutional equipment, computer hardware, science lab apparatus, school vehicles, and furniture.',
-    mandatory: ['name'],
-    fields: [
-      { key: 'name', label: 'Asset Name', required: true, type: 'Text', rule: 'Equipment title or model', example: 'Dell OptiPlex 7090 Desktop' },
-      { key: 'category', label: 'Category', required: false, type: 'Choice', rule: 'it_hardware, science_lab, furniture, plant_vehicle, general', example: 'it_hardware' },
-      { key: 'code', label: 'Asset Tag', required: false, type: 'Text', rule: 'Unique barcode / asset tag ID. Auto-generated if blank.', example: 'AST-IT-001' },
-      { key: 'serial_number', label: 'Serial Number', required: false, type: 'Text', rule: 'Hardware serial number', example: 'SN-DELL-9921' },
-      { key: 'value', label: 'Purchase Value', required: false, type: 'Number', rule: 'Cost or valuation in USD', example: '650.00' },
-      { key: 'location', label: 'Location', required: false, type: 'Text', rule: 'Campus building or lab room', example: 'Computer Lab 1' }
-    ],
-    sampleHeaders: 'name,category,code,serial_number,value,location',
-    sampleRows: [
-      { name: 'Dell OptiPlex 7090 Desktop', category: 'it_hardware', code: 'AST-IT-001', serial_number: 'SN-DELL-9921', value: '650.00', location: 'Computer Lab 1' },
-      { name: 'Student Double Desks (Wooden)', category: 'furniture', code: 'AST-FUR-012', serial_number: 'TAG-DSK-44', value: '45.00', location: 'Block C Room 4' },
-      { name: 'Compound Microscope Olympus', category: 'science_lab', code: 'AST-LAB-005', serial_number: 'SN-OLY-552', value: '380.00', location: 'Chemistry Lab' }
-    ],
-    rules: [
-      'Assets are instantly tracked for maintenance logs, audit counts, and staff custodian checkouts.'
-    ]
-  },
-  library: {
-    title: 'Library Books & Media Catalogue Specification',
-    description: 'Mandatory Format: Ingests library books, curriculum textbooks, literature sets, and past examination papers.',
-    mandatory: ['name'],
-    fields: [
-      { key: 'name', label: 'Book Title', required: true, type: 'Text', rule: 'Full book or media title', example: 'Step Ahead: O-Level Mathematics' },
-      { key: 'author', label: 'Author', required: false, type: 'Text', rule: 'Author or editor name', example: 'M. Chitsike' },
-      { key: 'isbn', label: 'ISBN / Accession Barcode', required: false, type: 'Text', rule: 'ISBN or internal barcode', example: '978-0-7974-1234-5' },
-      { key: 'shelf_location', label: 'Shelf Location', required: false, type: 'Text', rule: 'Library stack, bay, or shelf', example: 'Bay 1 Shelf A' },
-      { key: 'resource_type', label: 'Resource Type', required: false, type: 'Choice', rule: 'textbook, revision_guide, fiction, past_paper', example: 'textbook' }
-    ],
-    sampleHeaders: 'name,author,isbn,shelf_location,resource_type',
-    sampleRows: [
-      { name: 'Step Ahead: O-Level Mathematics', author: 'M. Chitsike', isbn: '978-0-7974-1234-5', shelf_location: 'Bay 1 Shelf A', resource_type: 'textbook' },
-      { name: 'Focus on Shona: Form 3 & 4', author: 'D. Mutasa', isbn: '978-0-7974-5678-9', shelf_location: 'Bay 2 Shelf C', resource_type: 'textbook' },
-      { name: 'Things Fall Apart', author: 'Chinua Achebe', isbn: '978-0-3854-7454-2', shelf_location: 'Bay 4 Shelf B', resource_type: 'fiction' }
-    ],
-    rules: [
-      'Books are categorized as "book" and immediately become available for student loans, barcode returns, and overdue tracking.'
-    ]
-  },
-  fees: {
-    title: 'Student Fee Invoices & Billing Specification',
-    description: 'Mandatory Format: Ingests termly fee schedules, student invoices, and initial receipt allocations.',
-    mandatory: ['admission_number', 'term', 'amount_due'],
-    fields: [
-      { key: 'admission_number', label: 'Admission Number', required: true, type: 'Text', rule: 'Unique student admission number (e.g. ADM2026-001) to link fee invoice', example: 'ADM2026-001' },
-      { key: 'term', label: 'Billing Term', required: true, type: 'Text', rule: 'Billing term identifier (e.g. Term 1 2026)', example: 'Term 1 2026' },
-      { key: 'amount_due', label: 'Amount Due ($)', required: true, type: 'Number', rule: 'Total invoice billing amount in USD', example: '450.00' },
-      { key: 'amount_paid', label: 'Amount Paid ($)', required: false, type: 'Number', rule: 'Initial amount prepaid by guardian. If > 0, receipt is generated.', example: '200.00' },
-      { key: 'due_date', label: 'Payment Due Date', required: false, type: 'Date', rule: 'Payment deadline in YYYY-MM-DD format', example: '2026-01-31' },
-      { key: 'title', label: 'Fee Description', required: false, type: 'Text', rule: 'Invoice line description (e.g. Tuition, Science Levy)', example: 'Term 1 Tuition Fee' }
-    ],
-    sampleHeaders: 'admission_number,term,amount_due,amount_paid,due_date,title',
-    sampleRows: [
-      { admission_number: 'ADM2026-001', term: 'Term 1 2026', amount_due: '450.00', amount_paid: '450.00', due_date: '2026-01-31', title: 'Term 1 Tuition & Levies' },
-      { admission_number: 'ADM2026-002', term: 'Term 1 2026', amount_due: '450.00', amount_paid: '200.00', due_date: '2026-01-31', title: 'Term 1 Tuition & Levies' },
-      { admission_number: 'ADM2026-003', term: 'Term 1 2026', amount_due: '520.00', amount_paid: '0.00', due_date: '2026-01-31', title: 'Term 1 Boarding & Tuition' }
-    ],
-    rules: [
-      'Automatic Student Matching: Maps invoices directly to students by admission number.',
-      'Receipt Generation: Any amount in "amount_paid" generates an official payment receipt.'
-    ]
-  }
-};
+export function getDynamicEntitySpec(entity, schoolInfo) {
+  const schoolType = (schoolInfo?.school_type || 'secondary').toLowerCase();
+  const isPrimary = schoolType === 'primary';
+  const isCombined = schoolType === 'combined' || schoolType === 'mixed';
+  const hasAlevel = Boolean(schoolInfo?.has_alevel || schoolType === 'high_school' || schoolType === 'a_level');
+  const hasStreams = schoolInfo?.has_streams !== 0 && schoolInfo?.has_streams !== false;
+
+  // Cohort class samples tailored strictly to the school
+  const primaryClasses = hasStreams ? ['Grade 1 East', 'Grade 3 Blue', 'Grade 7 Gold'] : ['Grade 1', 'Grade 3', 'Grade 7'];
+  const secondaryClasses = hasStreams
+    ? (hasAlevel ? ['Form 1A', 'Form 2 East', 'Form 3 Commercials', 'Lower 6 Sciences'] : ['Form 1A', 'Form 2 East', 'Form 3 Commercials', 'Form 4 Sciences'])
+    : ['Form 1', 'Form 2', 'Form 3', 'Form 4'];
+
+  const activeClassSamples = isPrimary
+    ? primaryClasses
+    : isCombined
+    ? (hasStreams ? ['Grade 3 Blue', 'Grade 7 Gold', 'Form 1A', 'Form 3 Commercials'] : ['Grade 3', 'Grade 7', 'Form 1', 'Form 3'])
+    : secondaryClasses;
+
+  const defaultSampleClass = activeClassSamples[0] || (isPrimary ? 'Grade 1' : 'Form 1');
+
+  const specs = {
+    students: {
+      title: 'Students & Guardian Roster Specification',
+      description: `Mandatory Format: Ingests student demographic profiles for ${isPrimary ? 'Primary (ECD/Grade 1-7)' : isCombined ? 'Combined Primary & Secondary' : 'Secondary (Form 1-4/6)'} institutions.${hasStreams ? ' Stream tags are permitted.' : ' This school operates single-cohorts (no streams allowed).' }`,
+      mandatory: ['first_name', 'last_name', 'gender', 'class_name'],
+      fields: [
+        { key: 'first_name', label: 'First Name', required: true, type: 'Text', rule: 'Student legal first name (as on birth certificate)', example: 'Tadiwanashe' },
+        { key: 'last_name', label: 'Last Name / Surname', required: true, type: 'Text', rule: 'Student legal surname / family name', example: 'Moyo' },
+        { key: 'gender', label: 'Gender', required: true, type: 'Choice', rule: 'Must be "male" or "female" (also accepts "M" or "F")', example: 'female' },
+        { key: 'class_name', label: 'Class / Cohort', required: true, type: 'Text', rule: `Exact class name (${isPrimary ? 'e.g. Grade 1' + (hasStreams ? ' East' : '') : 'e.g. Form 1' + (hasStreams ? 'A' : '')}). Level & stream rules strictly verified.`, example: defaultSampleClass },
+        { key: 'admission_number', label: 'Admission Number', required: false, type: 'Text', rule: 'Unique student admission ID. If omitted, auto-generated sequentially.', example: 'ADM2026-001' },
+        { key: 'date_of_birth', label: 'Date of Birth', required: false, type: 'Date', rule: 'Strict format: YYYY-MM-DD (e.g. 2012-05-18)', example: '2012-05-18' },
+        { key: 'guardian_name', label: 'Guardian Full Name', required: false, type: 'Text', rule: 'Primary parent or legal guardian full name', example: 'Dr. Peter Moyo' },
+        { key: 'guardian_phone', label: 'Guardian Phone', required: false, type: 'Phone', rule: 'Primary phone with country code for SMS & WhatsApp emergency alerts', example: '+263772345678' },
+        { key: 'guardian_email', label: 'Guardian Email', required: false, type: 'Email', rule: 'Email for parent portal login & digital report card delivery', example: 'pmoyo@health.gov.zw' }
+      ],
+      sampleHeaders: 'admission_number,first_name,last_name,gender,date_of_birth,class_name,guardian_name,guardian_phone,guardian_email',
+      sampleRows: isPrimary ? [
+        { admission_number: 'ADM2026-001', first_name: 'Tendai', last_name: 'Mutasa', gender: 'male', date_of_birth: '2017-05-12', class_name: primaryClasses[0], guardian_name: 'Mr. C. Mutasa', guardian_phone: '+263771234567', guardian_email: 'cmutasa@gmail.com' },
+        { admission_number: 'ADM2026-002', first_name: 'Ruvimbo', last_name: 'Chirandu', gender: 'female', date_of_birth: '2015-08-24', class_name: primaryClasses[1], guardian_name: 'Mrs. S. Chirandu', guardian_phone: '+263772345678', guardian_email: 'chirandu@yahoo.com' },
+        { admission_number: 'ADM2026-003', first_name: 'Farai', last_name: 'Moyo', gender: 'male', date_of_birth: '2012-02-15', class_name: primaryClasses[2], guardian_name: 'Dr. P. Moyo', guardian_phone: '+263773456789', guardian_email: 'pmoyo@health.gov.zw' }
+      ] : isCombined ? [
+        { admission_number: 'ADM2026-001', first_name: 'Tendai', last_name: 'Mutasa', gender: 'male', date_of_birth: '2015-05-12', class_name: hasStreams ? 'Grade 3 Blue' : 'Grade 3', guardian_name: 'Mr. C. Mutasa', guardian_phone: '+263771234567', guardian_email: 'cmutasa@gmail.com' },
+        { admission_number: 'ADM2026-002', first_name: 'Kudakwashe', last_name: 'Ncube', gender: 'male', date_of_birth: '2012-03-14', class_name: hasStreams ? 'Form 1A' : 'Form 1', guardian_name: 'Mr. T. Ncube', guardian_phone: '+263772345678', guardian_email: 'kncube@gmail.com' },
+        { admission_number: 'ADM2026-003', first_name: 'Tafadzwa', last_name: 'Ndlovu', gender: 'male', date_of_birth: '2010-11-05', class_name: hasStreams ? 'Form 3 Commercials' : 'Form 3', guardian_name: 'Dr. S. Ndlovu', guardian_phone: '+263773456789', guardian_email: 'sndlovu@zim.gov.zw' }
+      ] : [
+        { admission_number: 'ADM2026-001', first_name: 'Kudakwashe', last_name: 'Ncube', gender: 'male', date_of_birth: '2012-03-14', class_name: secondaryClasses[0], guardian_name: 'Mr. T. Ncube', guardian_phone: '+263771234567', guardian_email: 'kncube@gmail.com' },
+        { admission_number: 'ADM2026-002', first_name: 'Chiedza', last_name: 'Musarurwa', gender: 'female', date_of_birth: '2011-07-22', class_name: secondaryClasses[1], guardian_name: 'Mrs. E. Musarurwa', guardian_phone: '+263772345678', guardian_email: 'emusarurwa@yahoo.com' },
+        { admission_number: 'ADM2026-003', first_name: 'Tafadzwa', last_name: 'Ndlovu', gender: 'male', date_of_birth: '2010-11-05', class_name: secondaryClasses[2], guardian_name: 'Dr. S. Ndlovu', guardian_phone: '+263773456789', guardian_email: 'sndlovu@zim.gov.zw' },
+        ...(hasAlevel ? [{ admission_number: 'ADM2026-004', first_name: 'Nyasha', last_name: 'Moyo', gender: 'female', date_of_birth: '2008-04-18', class_name: secondaryClasses[3] || 'Lower 6 Sciences', guardian_name: 'Mr. P. Moyo', guardian_phone: '+263774567890', guardian_email: 'pmoyo@health.gov.zw' }] : [{ admission_number: 'ADM2026-004', first_name: 'Tatenda', last_name: 'Moyo', gender: 'female', date_of_birth: '2009-09-12', class_name: secondaryClasses[3] || 'Form 4', guardian_name: 'Mr. P. Moyo', guardian_phone: '+263774567890', guardian_email: 'pmoyo@health.gov.zw' }])
+      ],
+      rules: [
+        `Strict School Level: ${isPrimary ? 'Only ECD and Grade 1-7 allowed. Secondary forms will be rejected.' : 'Only Form 1 to Form 4/6 allowed. Primary grades (ECD, Grade 1-7) are strictly blocked.'}`,
+        `Stream Rule: ${hasStreams ? 'Streams are permitted (e.g. A, B, East, West).' : 'Single cohort per grade only — stream tags will be rejected.'}`,
+        'Data Privacy: Parent accounts are linked exclusively to their own children. Unlinked parents can never view student rosters.',
+        'Auto-Enrollment: Students are enrolled directly into their assigned class cohort upon ingestion.'
+      ]
+    },
+    staff: {
+      title: 'Staff, Form Master & Subject Allocation Specification',
+      description: 'Mandatory Format: Creates teacher user accounts, links Form Master / Class Teacher responsibilities to classes, and assigns teaching allocations.',
+      mandatory: ['name', 'email', 'role_title'],
+      fields: [
+        { key: 'name', label: 'Full Name', required: true, type: 'Text', rule: 'Full name and title of the teacher', example: 'Mr. Tawanda Dube' },
+        { key: 'email', label: 'Institutional Email', required: true, type: 'Email', rule: 'Unique email address for portal login. A temporary password will be generated.', example: 'tdube@school.ac.zw' },
+        { key: 'role_title', label: 'Designation / Post', required: true, type: 'Text', rule: 'Designation: Senior Teacher, HOD Sciences, Form Master, Class Teacher', example: 'HOD Sciences' },
+        { key: 'phone', label: 'Phone Number', required: false, type: 'Phone', rule: 'Teacher mobile contact number for emergency school alerts', example: '+263774567890' },
+        { key: 'qualification', label: 'Academic / Professional Qualification', required: false, type: 'Text', rule: 'Highest qualification (e.g. B.Ed, Dip.Ed, M.Sc)', example: isPrimary ? 'Dip.Ed Primary' : 'B.Ed Mathematics' },
+        { key: 'experience_years', label: 'Teaching Experience (Years)', required: false, type: 'Number', rule: 'Years of professional experience (e.g. 5, 12).', example: '8' },
+        { key: 'ec_number', label: 'EC / Civil Service Number', required: false, type: 'Text', rule: 'Staff employment code or MoPSE EC Number', example: 'EC-993810' },
+        { key: 'class_name', label: 'Class Teacher / Form Master', required: false, type: 'Text', rule: 'Crucial: Links this teacher as the official Form Master / Class Teacher.', example: defaultSampleClass },
+        { key: 'subjects', label: 'Subjects Taught', required: false, type: 'List', rule: 'Crucial: Semicolon or comma-separated subjects. Automatically maps teaching allocations.', example: isPrimary ? 'All Primary Subjects' : 'Mathematics; Physical Science' }
+      ],
+      sampleHeaders: 'name,email,phone,role_title,qualification,experience_years,ec_number,class_name,subjects',
+      sampleRows: isPrimary ? [
+        { name: 'Mr. Blessmore Sibanda', email: 'bsibanda@school.ac.zw', phone: '+263774567890', role_title: 'Senior Teacher', qualification: 'Dip.Ed Primary', experience_years: '12', ec_number: 'EC-842109', class_name: primaryClasses[0], subjects: 'All Primary Subjects' },
+        { name: 'Mrs. Susan Ncube', email: 'sncube@school.ac.zw', phone: '+263775678901', role_title: 'Deputy Head', qualification: 'B.Ed Primary', experience_years: '16', ec_number: 'EC-718290', class_name: primaryClasses[1], subjects: 'English; Mathematics' }
+      ] : [
+        { name: 'Ms. Tariro Moyo', email: 'tmoyo@school.ac.zw', phone: '+263775678901', role_title: 'Subject Teacher', qualification: 'B.A. Shona', experience_years: '4', ec_number: 'EC-934812', class_name: secondaryClasses[0], subjects: 'Shona; Heritage Studies' },
+        { name: 'Mr. Tawanda Dube', email: 'tdube@school.ac.zw', phone: '+263776789012', role_title: 'HOD Sciences', qualification: 'M.Sc Education', experience_years: '15', ec_number: 'EC-718290', class_name: secondaryClasses[1], subjects: 'Mathematics; Physical Science' }
+      ],
+      rules: [
+        'Form Master Assignment: Providing class_name immediately designates the teacher as the Form Master / Class Teacher.',
+        'Subject Allocation: Subjects listed in the "subjects" column automatically link into teaching_assignments for marks entry.',
+        'Auto-Generated Passwords: Secure temporary login credentials (username + password) are displayed upon successful import.'
+      ]
+    },
+    classes: {
+      title: 'Classes & Streams Specification',
+      description: `Mandatory Format: Ingests school grade cohorts and room enrolment limits for ${schoolType} institution.`,
+      mandatory: ['name', 'level'],
+      fields: [
+        { key: 'name', label: 'Class Name', required: true, type: 'Text', rule: `Unique class name (${isPrimary ? 'e.g. Grade 1' : 'e.g. Form 1'}${hasStreams ? 'A' : ''})`, example: defaultSampleClass },
+        { key: 'level', label: 'Phase / Level', required: true, type: 'Text', rule: isPrimary ? 'Primary, Infant, Junior' : 'Secondary, High School', example: isPrimary ? 'Primary' : 'Secondary' },
+        { key: 'capacity', label: 'Enrolment Capacity', required: false, type: 'Number', rule: 'Maximum student desks (default 45)', example: '45' },
+        ...(hasStreams ? [{ key: 'stream', label: 'Stream Tag', required: false, type: 'Text', rule: 'Stream identifier (e.g. East, West, Gold, A, B)', example: 'A' }] : [])
+      ],
+      sampleHeaders: hasStreams ? 'name,level,capacity,stream' : 'name,level,capacity',
+      sampleRows: isPrimary ? [
+        hasStreams ? { name: primaryClasses[0], level: 'Primary', capacity: '40', stream: 'East' } : { name: primaryClasses[0], level: 'Primary', capacity: '40' },
+        hasStreams ? { name: primaryClasses[1], level: 'Primary', capacity: '40', stream: 'Blue' } : { name: primaryClasses[1], level: 'Primary', capacity: '40' },
+        hasStreams ? { name: primaryClasses[2], level: 'Primary', capacity: '45', stream: 'Gold' } : { name: primaryClasses[2], level: 'Primary', capacity: '45' }
+      ] : [
+        hasStreams ? { name: secondaryClasses[0], level: 'Secondary', capacity: '45', stream: 'A' } : { name: secondaryClasses[0], level: 'Secondary', capacity: '45' },
+        hasStreams ? { name: secondaryClasses[1], level: 'Secondary', capacity: '45', stream: 'East' } : { name: secondaryClasses[1], level: 'Secondary', capacity: '45' },
+        hasStreams ? { name: secondaryClasses[2], level: 'Secondary', capacity: '40', stream: 'Commercials' } : { name: secondaryClasses[2], level: 'Secondary', capacity: '40' }
+      ],
+      rules: [
+        `Strict School Level: Only ${isPrimary ? 'Primary grades (ECD, Grade 1-7)' : 'Secondary forms (Form 1-4/6)'} are accepted.`,
+        `Stream Rule: ${hasStreams ? 'Streams are enabled for this school.' : 'Streams are disabled (single-cohort only). Streamed names will be rejected.'}`
+      ]
+    },
+    subjects: {
+      title: 'Curriculum Subjects Specification',
+      description: 'Mandatory Format: Registers academic subjects into the school curriculum syllabus.',
+      mandatory: ['name'],
+      fields: [
+        { key: 'name', label: 'Subject Name', required: true, type: 'Text', rule: 'Full curriculum subject name', example: isPrimary ? 'Science and Technology' : 'Mathematics' },
+        { key: 'code', label: 'Subject Code', required: false, type: 'Text', rule: 'Short 3-5 letter subject code (e.g. MATH, PHYS)', example: isPrimary ? 'SCIE' : 'MATH' },
+        { key: 'category', label: 'Department / Faculty', required: false, type: 'Text', rule: 'Sciences, Languages, Commercials, Humanities, Arts', example: 'Sciences' },
+        { key: 'level', label: 'Applicable Level', required: false, type: 'Text', rule: isPrimary ? 'Primary' : 'Secondary, Form 3-6, All Levels', example: isPrimary ? 'Primary' : 'Secondary' }
+      ],
+      sampleHeaders: 'code,name,category,level',
+      sampleRows: isPrimary ? [
+        { code: 'ENG', name: 'English Language', category: 'Languages', level: 'Primary' },
+        { code: 'MATH', name: 'Mathematics', category: 'Sciences', level: 'Primary' },
+        { code: 'SHON', name: 'Indigenous Language (Shona)', category: 'Languages', level: 'Primary' },
+        { code: 'SCIE', name: 'Science and Technology', category: 'Sciences', level: 'Primary' }
+      ] : [
+        { code: 'MATH', name: 'Mathematics', category: 'Sciences', level: 'Secondary' },
+        { code: 'ENG', name: 'English Language', category: 'Languages', level: 'Secondary' },
+        { code: 'PHYS', name: 'Physical Science', category: 'Sciences', level: 'Secondary' },
+        { code: 'COMM', name: 'Commerce', category: 'Commercials', level: 'Secondary' }
+      ],
+      rules: [
+        'Used for timetable allocations, exam entries, and term report cards.'
+      ]
+    },
+    assets: {
+      title: 'School Assets & Inventory Specification',
+      description: 'Mandatory Format: Ingests institutional equipment, computer hardware, science lab apparatus, school vehicles, and furniture.',
+      mandatory: ['name'],
+      fields: [
+        { key: 'name', label: 'Asset Name', required: true, type: 'Text', rule: 'Equipment title or model', example: 'Dell OptiPlex 7090 Desktop' },
+        { key: 'category', label: 'Category', required: false, type: 'Choice', rule: 'it_hardware, science_lab, furniture, plant_vehicle, general', example: 'it_hardware' },
+        { key: 'code', label: 'Asset Tag', required: false, type: 'Text', rule: 'Unique barcode / asset tag ID. Auto-generated if blank.', example: 'AST-IT-001' },
+        { key: 'serial_number', label: 'Serial Number', required: false, type: 'Text', rule: 'Hardware serial number', example: 'SN-DELL-9921' },
+        { key: 'value', label: 'Purchase Value', required: false, type: 'Number', rule: 'Cost or valuation in USD', example: '650.00' },
+        { key: 'location', label: 'Location', required: false, type: 'Text', rule: 'Campus building or lab room', example: 'Computer Lab 1' }
+      ],
+      sampleHeaders: 'name,category,code,serial_number,value,location',
+      sampleRows: [
+        { name: 'Dell OptiPlex 7090 Desktop', category: 'it_hardware', code: 'AST-IT-001', serial_number: 'SN-DELL-9921', value: '650.00', location: 'Computer Lab 1' },
+        { name: 'Student Double Desks (Wooden)', category: 'furniture', code: 'AST-FUR-012', serial_number: 'TAG-DSK-44', value: '45.00', location: 'Block C Room 4' },
+        { name: 'Compound Microscope Olympus', category: 'science_lab', code: 'AST-LAB-005', serial_number: 'SN-OLY-552', value: '380.00', location: 'Chemistry Lab' }
+      ],
+      rules: [
+        'Assets are instantly tracked for maintenance logs, audit counts, and staff custodian checkouts.'
+      ]
+    },
+    library: {
+      title: 'Library Books & Media Catalogue Specification',
+      description: 'Mandatory Format: Ingests library books, curriculum textbooks, literature sets, and past examination papers.',
+      mandatory: ['name'],
+      fields: [
+        { key: 'name', label: 'Book Title', required: true, type: 'Text', rule: 'Full book or media title', example: 'Step Ahead: O-Level Mathematics' },
+        { key: 'author', label: 'Author', required: false, type: 'Text', rule: 'Author or editor name', example: 'M. Chitsike' },
+        { key: 'isbn', label: 'ISBN / Accession Barcode', required: false, type: 'Text', rule: 'ISBN or internal barcode', example: '978-0-7974-1234-5' },
+        { key: 'shelf_location', label: 'Shelf Location', required: false, type: 'Text', rule: 'Library stack, bay, or shelf', example: 'Bay 1 Shelf A' },
+        { key: 'resource_type', label: 'Resource Type', required: false, type: 'Choice', rule: 'textbook, revision_guide, fiction, past_paper', example: 'textbook' }
+      ],
+      sampleHeaders: 'name,author,isbn,shelf_location,resource_type',
+      sampleRows: [
+        { name: 'Step Ahead: O-Level Mathematics', author: 'M. Chitsike', isbn: '978-0-7974-1234-5', shelf_location: 'Bay 1 Shelf A', resource_type: 'textbook' },
+        { name: 'Focus on Shona: Form 3 & 4', author: 'D. Mutasa', isbn: '978-0-7974-5678-9', shelf_location: 'Bay 2 Shelf C', resource_type: 'textbook' },
+        { name: 'Things Fall Apart', author: 'Chinua Achebe', isbn: '978-0-3854-7454-2', shelf_location: 'Bay 4 Shelf B', resource_type: 'fiction' }
+      ],
+      rules: [
+        'Books are categorized as "book" and immediately become available for student loans, barcode returns, and overdue tracking.'
+      ]
+    },
+    fees: {
+      title: 'Student Fee Invoices & Billing Specification',
+      description: 'Mandatory Format: Ingests termly fee schedules, student invoices, and initial receipt allocations.',
+      mandatory: ['admission_number', 'term', 'amount_due'],
+      fields: [
+        { key: 'admission_number', label: 'Admission Number', required: true, type: 'Text', rule: 'Unique student admission number (e.g. ADM2026-001) to link fee invoice', example: 'ADM2026-001' },
+        { key: 'term', label: 'Billing Term', required: true, type: 'Text', rule: 'Billing term identifier (e.g. Term 1 2026)', example: 'Term 1 2026' },
+        { key: 'amount_due', label: 'Amount Due ($)', required: true, type: 'Number', rule: 'Total invoice billing amount in USD', example: '450.00' },
+        { key: 'amount_paid', label: 'Amount Paid ($)', required: false, type: 'Number', rule: 'Initial amount prepaid by guardian. If > 0, receipt is generated.', example: '200.00' },
+        { key: 'due_date', label: 'Payment Due Date', required: false, type: 'Date', rule: 'Payment deadline in YYYY-MM-DD format', example: '2026-01-31' },
+        { key: 'title', label: 'Fee Description', required: false, type: 'Text', rule: 'Invoice line description (e.g. Tuition, Science Levy)', example: 'Term 1 Tuition Fee' }
+      ],
+      sampleHeaders: 'admission_number,term,amount_due,amount_paid,due_date,title',
+      sampleRows: [
+        { admission_number: 'ADM2026-001', term: 'Term 1 2026', amount_due: '450.00', amount_paid: '450.00', due_date: '2026-01-31', title: 'Term 1 Tuition & Levies' },
+        { admission_number: 'ADM2026-002', term: 'Term 1 2026', amount_due: '450.00', amount_paid: '200.00', due_date: '2026-01-31', title: 'Term 1 Tuition & Levies' },
+        { admission_number: 'ADM2026-003', term: 'Term 1 2026', amount_due: '520.00', amount_paid: '0.00', due_date: '2026-01-31', title: 'Term 1 Boarding & Tuition' }
+      ],
+      rules: [
+        'Automatic Student Matching: Maps invoices directly to students by admission number.',
+        'Receipt Generation: Any amount in "amount_paid" generates an official payment receipt.'
+      ]
+    }
+  };
+
+  return specs[entity] || specs.students;
+}
 
 export default function ImportModal({
   isOpen,
@@ -256,8 +306,13 @@ export default function ImportModal({
   const [copiedHeaders, setCopiedHeaders] = useState(false);
   const [copiedCreds, setCopiedCreds] = useState(false);
 
-  // Active spec metadata
-  const spec = ENTITY_SPECIFICATIONS[entity] || ENTITY_SPECIFICATIONS.students;
+  const { activeSchool, schools } = useAuth();
+  const currentSchool = activeSchool || schools.find(s => s.id === schoolId) || { id: schoolId };
+
+  // Active spec metadata dynamically tailored to school type & stream policy
+  const spec = useMemo(() => {
+    return getDynamicEntitySpec(entity, currentSchool);
+  }, [entity, currentSchool]);
 
   // Header validation against mandatory fields
   const missingMandatoryHeaders = useMemo(() => {
@@ -368,14 +423,20 @@ export default function ImportModal({
   };
 
   const handleDownloadTemplate = () => {
-    const url = `/api/v1/schools/${schoolId}/import/templates/${entity}`;
+    const headerRow = spec.sampleHeaders;
+    const keys = headerRow.split(',');
+    const bodyRows = spec.sampleRows.map(row => {
+      return keys.map(k => `"${String(row[k] ?? '').replace(/"/g, '""')}"`).join(',');
+    }).join('\n');
+    const blob = new Blob([headerRow + '\n' + bodyRows + '\n'], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `schoolbase_${entity}_template.csv`;
-    a.target = '_blank';
+    a.download = `${(currentSchool?.name || schoolId || 'school').toLowerCase().replace(/[^a-z0-9]/g, '_')}_${entity}_template.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
     toast.success(`Template for ${entity} downloaded.`);
   };
 
@@ -437,6 +498,34 @@ export default function ImportModal({
       size="xl"
     >
       <div className="space-y-4">
+        {/* Institutional Guidelines Alert Banner */}
+        <div className="p-3.5 bg-gradient-to-r from-emerald-500/10 via-brand-500/5 to-cyan-500/10 rounded-xl border border-emerald-500/30 flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-emerald-500 mt-0.5 shrink-0" />
+          <div className="space-y-1 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-ink">Institutional Policy for {currentSchool?.name || schoolId}</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                {(currentSchool?.school_type || 'secondary').toUpperCase()} SCHOOL
+              </span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                (currentSchool?.has_streams !== 0 && currentSchool?.has_streams !== false)
+                  ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30'
+                  : 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30'
+              }`}>
+                {(currentSchool?.has_streams !== 0 && currentSchool?.has_streams !== false) ? 'Streams Permitted' : 'Single Cohort (No Streams)'}
+              </span>
+            </div>
+            <p className="text-muted leading-relaxed">
+              {((currentSchool?.school_type || '').toLowerCase() === 'primary')
+                ? 'Only ECD and Grade 1 to Grade 7 classes are permitted. Secondary Form cohorts will be rejected during validation.'
+                : 'Only Secondary Form 1 to Form 4/6 classes are permitted. Primary grades (Grade 1-7) are strictly prohibited and will be rejected.'}
+              {(currentSchool?.has_streams === 0 || currentSchool?.has_streams === false)
+                ? ' Streams are disabled for this school: imported class names must be unstreamed (no stream letters, colors, or sections).'
+                : ''}
+            </p>
+          </div>
+        </div>
+
         {/* Top Header Card: Entity Description & Quick Actions */}
         <div className="p-3.5 bg-gradient-to-r from-brand-50/70 via-surface to-brand-50/40 dark:from-brand-950/40 dark:to-surface rounded-xl border border-brand-500/20 flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-0.5 max-w-xl">
@@ -694,7 +783,7 @@ export default function ImportModal({
                   rows={5}
                   value={rawText}
                   onChange={handlePasteChange}
-                  placeholder={`admission_number,first_name,last_name,gender,date_of_birth,class_name,guardian_name,guardian_phone,guardian_email\nADM2026-001,Tendai,Mutasa,male,2013-05-12,Grade 6 Red,Mr. C. Mutasa,+263771234567,cmutasa@gmail.com`}
+                  placeholder={`${spec.sampleHeaders}\n${spec.sampleRows && spec.sampleRows.length > 0 ? spec.sampleHeaders.split(',').map(h => spec.sampleRows[0][h] || '').join(',') : ''}`}
                   className="w-full text-xs font-mono p-3 rounded-xl border border-line bg-canvas focus:bg-white dark:focus:bg-surface focus:border-brand-700 focus:outline-hidden transition resize-y"
                 />
               </div>

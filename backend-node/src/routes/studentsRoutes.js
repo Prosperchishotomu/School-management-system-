@@ -13,6 +13,7 @@ const {
   normalizeNationalId,
   normalizeText
 } = require('../utils/normalizer');
+const { broadcastInvalidation } = require('../services/realtime');
 
 
 // GET /schools/:schoolId/students
@@ -78,8 +79,18 @@ router.get('/', authenticateToken, async (req, res) => {
         teacherParams.push(class_id);
       }
       if (status && status !== 'all') {
-        teacherSql += ' AND st.status = ?';
-        teacherParams.push(status);
+        if (status === 'active') {
+          teacherSql += " AND st.status IN ('active', 'enrolled')";
+        } else if (status === 'transferred') {
+          teacherSql += " AND st.status = 'transferred'";
+        } else if (status === 'finished') {
+          teacherSql += " AND st.status IN ('finished', 'graduated')";
+        } else if (status === 'dropped') {
+          teacherSql += " AND st.status IN ('dropped', 'dropped_out', 'withdrawn', 'suspended')";
+        } else {
+          teacherSql += ' AND st.status = ?';
+          teacherParams.push(status);
+        }
       }
       if (search && search.trim()) {
         teacherSql += ' AND (st.first_name LIKE ? OR st.last_name LIKE ? OR st.admission_number LIKE ?)';
@@ -114,8 +125,18 @@ router.get('/', authenticateToken, async (req, res) => {
     }
 
     if (status && status !== 'all') {
-      sql += ' AND st.status = ?';
-      params.push(status);
+      if (status === 'active') {
+        sql += " AND st.status IN ('active', 'enrolled')";
+      } else if (status === 'transferred') {
+        sql += " AND st.status = 'transferred'";
+      } else if (status === 'finished') {
+        sql += " AND st.status IN ('finished', 'graduated')";
+      } else if (status === 'dropped') {
+        sql += " AND st.status IN ('dropped', 'dropped_out', 'withdrawn', 'suspended')";
+      } else {
+        sql += ' AND st.status = ?';
+        params.push(status);
+      }
     }
 
     if (search && search.trim()) {
@@ -126,12 +147,35 @@ router.get('/', authenticateToken, async (req, res) => {
     sql += ' GROUP BY st.id ORDER BY st.first_name ASC, st.last_name ASC';
 
     const students = await query(sql, params);
+
+    // Compute lifecycle breakdown counts across all records of this school
+    let activeCnt = 0, transferredCnt = 0, finishedCnt = 0, droppedCnt = 0, totalRecords = 0;
+    try {
+      const statusRows = await query('SELECT status, COUNT(*) as cnt FROM students WHERE school_id = ? GROUP BY status', [schoolId]);
+      statusRows.forEach(r => {
+        const s = (r.status || '').toLowerCase();
+        const c = Number(r.cnt || 0);
+        totalRecords += c;
+        if (s === 'active' || s === 'enrolled') activeCnt += c;
+        else if (s === 'transferred') transferredCnt += c;
+        else if (s === 'finished' || s === 'graduated') finishedCnt += c;
+        else if (s === 'dropped' || s === 'dropped_out' || s === 'withdrawn' || s === 'suspended') droppedCnt += c;
+      });
+    } catch (_) {}
+
     return res.json({
       data: students,
       meta: {
         total: students.length,
         per_page: limitNum,
-        page: pageNum
+        page: pageNum,
+        counts: {
+          active: activeCnt,
+          transferred: transferredCnt,
+          finished: finishedCnt,
+          dropped: droppedCnt,
+          total_records: totalRecords
+        }
       }
     });
   } catch (err) {
@@ -235,6 +279,31 @@ router.post('/',
 
     const studentId = 'STD' + Math.random().toString(36).substr(2, 5).toUpperCase();
     const dobVal = dob || date_of_birth || null;
+
+    // Cross-School Multi-Enrollment Check:
+    // Under regulatory requirements, no student may be marked as active/enrolled in 2 or more different schools simultaneously.
+    if (dobVal && cleanFirstName && cleanLastName) {
+      const crossConflict = await queryOne(
+        `SELECT s.id, s.admission_number, s.first_name, s.last_name, s.school_id, sc.name as school_name
+         FROM students s
+         LEFT JOIN schools sc ON s.school_id = sc.id
+         WHERE s.school_id != ?
+           AND s.status IN ('enrolled', 'active')
+           AND LOWER(s.first_name) = LOWER(?)
+           AND LOWER(s.last_name) = LOWER(?)
+           AND (s.date_of_birth = ? OR s.dob = ?)
+         LIMIT 1`,
+        [schoolId, cleanFirstName, cleanLastName, dobVal, dobVal]
+      );
+      if (crossConflict) {
+        return res.status(409).json({
+          error: {
+            code: 'CONCURRENT_ACTIVE_STUDENT_CONFLICT',
+            message: `Cross-School Multi-Enrollment Conflict: Student '${cleanFirstName} ${cleanLastName}' is already an ACTIVE enrolled student at '${crossConflict.school_name || crossConflict.school_id}' (Admission No: ${crossConflict.admission_number}). A student cannot appear as active in multiple schools simultaneously. The previous school must mark this learner as 'transferred', 'finished', or 'dropped' before they can be enrolled.`
+          }
+        });
+      }
+    }
 
     await query(
       `INSERT INTO students (id, school_id, class_id, first_name, last_name, middle_name, admission_number, gender, date_of_birth, home_address, nationality, religion, previous_school, medical_notes, leadership_position, status)
@@ -492,13 +561,44 @@ router.patch('/:id',
   validate.run({
     first_name: { required: false, minLen: 2, maxLen: 80  },
     last_name:  { required: false, minLen: 2, maxLen: 80  },
-    status:     { required: false, enum: ['enrolled','suspended','withdrawn','graduated','transferred','dropped_out'] },
+    status:     { required: false, enum: ['enrolled','active','suspended','withdrawn','graduated','finished','transferred','dropped_out','dropped'] },
     gender:     { required: false, enum: ['male','female','other'] },
   }),
   async (req, res) => {
   try {
     const { schoolId, id } = req.params;
     const { first_name, last_name, middle_name, class_id, status, leadership_position, gender, dob, date_of_birth, nationality, religion, home_address, previous_school, medical_notes } = req.body;
+
+    // Cross-school multi-enrollment validation if status is changing to active/enrolled
+    if (status && (status === 'enrolled' || status === 'active')) {
+      const existingStudent = await queryOne('SELECT first_name, last_name, date_of_birth, dob FROM students WHERE id = ?', [id]);
+      const checkFname = (first_name || existingStudent?.first_name || '').trim();
+      const checkLname = (last_name || existingStudent?.last_name || '').trim();
+      const checkDob = dob || date_of_birth || existingStudent?.date_of_birth || existingStudent?.dob;
+
+      if (checkFname && checkLname && checkDob) {
+        const crossConflict = await queryOne(
+          `SELECT s.id, s.admission_number, sc.name as school_name
+           FROM students s
+           LEFT JOIN schools sc ON s.school_id = sc.id
+           WHERE s.school_id != ?
+             AND s.status IN ('enrolled', 'active')
+             AND LOWER(s.first_name) = LOWER(?)
+             AND LOWER(s.last_name) = LOWER(?)
+             AND (s.date_of_birth = ? OR s.dob = ?)
+           LIMIT 1`,
+          [schoolId, checkFname, checkLname, checkDob, checkDob]
+        );
+        if (crossConflict) {
+          return res.status(409).json({
+            error: {
+              code: 'CONCURRENT_ACTIVE_STUDENT_CONFLICT',
+              message: `Cannot activate student '${checkFname} ${checkLname}'. They are already active at '${crossConflict.school_name || 'another school'}' (Admission No: ${crossConflict.admission_number}). Under statutory regulations, no student may appear active in multiple schools simultaneously.`
+            }
+          });
+        }
+      }
+    }
 
     const updates = [];
     const params = [];
@@ -751,6 +851,93 @@ router.post('/:studentId/discipline', authenticateToken, requireRoles('teacher',
   } catch (err) {
     console.error('Record student discipline incident error:', err);
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to record discipline incident.' } });
+  }
+});
+
+// GET /schools/:schoolId/students/:studentId/subjects
+router.get('/:studentId/subjects', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, studentId } = req.params;
+    const student = await queryOne('SELECT id, first_name, last_name, admission_number, class_id FROM students WHERE id = ? AND school_id = ?', [studentId, schoolId]);
+    if (!student) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Student not found.' } });
+
+    const assigned = await query(
+      `SELECT ss.id as assignment_id, ss.subject_id, sub.name as subject_name, sub.code as subject_code, ss.status
+       FROM student_subjects ss
+       JOIN subjects sub ON ss.subject_id = sub.id
+       WHERE ss.student_id = ? AND (ss.status = 'active' OR ss.status IS NULL)
+       ORDER BY sub.name ASC`,
+      [studentId]
+    );
+
+    const allSubjects = await query(
+      'SELECT id, name, code, category FROM subjects WHERE school_id = ? OR school_id IS NULL ORDER BY name ASC',
+      [schoolId]
+    );
+
+    return res.json({
+      data: {
+        student,
+        assigned_subjects: assigned,
+        available_subjects: allSubjects
+      }
+    });
+  } catch (err) {
+    console.error('Get student subjects error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch student subjects.' } });
+  }
+});
+
+// PUT /schools/:schoolId/students/:studentId/subjects
+router.put('/:studentId/subjects', authenticateToken, async (req, res) => {
+  try {
+    const { schoolId, studentId } = req.params;
+    const { subject_ids, class_id } = req.body;
+    if (!Array.isArray(subject_ids)) {
+      return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'subject_ids must be an array of subject IDs.' } });
+    }
+
+    const student = await queryOne('SELECT id, user_id, class_id, first_name, last_name FROM students WHERE id = ? AND school_id = ?', [studentId, schoolId]);
+    if (!student) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Student record not found.' } });
+
+    const userRole = (req.user?.role || '').toLowerCase();
+    const isStaff = ['teacher', 'head', 'school_admin', 'super_admin'].includes(userRole);
+    const isSelfStudent = (userRole === 'student' && (req.user.student_id === studentId || req.user.id === student.user_id || req.user.id === studentId));
+
+    let isParentOfStudent = false;
+    if (userRole === 'parent') {
+      const parentLink = await queryOne(
+        `SELECT sg.id FROM student_guardians sg
+         JOIN guardians g ON sg.guardian_id = g.id
+         WHERE sg.student_id = ? AND g.school_id = ? AND (g.user_id = ? OR g.email = ? OR g.phone = ?)`,
+        [studentId, schoolId, req.user.id, req.user.email || '', req.user.phone || '']
+      );
+      if (parentLink) isParentOfStudent = true;
+    }
+
+    if (!isStaff && !isSelfStudent && !isParentOfStudent) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'You do not have permission to choose elective subjects for this student.' } });
+    }
+
+    const targetClassId = class_id || student?.class_id || null;
+    await query('DELETE FROM student_subjects WHERE student_id = ? AND (school_id = ? OR school_id IS NULL)', [studentId, schoolId]);
+
+    for (const sId of subject_ids) {
+      if (sId) {
+        await query(
+          `INSERT INTO student_subjects (school_id, student_id, class_id, subject_id, status)
+           VALUES (?, ?, ?, ?, 'active')
+           ON DUPLICATE KEY UPDATE status = 'active'`,
+          [schoolId, studentId, targetClassId, sId]
+        );
+      }
+    }
+
+    broadcastInvalidation(schoolId, ['results', 'students', 'classes'], 'student_subjects_updated');
+    return res.json({ success: true, message: `Elective subject choices successfully saved for ${student?.first_name || 'student'}.` });
+  } catch (err) {
+    console.error('Update student subjects error:', err);
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to update student subjects.' } });
   }
 });
 

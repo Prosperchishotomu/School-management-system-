@@ -209,18 +209,18 @@ export default function Hostels() {
                 if (hostels.length > 0) setAllocForm(prev => ({ ...prev, hostel_id: String(hostels[0].id) }));
                 setShowAllocModal(true);
               }}
-              className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs"
+              className="btn btn-secondary btn-md shadow-xs"
             >
               <Bed className="w-4 h-4 text-brand-500" />
-              Allocate Bed
+              <span>Allocate Bed</span>
             </button>
             {['school_admin', 'super_admin'].includes(user?.role) && (
               <button
                 onClick={() => setShowBlockModal(true)}
-                className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+                className="btn btn-primary btn-md shadow-xs"
               >
                 <Plus className="w-4 h-4" />
-                Add Hostel Block
+                <span>Add Hostel Block</span>
               </button>
             )}
           </div>

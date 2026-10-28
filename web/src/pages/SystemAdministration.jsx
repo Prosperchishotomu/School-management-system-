@@ -583,7 +583,7 @@ const SystemAdministration = () => {
             <button
               type="submit"
               disabled={savingSettings}
-              className="px-6 py-3 bg-teal-primary hover:bg-teal-dark text-white rounded-xl text-xs font-semibold cursor-pointer shadow-md flex items-center space-x-2 disabled:opacity-50 transition-colors"
+              className="btn btn-primary btn-md shadow-sm"
             >
               {savingSettings ? (
                 <>
@@ -715,7 +715,7 @@ const SystemAdministration = () => {
             <button
               type="submit"
               disabled={savingPeriods}
-              className="px-6 py-3 bg-teal-primary hover:bg-teal-dark text-white rounded-xl text-xs font-semibold cursor-pointer shadow-md flex items-center space-x-2 disabled:opacity-50 transition-colors"
+              className="btn btn-primary btn-md shadow-sm"
             >
               {savingPeriods ? (
                 <>
@@ -958,7 +958,7 @@ const SystemAdministration = () => {
             <button
               type="submit"
               disabled={savingSettings}
-              className="px-6 py-3 bg-teal-primary hover:bg-teal-dark text-white rounded-xl text-xs font-semibold cursor-pointer shadow-md flex items-center space-x-2 disabled:opacity-50"
+              className="btn btn-primary btn-md shadow-sm"
             >
               {savingSettings ? (
                 <>
@@ -1103,10 +1103,8 @@ const SystemAdministration = () => {
                 <button
                   type="submit"
                   disabled={submittingOverride || !overrideRecordId}
-                  className={`px-5 py-3 rounded-xl text-xs font-semibold cursor-pointer shadow-md flex items-center space-x-2 disabled:opacity-40 ${
-                    overrideAction === 'delete' 
-                      ? 'bg-brick-critical hover:bg-brick-critical/90 text-white' 
-                      : 'bg-teal-primary hover:bg-teal-dark text-white'
+                  className={`btn btn-md shadow-sm ${
+                    overrideAction === 'delete' ? 'btn-danger' : 'btn-primary'
                   }`}
                 >
                   {submittingOverride ? (

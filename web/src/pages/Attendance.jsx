@@ -19,7 +19,7 @@ import {
 } from '../components/ui';
 import {
   CalendarCheck, Clock, AlertTriangle, Users, CheckCircle2,
-  XCircle, Bell, ArrowRight, Save, Calendar, Send, ShieldCheck, Check
+  XCircle, Bell, ArrowRight, Save, Calendar, Send, ShieldCheck, Check, Lock, Unlock
 } from 'lucide-react';
 
 export default function Attendance() {
@@ -61,6 +61,13 @@ export default function Attendance() {
   const currentClassId = selectedClass || classes[0]?.id || '';
   const currentClassObj = classes.find(c => c.id === currentClassId) || allClasses.find(c => c.id === currentClassId);
 
+  // Authority check: Registers are only submitted by class teachers. No action for non-class teachers!
+  const isClassTeacherForCurrentClass = useMemo(() => {
+    if (isAdmin) return true;
+    if (!isTeacher) return false;
+    return assignedClasses.some(c => c.id === currentClassId);
+  }, [isAdmin, isTeacher, assignedClasses, currentClassId]);
+
   // 2. Fetch Class Students
   const { data: studentsData, loading: studentsLoading } = useApi(
     currentClassId ? `class_students_${schoolId}_${currentClassId}` : null,
@@ -100,6 +107,10 @@ export default function Attendance() {
   }, [savedAttendancePayload, currentClassId, selectedDate]);
 
   const submissionInfo = savedAttendancePayload?.submission || null;
+  const termInfo = savedAttendancePayload?.term_info || { total_school_days: 65, name: 'Term 1' };
+  const studentTermStats = savedAttendancePayload?.student_term_stats || {};
+  const isImmutable = Boolean(submissionInfo && (submissionInfo.status === 'submitted' || submissionInfo.status === 'verified'));
+  const [unlocking, setUnlocking] = useState(false);
 
   // 4. Analytics for heatmap
   const { data: matrixData } = useApi(
@@ -119,8 +130,12 @@ export default function Attendance() {
 
   // Toggle single student status
   const setStatus = (studentId, status) => {
-    if (!isTeacher && !isAdmin) {
-      toast.error('Only class teachers can mark registers.');
+    if (!isClassTeacherForCurrentClass) {
+      toast.error('Access Denied: Only the designated Class Teacher / Form Master can mark and submit registers for this class.');
+      return;
+    }
+    if (isImmutable && user?.role !== 'super_admin') {
+      toast.error('Register is submitted and immutable. Only Super Administrators can unlock submitted registers.');
       return;
     }
     setRecords(prev => {
@@ -202,6 +217,27 @@ export default function Attendance() {
     }
   };
 
+  // Super Admin Reversal: Unlock submitted register
+  const handleUnlockRegister = async () => {
+    if (user?.role !== 'super_admin') {
+      toast.error('Only Super Administrators can unlock submitted registers.');
+      return;
+    }
+    setUnlocking(true);
+    try {
+      await api.post(`/schools/${schoolId}/attendance/unlock`, {
+        class_id: currentClassId,
+        date: selectedDate
+      });
+      toast.success('Register unlocked by Super Administrator. Class Teacher can now revise attendance.');
+      refetchAttendance();
+    } catch (err) {
+      toast.error('Failed to unlock register.');
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
   const handleSendAbsenceAlert = (student) => {
     toast.success(`Absence alert dispatched to ${student.first_name}'s parent.`);
   };
@@ -245,7 +281,19 @@ export default function Attendance() {
                 </button>
               )}
 
-              {(isTeacher || isAdmin) && (
+              {user?.role === 'super_admin' && isImmutable && (
+                <button
+                  onClick={handleUnlockRegister}
+                  disabled={unlocking}
+                  className="px-3.5 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold hover:bg-amber-700 transition flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  title="Super Admin Override: Unlock this register to allow corrections"
+                >
+                  <Unlock className="w-4 h-4" />
+                  {unlocking ? 'Unlocking…' : 'Unlock Register (Super Admin)'}
+                </button>
+              )}
+
+              {isClassTeacherForCurrentClass && !isImmutable && (
                 <button
                   onClick={handleSaveRegister}
                   disabled={saving || students.length === 0}
@@ -318,7 +366,7 @@ export default function Attendance() {
             title={currentClassObj ? `${currentClassObj.name} Daily Register` : "Class Register Sheet"}
             subtitle={`${students.length} enrolled learners • Date: ${selectedDate}`}
             action={
-              (isTeacher || isAdmin) && students.length > 0 && (
+              isClassTeacherForCurrentClass && !isImmutable && students.length > 0 && (
                 <button
                   type="button"
                   onClick={markAllPresent}
@@ -356,24 +404,52 @@ export default function Attendance() {
               </div>
             </div>
 
-            {/* Submission Status Banner */}
+            {/* Non-Class Teacher Read-Only Warning */}
+            {!isClassTeacherForCurrentClass && (
+              <div className="p-3.5 rounded-xl mb-4 bg-amber-500/10 border border-amber-500/25 flex items-center gap-2.5 text-xs text-amber-900 dark:text-amber-200">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  <strong>Read-Only Register:</strong> You are not the designated Class Teacher for {currentClassObj?.name || 'this class'}. Registers can only be marked and submitted by the assigned Class Teacher.
+                </span>
+              </div>
+            )}
+
+            {/* Submission Status Banner & Immutability */}
             {submissionInfo && (
               <div className={`p-3 rounded-xl mb-4 border flex items-center justify-between text-xs ${
                 submissionInfo.status === 'verified'
                   ? 'bg-teal-500/10 border-teal-500/25 text-teal-800 dark:text-teal-300'
+                  : submissionInfo.status === 'unlocked'
+                  ? 'bg-blue-500/10 border-blue-500/25 text-blue-800 dark:text-blue-300'
                   : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-800 dark:text-emerald-300'
               }`}>
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  {isImmutable ? <Lock className="w-4 h-4 text-emerald-700 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
                   <span>
-                    <strong>{submissionInfo.status === 'verified' ? 'Verified & Approved' : 'Submitted to Administration'}</strong>
+                    <strong>
+                      {submissionInfo.status === 'verified'
+                        ? 'Verified & Approved (Immutable)'
+                        : submissionInfo.status === 'unlocked'
+                        ? 'Unlocked by Super Admin for Corrections'
+                        : 'Submitted to Administration (Locked & Immutable)'}
+                    </strong>
                     {submissionInfo.teacher_name && ` by ${submissionInfo.teacher_name}`}
                     {submissionInfo.submitted_at && ` on ${new Date(submissionInfo.submitted_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                   </span>
                 </div>
-                <span className="px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px] bg-white/40">
-                  {submissionInfo.status}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full font-bold uppercase tracking-wider text-[10px] bg-white/40">
+                    {submissionInfo.status}
+                  </span>
+                  {user?.role === 'super_admin' && isImmutable && (
+                    <button
+                      onClick={handleUnlockRegister}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 transition cursor-pointer"
+                    >
+                      Unlock
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -394,7 +470,12 @@ export default function Attendance() {
                         <Avatar name={`${st.first_name} ${st.last_name}`} size="sm" id={st.id} />
                         <div className="truncate">
                           <span className="font-semibold text-ink text-xs">{st.first_name} {st.last_name}</span>
-                          <span className="text-[10px] text-muted font-mono block">{st.admission_number}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-[10px] text-muted font-mono">{st.admission_number}</span>
+                            <span className="text-[10px] font-semibold text-brand-700 bg-brand-500/10 px-1.5 py-0.2 rounded font-mono">
+                              Term Total: {studentTermStats[st.id]?.days_present ?? (status === 'present' ? 1 : 0)} / {termInfo.total_school_days} days ({studentTermStats[st.id]?.attendance_rate ?? (status === 'present' ? Math.round(1 / termInfo.total_school_days * 100) : 0)}%)
+                            </span>
+                          </div>
                         </div>
                       </div>
 
@@ -472,18 +553,18 @@ export default function Attendance() {
             )}
 
             {/* Submission Options */}
-            <div className="pt-4 mt-4 border-t border-line flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-              <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={submitToAdmin}
-                  onChange={e => setSubmitToAdmin(e.target.checked)}
-                  className="rounded border-line text-brand-700 focus:ring-brand-500"
-                />
-                <span>Submit completed register to Principal &amp; Administration for daily sign-off</span>
-              </label>
+            {isClassTeacherForCurrentClass && !isImmutable && (
+              <div className="pt-4 mt-4 border-t border-line flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-700 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={submitToAdmin}
+                    onChange={e => setSubmitToAdmin(e.target.checked)}
+                    className="rounded border-line text-brand-700 focus:ring-brand-500"
+                  />
+                  <span>Submit completed register to Principal &amp; Administration (Locks &amp; Makes Immutable)</span>
+                </label>
 
-              {(isTeacher || isAdmin) && (
                 <button
                   type="button"
                   onClick={handleSaveRegister}
@@ -493,8 +574,8 @@ export default function Attendance() {
                   <Send className="w-3.5 h-3.5" />
                   {saving ? 'Submitting…' : submitToAdmin ? 'Submit Register to Head' : 'Save Register'}
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </Card>
 
           {/* Running Rate & Telemetry */}
@@ -519,6 +600,14 @@ export default function Attendance() {
                 <div className="flex justify-between text-muted">
                   <span>Late Arrivals:</span>
                   <span className="font-mono font-bold text-amber-700">{lateCount}</span>
+                </div>
+                <div className="flex justify-between text-muted">
+                  <span>Term School Days:</span>
+                  <span className="font-mono font-bold text-ink">{termInfo.total_school_days} days</span>
+                </div>
+                <div className="flex justify-between text-muted">
+                  <span>Term Benchmark:</span>
+                  <span className="font-mono text-[11px] text-muted">ZIMSEC Standard: 65 Days</span>
                 </div>
                 <div className="flex justify-between text-muted">
                   <span>Absent Unexcused:</span>

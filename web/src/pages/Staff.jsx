@@ -231,17 +231,17 @@ export default function Staff() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setImportModalOpen(true)}
-                className="px-3.5 py-2 rounded-xl border border-line bg-surface text-ink text-xs font-semibold hover:bg-canvas transition flex items-center gap-1.5 shadow-xs"
+                className="btn btn-secondary btn-md shadow-xs"
               >
                 <Upload className="w-4 h-4 text-muted" />
-                Import Staff
+                <span>Import Staff</span>
               </button>
               <button
                 onClick={() => setShowModal(true)}
-                className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+                className="btn btn-primary btn-md shadow-xs"
               >
                 <Plus className="w-4 h-4" />
-                Add Staff Member
+                <span>Add Staff Member</span>
               </button>
             </div>
           )

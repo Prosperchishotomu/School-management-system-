@@ -24,6 +24,7 @@ const healthCounsellingRoutes = require('./routes/healthCounsellingRoutes');
 const messagesRoutes       = require('./routes/messagesRoutes');
 const analyticsRoutes      = require('./routes/analyticsRoutes');
 const importRoutes         = require('./routes/importRoutes');
+const libraryRoutes        = require('./routes/libraryRoutes');
 
 const app = express();
 
@@ -196,6 +197,7 @@ app.use('/api/v1/schools/:schoolId',                           healthCounselling
 app.use('/api/v1',                                             miscRoutes);
 app.use('/api/v1',                                             analyticsRoutes);
 app.use('/api/v1/schools/:schoolId/import',                    importRoutes);
+app.use('/api/v1/schools/:schoolId/library',                   libraryRoutes);
 app.use('/api/v1',                                             extraRoutes);
 
 // 404

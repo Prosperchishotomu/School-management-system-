@@ -67,7 +67,58 @@ router.get('/schools/:schoolId/attendance', authenticateToken, async (req, res) 
       } catch (_) {}
     }
 
-    return res.json({ data: attendance, submission });
+    // Active Term & Total Term School Days calculation
+    let currentTerm = null;
+    try {
+      currentTerm = await queryOne('SELECT * FROM terms WHERE school_id = ? AND is_current = 1 LIMIT 1', [schoolId]);
+      if (!currentTerm) {
+        currentTerm = await queryOne('SELECT * FROM terms WHERE school_id = ? ORDER BY id DESC LIMIT 1', [schoolId]);
+      }
+    } catch (_) {}
+
+    const totalTermSchoolDays = Number(currentTerm?.total_school_days || 65);
+
+    // Calculate student cumulative attendance metrics based on term school days
+    let studentTermStats = {};
+    if (class_id) {
+      try {
+        const cumulativeQuery = `
+          SELECT student_id,
+                 COUNT(CASE WHEN status IN ('present', 'late') THEN 1 END) as days_present,
+                 COUNT(CASE WHEN status = 'absent' THEN 1 END) as days_absent,
+                 COUNT(CASE WHEN status = 'late' THEN 1 END) as days_late,
+                 COUNT(CASE WHEN status = 'excused' THEN 1 END) as days_excused
+          FROM attendance
+          WHERE school_id = ? AND class_id = ?
+          GROUP BY student_id
+        `;
+        const cumRows = await query(cumulativeQuery, [schoolId, class_id]);
+        cumRows.forEach(row => {
+          const pres = Number(row.days_present || 0);
+          studentTermStats[row.student_id] = {
+            days_present: pres,
+            days_absent: Number(row.days_absent || 0),
+            days_late: Number(row.days_late || 0),
+            days_excused: Number(row.days_excused || 0),
+            term_school_days: totalTermSchoolDays,
+            attendance_rate: Math.min(100, Math.round((pres / totalTermSchoolDays) * 100))
+          };
+        });
+      } catch (cumErr) {
+        console.warn('Cumulative attendance calculation warning:', cumErr.message);
+      }
+    }
+
+    return res.json({
+      data: attendance,
+      submission,
+      term_info: {
+        id: currentTerm?.id,
+        name: currentTerm?.name || 'Term 1',
+        total_school_days: totalTermSchoolDays
+      },
+      student_term_stats: studentTermStats
+    });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to fetch attendance.' } });
   }
@@ -85,11 +136,46 @@ router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('te
 
     const recordDate = date || new Date().toISOString().slice(0, 10);
     const resolvedSession = session || 'full_day';
+    const targetClassId = class_id || targetEntries[0]?.class_id;
+
+    // RULE 1: Registers are only submitted by class teachers. No action for non-class teachers!
+    if (req.user.role === 'teacher' && targetClassId) {
+      const cls = await queryOne('SELECT * FROM classes WHERE id = ? AND school_id = ?', [targetClassId, schoolId]);
+      const staffRecord = await queryOne('SELECT id, class_id FROM staff WHERE (user_id = ? OR id = ?) AND school_id = ?', [req.user.id, req.user.id, schoolId]);
+      const isClassTeacher = (cls && (cls.form_master_id === req.user.id || (staffRecord && (cls.form_master_id === staffRecord.id || staffRecord.class_id === targetClassId))));
+      if (!isClassTeacher) {
+        return res.status(403).json({
+          error: {
+            code: 'NOT_CLASS_TEACHER',
+            message: 'Attendance register restriction: Daily registers can only be marked and submitted by the designated Class Teacher / Form Master for this cohort.'
+          }
+        });
+      }
+    }
+
+    // RULE 2: Immutability. When submitted, attendance is locked. Only super admin can reverse/unlock.
+    if (targetClassId) {
+      const existingSub = await queryOne(
+        'SELECT * FROM attendance_submissions WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?',
+        [schoolId, targetClassId, recordDate, resolvedSession]
+      );
+      if (existingSub && (existingSub.status === 'submitted' || existingSub.status === 'verified')) {
+        if (req.user.role !== 'super_admin') {
+          return res.status(403).json({
+            error: {
+              code: 'REGISTER_IMMUTABLE',
+              message: 'This attendance register has been submitted to administration and is locked. Only Super Administrators can unlock or reverse a submitted register.'
+            }
+          });
+        }
+      }
+    }
+
     const conflicts = [];
     for (const entry of targetEntries) {
       if (entry.student_id) {
         const attId = 'ATT' + Math.random().toString(36).substr(2, 6).toUpperCase();
-        const studentClassId = entry.class_id || class_id || (await queryOne('SELECT class_id FROM students WHERE id = ?', [entry.student_id]))?.class_id || null;
+        const studentClassId = entry.class_id || targetClassId || (await queryOne('SELECT class_id FROM students WHERE id = ?', [entry.student_id]))?.class_id || null;
         const existing = await queryOne('SELECT id, version FROM attendance WHERE school_id = ? AND student_id = ? AND date = ? AND COALESCE(session, \'full_day\') = ?', [schoolId, entry.student_id, recordDate, entry.session || resolvedSession]);
         const expectedVersion = entry.expected_version == null ? null : Number(entry.expected_version);
         if (existing && expectedVersion !== null && Number(existing.version || 1) !== expectedVersion) {
@@ -107,7 +193,7 @@ router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('te
 
     // Handle submission to Principal / Administration
     let submissionRecord = null;
-    if (submit_to_admin && class_id) {
+    if (submit_to_admin && targetClassId) {
       const subId = 'SUB' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
       const teacherName = req.user.name || req.user.username || 'Class Teacher';
       try {
@@ -115,11 +201,11 @@ router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('te
           INSERT INTO attendance_submissions (id, school_id, class_id, date, session, submitted_by, teacher_name, submitted_to, status, notes, submitted_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'admin', 'submitted', ?, NOW())
           ON DUPLICATE KEY UPDATE submitted_by = VALUES(submitted_by), teacher_name = VALUES(teacher_name), status = 'submitted', submitted_at = NOW(), notes = VALUES(notes)
-        `, [subId, schoolId, class_id, recordDate, resolvedSession, req.user.id, teacherName, notes || null]);
+        `, [subId, schoolId, targetClassId, recordDate, resolvedSession, req.user.id, teacherName, notes || null]);
 
         // Create alert notification for school administrators
         const notifId = 'NOT' + Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
-        const classObj = await queryOne('SELECT name FROM classes WHERE id = ?', [class_id]);
+        const classObj = await queryOne('SELECT name FROM classes WHERE id = ?', [targetClassId]);
         const className = classObj?.name || 'Class';
         await query(`
           INSERT INTO notifications (id, school_id, user_id, title, message, is_read, target_role, sender_id, sender_name, type)
@@ -132,7 +218,7 @@ router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('te
           req.user.id,
           teacherName
         ]);
-        submissionRecord = await queryOne('SELECT * FROM attendance_submissions WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?', [schoolId, class_id, recordDate, resolvedSession]);
+        submissionRecord = await queryOne('SELECT * FROM attendance_submissions WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?', [schoolId, targetClassId, recordDate, resolvedSession]);
       } catch (subErr) {
         console.warn('Attendance submission recording warning:', subErr.message);
       }
@@ -144,7 +230,7 @@ router.post('/schools/:schoolId/attendance', authenticateToken, requireRoles('te
     return res.json({ data: { message: `Attendance saved for ${targetEntries.length} students.`, submission: submissionRecord } });
   } catch (err) {
     console.error('Save attendance error:', err);
-    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Failed to save attendance: ' + err.message } });
+    return res.status(err.message?.includes('restriction') || err.message?.includes('locked') ? 403 : 500).json({ error: { code: 'SERVER_ERROR', message: err.message || 'Failed to save attendance.' } });
   }
 });
 
@@ -159,6 +245,23 @@ router.post('/schools/:schoolId/attendance/verify', authenticateToken, requireRo
       WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?
     `, [req.user.id, schoolId, class_id, date, session || 'full_day']);
     return res.json({ data: { message: 'Register verified and approved.' } });
+  } catch (err) {
+    return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message } });
+  }
+});
+
+// POST /schools/:schoolId/attendance/unlock (Super Admin reversal only)
+router.post('/schools/:schoolId/attendance/unlock', authenticateToken, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const { schoolId } = req.params;
+    const { class_id, date, session } = req.body;
+    await query(`
+      UPDATE attendance_submissions 
+      SET status = 'unlocked', unlocked_by = ?, unlocked_at = NOW()
+      WHERE school_id = ? AND class_id = ? AND date = ? AND session = ?
+    `, [req.user.id, schoolId, class_id, date, session || 'full_day']);
+    broadcastInvalidation(schoolId, ['attendance', 'att_matrix'], 'attendance_unlocked');
+    return res.json({ data: { message: 'Attendance register unlocked by Super Administrator for editing.' } });
   } catch (err) {
     return res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message } });
   }

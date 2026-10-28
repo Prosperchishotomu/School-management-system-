@@ -126,10 +126,10 @@ export default function Expenses() {
           ['school_admin', 'super_admin', 'bursar'].includes(user?.role) && (
             <button
               onClick={() => setShowModal(true)}
-              className="px-4 py-2 rounded-xl bg-brand-700 text-white text-xs font-semibold hover:bg-brand-900 transition flex items-center gap-1.5 shadow-xs"
+              className="btn btn-primary btn-md shadow-xs"
             >
               <Plus className="w-4 h-4" />
-              Record Expense
+              <span>Record Expense</span>
             </button>
           )
         }

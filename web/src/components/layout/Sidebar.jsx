@@ -349,23 +349,29 @@ export default function Sidebar({ isOpen, onClose }) {
             </div>
           )}
 
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center justify-between gap-2 pt-1">
             <NavLink
               to="/profile"
               onClick={onClose}
               title="Manage Profile"
-              className="truncate pr-2 hover:opacity-90 transition cursor-pointer flex-1"
+              className="flex items-center gap-2.5 truncate p-1.5 rounded-xl hover:bg-white/8 transition cursor-pointer flex-1 min-w-0"
             >
-              <div className="text-xs font-semibold text-white truncate">{user?.name || user?.username}</div>
-              <div className="text-[10px] text-white/50 capitalize font-mono">{(role || 'user').replace(/_/g, ' ')} • Edit Profile →</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center justify-center font-bold text-xs shrink-0">
+                {(user?.name || user?.username || 'U')[0].toUpperCase()}
+              </div>
+              <div className="truncate">
+                <div className="text-xs font-semibold text-white truncate">{user?.name || user?.username}</div>
+                <div className="text-[10px] text-white/50 capitalize font-mono truncate">{(role || 'user').replace(/_/g, ' ')}</div>
+              </div>
             </NavLink>
 
             <button
               onClick={logout}
-              title="Sign out"
-              className="w-8 h-8 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+              title="Sign out of portal"
+              className="btn btn-sm bg-red-500/20 hover:bg-red-500/30 text-red-200 border border-red-500/30 rounded-xl px-2.5 py-1.5 flex items-center gap-1.5 transition-all cursor-pointer shrink-0 text-xs font-medium"
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-3.5 h-3.5 text-red-300" />
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
         </div>

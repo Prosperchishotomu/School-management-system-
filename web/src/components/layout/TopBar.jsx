@@ -227,7 +227,7 @@ export default function TopBar({ onMenuClick }) {
 
   return (
     <>
-      <header className="sticky top-0 z-30 h-16 bg-surface/90 backdrop-blur-md border-b border-line px-4 md:px-8 flex items-center justify-between gap-4 select-none">
+      <header className="sticky top-0 z-30 h-16 shrink-0 bg-surface/90 backdrop-blur-md border-b border-line px-4 md:px-8 flex items-center justify-between gap-4 select-none">
         {/* Left: Mobile hamburger + Dedicated Back Button + Page Context */}
         <div className="flex items-center gap-2.5 min-w-0">
           <button
