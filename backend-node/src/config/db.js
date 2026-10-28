@@ -1,17 +1,47 @@
+const fs = require('fs');
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
+const DEFAULT_DB_HOST = 'gateway01.ap-northeast-1.prod.aws.tidbcloud.com';
+const DEFAULT_DB_PORT = 4000;
+const DEFAULT_DB_USER = '2EzV9xBMR4pdrY.root';
+const DEFAULT_DB_NAME = 'test';
+
+const dbHost = process.env.DB_HOST || DEFAULT_DB_HOST;
+const dbPort = Number(process.env.DB_PORT || DEFAULT_DB_PORT);
+const dbUser = process.env.DB_USER || DEFAULT_DB_USER;
+const dbName = process.env.DB_NAME || DEFAULT_DB_NAME;
+const dbPassword = process.env.DB_PASSWORD || process.env.DB_PASS || '';
+
+let sslOptions = false;
+const sslEnabled = process.env.DB_SSL === 'true' || Boolean(process.env.DB_CA_PATH);
+
+if (sslEnabled) {
+  try {
+    const caPath = process.env.DB_CA_PATH;
+    if (caPath) {
+      sslOptions = { rejectUnauthorized: true, ca: fs.readFileSync(caPath) };
+    } else {
+      sslOptions = { rejectUnauthorized: true };
+    }
+  } catch (error) {
+    console.warn('Database SSL CA file could not be loaded, falling back to default TLS verification:', error.message);
+    sslOptions = { rejectUnauthorized: true };
+  }
+}
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '3306'),
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || process.env.DB_PASS || '',
-  database: process.env.DB_NAME || 'schoolbase',
+  host: dbHost,
+  port: dbPort,
+  user: dbUser,
+  password: dbPassword,
+  database: dbName,
   waitForConnections: true,
   connectionLimit: 15,
   queueLimit: 0,
   dateStrings: true,
-  connectTimeout: parseInt(process.env.DB_CONNECT_TIMEOUT || '15000', 10)
+  connectTimeout: parseInt(process.env.DB_CONNECT_TIMEOUT || '15000', 10),
+  ssl: sslOptions
 });
 
 // Helper for executing queries with parameters
@@ -1052,7 +1082,6 @@ async function ensureTables() {
     console.warn('Database table verification warning:', err.message);
   }
 }
-
 
 // Execute migration check on pool initialization
 if (process.env.NODE_ENV !== 'test') {
