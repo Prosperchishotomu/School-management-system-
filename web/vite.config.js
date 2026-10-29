@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const backendTarget = process.env.VITE_BACKEND_TARGET || 'https://school-management-system-x05j.onrender.com'
+const backendTarget = process.env.VITE_BACKEND_TARGET || 'https://school-management-system-x05j.onrender.com/api/v1'
 
 // https://vite.dev/config/
 export default defineConfig({
