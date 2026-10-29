@@ -1,30 +1,9 @@
 const mysql = require('mysql2/promise');
-const fs = require('fs');
 require('dotenv').config();
-
-const getSslConfig = () => {
-  const sslMode = String(process.env.DB_SSL || '').toLowerCase();
-
-  if (sslMode === 'true' || sslMode === '1' || sslMode === 'require') {
-    const caPath = process.env.DB_SSL_CA_PATH;
-    if (caPath) {
-      return {
-        ca: fs.readFileSync(caPath),
-        rejectUnauthorized: true
-      };
-    }
-
-    return {
-      rejectUnauthorized: true
-    };
-  }
-
-  return false;
-};
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '3306', 10),
+  port: parseInt(process.env.DB_PORT || '4000', 10),
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || process.env.DB_PASS || '',
   database: process.env.DB_NAME || 'schoolbase',
@@ -33,7 +12,12 @@ const pool = mysql.createPool({
   queueLimit: 0,
   dateStrings: true,
   connectTimeout: parseInt(process.env.DB_CONNECT_TIMEOUT || '15000', 10),
-  ssl: getSslConfig()
+  ssl: process.env.DB_SSL === 'true' || process.env.DB_SSL === '1' || process.env.DB_SSL === 'require'
+    ? {
+        rejectUnauthorized: true,
+        minVersion: 'TLSv1.2'
+      }
+    : false
 });
 
 // Helper for executing queries with parameters
@@ -107,7 +91,6 @@ async function ensureTables() {
     try { await query(`ALTER TABLE \`expenses\` MODIFY COLUMN \`recorded_by\` VARCHAR(50) NULL`); } catch(e) {}
 
     // 2. Missing columns additions (using standard ALTER TABLE ADD COLUMN statements inside try-catch)
-    // Students missing columns
     try { await query(`ALTER TABLE \`students\` ADD COLUMN \`dob\` DATE NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`students\` ADD COLUMN \`date_of_birth\` DATE NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`students\` ADD COLUMN \`home_address\` TEXT NULL`); } catch(e) {}
@@ -118,14 +101,12 @@ async function ensureTables() {
     try { await query(`ALTER TABLE \`students\` ADD COLUMN \`medical_notes\` TEXT NULL`); } catch(e) {}
     try { await query(`ALTER TABLE \`students\` ADD COLUMN \`leadership_position\` VARCHAR(100) NULL`); } catch(e) {}
 
-    // ... keep the rest of the migration file unchanged
     console.log('Schema migration verification complete. All required database tables active.');
   } catch (err) {
     console.warn('Database table verification warning:', err.message);
   }
 }
 
-// Execute migration check on pool initialization
 if (process.env.NODE_ENV !== 'test') {
   ensureTables();
 }

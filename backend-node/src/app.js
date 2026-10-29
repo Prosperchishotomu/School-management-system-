@@ -31,16 +31,13 @@ const app = express();
 app.disable('x-powered-by');
 app.use(requestContext);
 
-// Developer-friendly, clean & colorized terminal logger
 app.use((req, res, next) => {
-  // 1. Completely silence CORS pre-flight OPTIONS requests (status 204) to avoid terminal noise
   if (req.method === 'OPTIONS') {
     return next();
   }
 
   const startedAt = process.hrtime.bigint();
   res.on('finish', () => {
-    // 2. Filter out noisy polling 304s (Not Modified) on background polling endpoints
     const isQuietPoller = res.statusCode === 304 && (
       req.originalUrl.includes('/notifications') ||
       req.originalUrl.includes('/admin/alerts') ||
@@ -53,7 +50,6 @@ app.use((req, res, next) => {
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
     const roundedMs = Math.round(durationMs * 10) / 10;
 
-    // Support structured JSON in production if explicitly configured
     if (process.env.LOG_FORMAT === 'json') {
       console.log(JSON.stringify({
         event: 'http_request',
@@ -66,7 +62,6 @@ app.use((req, res, next) => {
       return;
     }
 
-    // Modern colorized terminal output
     const now = new Date();
     const timeStr = [
       String(now.getHours()).padStart(2, '0'),
@@ -74,22 +69,19 @@ app.use((req, res, next) => {
       String(now.getSeconds()).padStart(2, '0')
     ].join(':');
 
-    // Method coloring (pad to 6 chars)
     let methodColored = req.method.padEnd(6, ' ');
-    if (req.method === 'GET') methodColored = `\x1b[36m${methodColored}\x1b[0m`; // cyan
-    else if (req.method === 'POST') methodColored = `\x1b[32m${methodColored}\x1b[0m`; // green
-    else if (req.method === 'PUT' || req.method === 'PATCH') methodColored = `\x1b[33m${methodColored}\x1b[0m`; // yellow
-    else if (req.method === 'DELETE') methodColored = `\x1b[31m${methodColored}\x1b[0m`; // red
-    else methodColored = `\x1b[35m${methodColored}\x1b[0m`; // magenta
+    if (req.method === 'GET') methodColored = `\x1b[36m${methodColored}\x1b[0m`;
+    else if (req.method === 'POST') methodColored = `\x1b[32m${methodColored}\x1b[0m`;
+    else if (req.method === 'PUT' || req.method === 'PATCH') methodColored = `\x1b[33m${methodColored}\x1b[0m`;
+    else if (req.method === 'DELETE') methodColored = `\x1b[31m${methodColored}\x1b[0m`;
+    else methodColored = `\x1b[35m${methodColored}\x1b[0m`;
 
-    // Status coloring
     let statusColored = String(res.statusCode);
-    if (res.statusCode >= 500) statusColored = `\x1b[1;31m${statusColored}\x1b[0m`; // bold red
-    else if (res.statusCode >= 400) statusColored = `\x1b[33m${statusColored}\x1b[0m`; // yellow
-    else if (res.statusCode >= 300) statusColored = `\x1b[90m${statusColored}\x1b[0m`; // gray
-    else statusColored = `\x1b[32m${statusColored}\x1b[0m`; // green
+    if (res.statusCode >= 500) statusColored = `\x1b[1;31m${statusColored}\x1b[0m`;
+    else if (res.statusCode >= 400) statusColored = `\x1b[33m${statusColored}\x1b[0m`;
+    else if (res.statusCode >= 300) statusColored = `\x1b[90m${statusColored}\x1b[0m`;
+    else statusColored = `\x1b[32m${statusColored}\x1b[0m`;
 
-    // Duration coloring
     let durationColored = `${roundedMs}ms`;
     if (roundedMs >= 1000) durationColored = `\x1b[31m${(roundedMs / 1000).toFixed(2)}s\x1b[0m`;
     else if (roundedMs >= 300) durationColored = `\x1b[33m${roundedMs}ms\x1b[0m`;
@@ -107,21 +99,16 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, or postman)
     if (!origin) return callback(null, true);
-    
-    // In development/test mode, or if origin matches allowed list, permit access
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*') || process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
-    
     return callback(new Error('CORS Policy Denied: Origin not allowed.'));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Idempotency-Key', 'X-Active-School-Id'],
   credentials: true
 }));
-
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
@@ -139,7 +126,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health Check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', server: 'SchoolBase Node.js API', time: new Date().toISOString() });
 });
@@ -165,47 +151,43 @@ app.get('/health/metrics', async (req, res) => {
   } catch (error) { return res.status(503).json({ error: { code: 'METRICS_UNAVAILABLE', message: 'Operational metrics are unavailable.' }, request_id: req.requestId }); }
 });
 
-// API Routes
-app.use('/api/v1',      authRoutes);
+app.use('/api/v1', authRoutes);
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/schools/:schoolId/students', studentsRoutes);
+app.use('/api/v1/schools/:schoolId/promote-students', studentsRoutes);
+app.use('/api/v1/schools/:schoolId/staff', staffRoutes);
+app.use('/api/v1/schools/:schoolId', classesRoutes);
+app.use('/api/v1/schools/:schoolId/classes/:classId/grades', gradesRoutes);
+app.use('/api/v1/schools/:schoolId/grade-thresholds', thresholdsRouter);
+app.use('/api/v1/schools/:schoolId/grades', schoolGradesRouter);
+app.use('/api/v1', feesRoutes);
+app.use('/api/v1/schools/:schoolId/tasks', tasksRoutes);
+app.use('/api/v1/notifications', notificationsRoutes);
+app.use('/api/v1/messages', messagesRoutes);
+app.use('/api/v1', academicsRoutes);
+app.use('/api/v1/schools/:schoolId', academicsRoutes);
+app.use('/api/v1', schemesRoutes);
+app.use('/api/v1/schools/:schoolId', schemesRoutes);
+app.use('/api/v1', zimsecRoutes);
+app.use('/api/v1/schools/:schoolId', zimsecRoutes);
+app.use('/api/v1', financeExtraRoutes);
+app.use('/api/v1/schools/:schoolId', financeExtraRoutes);
+app.use('/api/v1', boardingRoutes);
+app.use('/api/v1/schools/:schoolId', boardingRoutes);
+app.use('/api/v1', emisRoutes);
+app.use('/api/v1/schools/:schoolId', emisRoutes);
+app.use('/api/v1', healthCounsellingRoutes);
+app.use('/api/v1/schools/:schoolId', healthCounsellingRoutes);
+app.use('/api/v1', miscRoutes);
+app.use('/api/v1', analyticsRoutes);
+app.use('/api/v1/schools/:schoolId/import', importRoutes);
+app.use('/api/v1/schools/:schoolId/library', libraryRoutes);
+app.use('/api/v1', extraRoutes);
 
-app.use('/api/v1/schools/:schoolId/students',                  studentsRoutes);
-app.use('/api/v1/schools/:schoolId/promote-students',          studentsRoutes);
-app.use('/api/v1/schools/:schoolId/staff',                     staffRoutes);
-app.use('/api/v1/schools/:schoolId',                           classesRoutes);
-app.use('/api/v1/schools/:schoolId/classes/:classId/grades',   gradesRoutes);
-app.use('/api/v1/schools/:schoolId/grade-thresholds',           thresholdsRouter);
-app.use('/api/v1/schools/:schoolId/grades',                     schoolGradesRouter);
-app.use('/api/v1',                                             feesRoutes);
-app.use('/api/v1/schools/:schoolId/tasks',                     tasksRoutes);
-app.use('/api/v1/notifications',                               notificationsRoutes);
-app.use('/api/v1/messages',                                    messagesRoutes);
-app.use('/api/v1',                                             academicsRoutes);
-app.use('/api/v1/schools/:schoolId',                           academicsRoutes);
-app.use('/api/v1',                                             schemesRoutes);
-app.use('/api/v1/schools/:schoolId',                           schemesRoutes);
-app.use('/api/v1',                                             zimsecRoutes);
-app.use('/api/v1/schools/:schoolId',                           zimsecRoutes);
-app.use('/api/v1',                                             financeExtraRoutes);
-app.use('/api/v1/schools/:schoolId',                           financeExtraRoutes);
-app.use('/api/v1',                                             boardingRoutes);
-app.use('/api/v1/schools/:schoolId',                           boardingRoutes);
-app.use('/api/v1',                                             emisRoutes);
-app.use('/api/v1/schools/:schoolId',                           emisRoutes);
-app.use('/api/v1',                                             healthCounsellingRoutes);
-app.use('/api/v1/schools/:schoolId',                           healthCounsellingRoutes);
-app.use('/api/v1',                                             miscRoutes);
-app.use('/api/v1',                                             analyticsRoutes);
-app.use('/api/v1/schools/:schoolId/import',                    importRoutes);
-app.use('/api/v1/schools/:schoolId/library',                   libraryRoutes);
-app.use('/api/v1',                                             extraRoutes);
-
-// 404
 app.use((req, res) => {
   res.status(404).json({ error: { code: 'NOT_FOUND', message: `Route ${req.method} ${req.url} not found.` }, request_id: req.requestId });
 });
 
-// Error handler
 app.use((err, req, res, next) => {
   console.error('Global API Error:', err);
   res.status(err.status || 500).json({
